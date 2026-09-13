@@ -1,13 +1,3 @@
---[[
- .____                  ________ ___.    _____                           __                
- |    |    __ _______   \_____  \\_ |___/ ____\_ __  ______ ____ _____ _/  |_  ___________ 
- |    |   |  |  \__  \   /   |   \| __ \   __\  |  \/  ___// ___\\__  \\   __\/  _ \_  __ \
- |    |___|  |  // __ \_/    |    \ \_\ \  | |  |  /\___ \\  \___ / __ \|  | (  <_> )  | \/
- |_______ \____/(____  /\_______  /___  /__| |____//____  >\___  >____  /__|  \____/|__|   
-         \/          \/         \/    \/                \/     \/     \/                   
-          \_Welcome to LuaObfuscator.com   (Alpha 0.10.9) ~  Much Love, Ferib 
-
-]]--
 
 if  not game:IsLoaded() then game.Loaded:Wait();end local v0=queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or getgenv().queue_on_teleport ;pcall(function() if (makefolder and isfolder and  not isfolder("StarCrowHub")) then makefolder("StarCrowHub");end end);local v1="StarCrowHub/BurgerResetTime.txt";if (isfile and  not isfile(v1) and isfile("BurgerResetTime.txt")) then pcall(function() local v213=0 + 0 ;local v214;while true do if (v213==(0 + 0)) then v214=readfile("BurgerResetTime.txt");if (v214 and ( #v214>0) and writefile) then writefile(v1,v214);end break;end end end);end local v2=tonumber(getgenv and getgenv().AutoResetMinute ) or tonumber(_G.AutoResetMinute) ;pcall(function() if (isfile and isfile(v1)) then local v215=0;local v216;while true do if (v215==(0 -0)) then v216=tonumber(readfile(v1));if (v216 and (v216>0) and  not v2) then v2=v216;end break;end end end end);if (v2 and writefile) then pcall(function() writefile(v1,tostring(v2));end);end if v0 then pcall(function() local v217=0 -0 ;local v218;while true do if (v217==(0 + 0)) then v218=v2 or (3 + 0) ;v0([[
             repeat task.wait() until game:IsLoaded()
