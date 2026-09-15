@@ -1,0 +1,2575 @@
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local GuiService = game:GetService("GuiService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local SharedSignals = require(ReplicatedStorage:WaitForChild("Classes"):WaitForChild("SharedSignals"))
+
+local Config = {
+    IsBanned = false,
+    BanReason = "",
+    ESPEnabled = false,
+    BurgerESPEnabled = false,
+    LoopSpeedEnabled = false,
+    WalkSpeed = 30,
+    NoclipEnabled = false,
+    InfJumpEnabled = false,
+    FlyEnabled = false,
+    FlySpeed = 2,
+    StackWeapon = false,
+    FastAttackEnabled = false,
+    FastAttackMultiplier = 10,
+    BringBurger = false,
+    BringMana = false,
+    BringGreaterMana = false,
+    BringHeal = false,
+    BringGreaterHeal = false,
+    BringSpeed = false,
+    BringVitality = false,
+    BringPotionDistance = 6,
+    AutoBringMobs = false,
+    BringMobRange = 100,
+    BringMobOffset = 15,
+    NoFogEnabled = false,
+    FullBrightEnabled = false,
+    InstantPromptEnabled = false,
+    NPCHitboxEnabled = false,
+    NPCHitboxSize = 4,
+    NPCESPEnabled = false,
+    ItemESPEnabled = false,
+    AutoMineEnabled = false,
+    OreESPEnabled = false,
+    UITheme = "Amethyst",
+    DashFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = 0 },
+    DashFloatVisible = false,
+    DashPower = 80,
+    DashKeybind = "Q",
+    DashKeybindEnabled = true,
+    BringItemRange = 100,
+    ItemESPRarities = {
+        Common = true,
+        Uncommon = true,
+        Rare = true,
+        Epic = true,
+        Legendary = true,
+        Mythical = true,
+        Transcended = true,
+    },
+    BringItemRarities = {
+        Common = true,
+        Uncommon = true,
+        Rare = true,
+        Epic = true,
+        Legendary = true,
+        Mythical = true,
+        Transcended = true,
+    },
+    KillAuraEnabled = false,
+    KillAuraDistance = 500,
+    AutoPickGoldBagEnabled = false,
+    AutoHealEnabled = false,
+    AutoHealThreshold = 50,
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/DeadspellsConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+
+pcall(function()
+    local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
+    local oldMeleeHitBox = ToolShared.meleeHitBox
+
+    ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
+        if Config.KillAuraEnabled then
+            local hackLength = Config.KillAuraDistance
+            local hackWidth = Config.KillAuraDistance
+            local hackHeight = Config.KillAuraDistance
+            return oldMeleeHitBox(p1, p2, hackLength, hackWidth, hackHeight, p6, p7, p8)
+        end
+        return oldMeleeHitBox(p1, p2, p3, p4, p5, p6, p7, p8)
+    end
+end)
+
+LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+do
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            dragInput = nil
+        end
+    end)
+end
+
+local uiVisible = true
+local minimizeKey = Enum.KeyCode.LeftControl
+local lastToggleTime = 0
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
+    uiVisible = not uiVisible
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do p = p.Parent end
+                    if p and p:IsA("Frame") then p.Visible = uiVisible return end
+                end
+            end
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == minimizeKey then
+        uiVisible = not uiVisible
+    end
+end)
+
+local clickStartPos = Vector2.new()
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+end)
+LogoBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+        if dist < 10 then
+            toggleUI()
+        end
+    end
+end)
+
+local function applyInstantPrompt(prompt)
+    if not prompt:GetAttribute("OriginalHold") then
+        prompt:SetAttribute("OriginalHold", prompt.HoldDuration)
+    end
+    prompt.HoldDuration = 0
+end
+
+local function restoreInstantPrompt(prompt)
+    if prompt:GetAttribute("OriginalHold") then
+        prompt.HoldDuration = prompt:GetAttribute("OriginalHold")
+    end
+end
+
+workspace.DescendantAdded:Connect(function(descendant)
+    if Config.InstantPromptEnabled and descendant:IsA("ProximityPrompt") then
+        applyInstantPrompt(descendant)
+    end
+end)
+
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
+    if Config.InstantPromptEnabled and fireproximityprompt then
+        fireproximityprompt(prompt)
+    end
+end)
+
+local function updateESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
+                local hum = char.Humanoid
+                local head = char.Head
+                local esp = head:FindFirstChild("StarCrowESP")
+                local chams = char:FindFirstChild("StarCrowChams")
+
+                if Config.ESPEnabled and hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 240, 0, 40)
+                        esp.StudsOffset = Vector3.new(0, 2.5, 0)
+                        esp.AlwaysOnTop = true
+                        esp.MaxDistance = math.huge
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.TextScaled = false
+                        text.TextSize = 13
+                        text.Font = Enum.Font.GothamBold
+                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        text.TextStrokeTransparency = 0
+                        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                        text.RichText = true
+                        text.TextXAlignment = Enum.TextXAlignment.Center
+                        esp.Parent = head
+                    end
+                    
+                    local teamColor = Color3.fromRGB(255, 255, 255)
+                    if player.Team and player.Team.TeamColor then
+                        teamColor = player.Team.TeamColor.Color
+                    end
+                    local nameHex = string.format("#%02x%02x%02x", math.floor(teamColor.R*255), math.floor(teamColor.G*255), math.floor(teamColor.B*255))
+                    
+                    local parts = {}
+                    local nameStr = string.format('<font color="%s">%s</font>', nameHex, player.DisplayName)
+                    local dist = math.floor((Camera.CFrame.Position - head.Position).Magnitude)
+                    nameStr = nameStr .. string.format(' <font color="rgb(180,180,180)" size="11">[%dm]</font>', dist)
+                    parts[#parts + 1] = nameStr
+                    
+                    local hp = math.floor(hum.Health)
+                    local hpPercent = hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) * 100 or 0
+                    local hpColor = hpPercent > 60 and "#00ff00" or hpPercent > 30 and "#ffaa00" or "#ff3300"
+                    parts[#parts + 1] = string.format('<font color="%s">%d HP</font>', hpColor, hp)
+                    
+                    esp.NameText.Text = table.concat(parts, "\n")
+                    
+                    if not chams then
+                        chams = Instance.new("Highlight")
+                        chams.Name = "StarCrowChams"
+                        chams.Parent = char
+                    end
+                    chams.FillColor = teamColor
+                    chams.OutlineColor = teamColor
+                    chams.FillTransparency = 0.7
+                    chams.OutlineTransparency = 0
+                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                else
+                    if esp then esp:Destroy() end
+                    if chams then chams:Destroy() end
+                end
+            end
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    Camera = workspace.CurrentCamera
+    updateESP()
+end)
+
+local _noclipThrottle = 0
+RunService.Stepped:Connect(function(_, dt)
+    local char = LocalPlayer.Character
+    if char then
+        if Config.NoclipEnabled then
+            _noclipThrottle = _noclipThrottle + dt
+            if _noclipThrottle >= 0.1 then
+                _noclipThrottle = 0
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
+                end
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and Config.LoopSpeedEnabled then hum.WalkSpeed = Config.WalkSpeed end
+    end
+    
+    if Config.NoFogEnabled then
+        Lighting.FogEnd = 9e9
+        Lighting.FogStart = 9e9
+        local atm = Lighting:FindFirstChildWhichIsA("Atmosphere")
+        if atm then
+            atm.Density = 0
+        end
+    end
+    
+    if Config.FullBrightEnabled then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 9e9
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfJumpEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end
+    end
+end)
+
+local flyConnection = nil
+local jumpStateConnection = nil
+
+local function startFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+    if not hrp or not humanoid then return end
+
+    humanoid.PlatformStand = true
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 1e7
+    bg.D = 12000
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    jumpStateConnection = humanoid.StateChanged:Connect(function(_, new)
+        if new == Enum.HumanoidStateType.Jumping
+        or new == Enum.HumanoidStateType.Freefall then
+            humanoid.PlatformStand = true
+        end
+    end)
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        local cam = workspace.CurrentCamera
+        local move = Vector3.zero
+        local md = humanoid.MoveDirection
+
+        if md.Magnitude > 0 then
+            local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+            local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+
+            if flatLook.Magnitude > 0.01 and flatRight.Magnitude > 0.01 then
+                local fwdAmt = md:Dot(flatLook.Unit)
+                local rightAmt = md:Dot(flatRight.Unit)
+
+                move += cam.CFrame.LookVector * fwdAmt
+                move += cam.CFrame.RightVector * rightAmt
+            end
+        end
+
+        if move.Magnitude > 0 then move = move.Unit end
+        bv.Velocity = move * Config.FlySpeed * 50
+        local look = cam.CFrame.LookVector
+        bg.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + look, Vector3.new(0, 1, 0))
+    end)
+end
+
+local function stopFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+    if humanoid then humanoid.PlatformStand = false end
+    if jumpStateConnection then
+        jumpStateConnection:Disconnect()
+        jumpStateConnection = nil
+    end
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    if hrp then
+        for _, v in pairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") or v:IsA("BodyGyro") then v:Destroy() end
+        end
+    end
+end
+
+local autoEquipping = false
+local function isMelee(tool)
+    local cfg = tool:FindFirstChildOfClass("Configuration")
+    return cfg and cfg:GetAttribute("Type") == "Melee"
+end
+
+local function equipAllMelee(source)
+    if not Config.StackWeapon or autoEquipping or uiVisible then return end
+    autoEquipping = true
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+    if backpack and character then
+        for _, tool in backpack:GetChildren() do
+            if tool:IsA("Tool") and tool ~= source and isMelee(tool) then
+                tool.Parent = character
+            end
+        end
+    end
+    autoEquipping = false
+end
+
+local function unequipAllMelee(source)
+    if not Config.StackWeapon or autoEquipping then return end
+    autoEquipping = true
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+    if backpack and character then
+        for _, tool in character:GetChildren() do
+            if tool:IsA("Tool") and tool ~= source and isMelee(tool) then
+                tool.Parent = backpack
+            end
+        end
+    end
+    autoEquipping = false
+end
+
+local function watchTool(tool)
+    if not tool:IsA("Tool") or not isMelee(tool) then return end
+    tool.Equipped:Connect(function() equipAllMelee(tool) end)
+    tool.Unequipped:Connect(function() unequipAllMelee(tool) end)
+end
+
+local function initStackWeapon()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+    if backpack then
+        for _, tool in backpack:GetChildren() do watchTool(tool) end
+        backpack.ChildAdded:Connect(watchTool)
+    end
+    if character then
+        for _, tool in character:GetChildren() do watchTool(tool) end
+    end
+end
+
+initStackWeapon()
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    initStackWeapon()
+    if Config.FlyEnabled then startFly() end
+end)
+
+pcall(function()
+    local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+
+    local originalMeleeHit
+    originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
+        local args = {...}
+        if Config.FastAttackEnabled then
+            task.spawn(function()
+                for i = 1, Config.FastAttackMultiplier - 1 do
+                    task.wait(0.03)
+                    originalMeleeHit(unpack(args))
+                end
+            end)
+        end
+        return originalMeleeHit(...)
+    end)
+
+    local originalLaserHit
+    originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
+        local args = {...}
+        if Config.FastAttackEnabled then
+            task.spawn(function()
+                for i = 1, Config.FastAttackMultiplier - 1 do
+                    task.wait(0.03)
+                    originalLaserHit(unpack(args))
+                end
+            end)
+        end
+        return originalLaserHit(...)
+    end)
+end)
+
+local npcs = {}
+local origSizes = {}
+
+local function isValidNPC(model)
+    if not model or not model.Parent then return false end
+    if not model:IsA("Model") then return false end
+    if model == LocalPlayer.Character then return false end
+    if Players:GetPlayerFromCharacter(model) then return false end
+
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    local root = model:FindFirstChild("HumanoidRootPart")
+
+    if not hum or not root then return false end
+    if hum.Health <= 0 or hum.MaxHealth <= 0 then return false end
+    if root.Anchored then return false end
+
+    return true
+end
+
+local function cleanupNPC(npc)
+    local data = npcs[npc]
+    if not data then return end
+    if data.connection then data.connection:Disconnect() end
+    local head = data.head
+    if head and head.Parent then
+        head.Size = origSizes[head] or Vector3.new(2,1,1)
+        head.Transparency = 0
+        head.CanCollide = true
+        head.Massless = false
+        
+        local outline = head:FindFirstChild("StarCrowHitboxOutline")
+        if outline then outline:Destroy() end
+    end
+    origSizes[head] = nil
+    npcs[npc] = nil
+end
+
+local function applyHitbox(npc)
+    if not isValidNPC(npc) then return end
+    if npcs[npc] then return end
+
+    local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+    local hum = npc:FindFirstChildOfClass("Humanoid")
+
+    if not head or not hum then return end
+
+    origSizes[head] = head.Size
+
+    local outline = Instance.new("SelectionBox")
+    outline.Name = "StarCrowHitboxOutline"
+    outline.Color3 = Color3.fromRGB(255, 50, 50) 
+    outline.LineThickness = 0.05 
+    outline.Transparency = 0.5 
+    outline.SurfaceTransparency = 1 
+    outline.Adornee = head
+    outline.Parent = head
+
+    local _hbThrottle = 0
+    local connection = RunService.Heartbeat:Connect(function(dt)
+        if not Config.NPCHitboxEnabled or not npc.Parent or hum.Health <= 0 then
+            cleanupNPC(npc)
+            return
+        end
+        _hbThrottle = _hbThrottle + dt
+        if _hbThrottle < 0.1 then return end
+        _hbThrottle = 0
+        local wanted = Vector3.new(Config.NPCHitboxSize, Config.NPCHitboxSize, Config.NPCHitboxSize)
+        if head.Size ~= wanted then
+            head.Size = wanted
+            head.Transparency = 1
+            head.CanCollide = false
+            head.Massless = true
+        end
+    end)
+
+    npcs[npc] = {
+        head = head,
+        connection = connection
+    }
+end
+
+local function scanNPCs()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if isValidNPC(v) then
+            applyHitbox(v)
+        end
+    end
+end
+
+local function clearHitbox()
+    for npc in pairs(npcs) do
+        cleanupNPC(npc)
+    end
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        if Config.NPCHitboxEnabled then
+            scanNPCs()
+        end
+    end
+end)
+
+local bossHitboxNPCs = {}
+local bossOrigSizes = {}
+
+local _bossTargets = {thiefking=true, mastersamurai=true, eldervampire=true, gnomechampion=true, steamborneczar=true, kingice=true}
+local function isBossModel(model)
+    local name = string.gsub(string.lower(model.Name), "%s+", "")
+    for n in pairs(_bossTargets) do
+        if string.find(name, n) then return true end
+    end
+    return false
+end
+
+local function cleanupBossHitbox(npc)
+    local data = bossHitboxNPCs[npc]
+    if not data then return end
+    if data.connection then data.connection:Disconnect() end
+    local head = data.head
+    if head and head.Parent then
+        head.Size = bossOrigSizes[head] or Vector3.new(2, 1, 1)
+        head.Transparency = 0
+        head.CanCollide = true
+        head.Massless = false
+        local outline = head:FindFirstChild("StarCrowBossHitboxOutline")
+        if outline then outline:Destroy() end
+    end
+    bossOrigSizes[head] = nil
+    bossHitboxNPCs[npc] = nil
+end
+
+local function applyBossHitbox(npc)
+    if bossHitboxNPCs[npc] then return end
+    if not npc or not npc.Parent then return end
+    if not isBossModel(npc) then return end
+
+    local hum = npc:FindFirstChildOfClass("Humanoid")
+    local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+    if not hum or not head then return end
+    if hum.Health <= 0 then return end
+
+    bossOrigSizes[head] = head.Size
+
+    local outline = Instance.new("SelectionBox")
+    outline.Name = "StarCrowBossHitboxOutline"
+    outline.Color3 = Color3.fromRGB(255, 165, 0)
+    outline.LineThickness = 0.3
+    outline.Transparency = 0
+    outline.SurfaceTransparency = 1
+    outline.Adornee = head
+    outline.Parent = head
+
+    local _bhThrottle = 0
+    local connection = RunService.Heartbeat:Connect(function(dt)
+        if not Config.NPCHitboxEnabled or not npc.Parent or hum.Health <= 0 then
+            cleanupBossHitbox(npc)
+            return
+        end
+        _bhThrottle = _bhThrottle + dt
+        if _bhThrottle < 0.1 then return end
+        _bhThrottle = 0
+        local wanted = Vector3.new(200, 200, 200)
+        if head.Size ~= wanted then
+            head.Size = wanted
+            head.Transparency = 1
+            head.CanCollide = false
+            head.Massless = true
+        end
+    end)
+
+    bossHitboxNPCs[npc] = { head = head, connection = connection }
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        if Config.NPCHitboxEnabled then
+            for _, v in ipairs(workspace:GetDescendants()) do
+                if v:IsA("Model") and v:FindFirstChildOfClass("Humanoid") and isBossModel(v) then
+                    applyBossHitbox(v)
+                end
+            end
+        else
+            for npc in pairs(bossHitboxNPCs) do
+                cleanupBossHitbox(npc)
+            end
+        end
+    end
+end)
+
+local activeNPCESP = {}
+
+local function setupNPCESP(npc)
+    if not isValidNPC(npc) then return end
+    if activeNPCESP[npc] then return end
+
+    local hum = npc:FindFirstChildOfClass("Humanoid")
+    local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
+    if not hum or not root then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "StarCrowNPCESP"
+    billboard.Adornee = root
+    billboard.Size = UDim2.new(0, 200, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = math.huge
+    billboard.Enabled = Config.NPCESPEnabled
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Name = "InfoLabel"
+    textLabel.Parent = billboard
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextScaled = false
+    textLabel.TextSize = 12
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.RichText = true
+
+    pcall(function() billboard.Parent = game:GetService("CoreGui") end)
+    if not billboard.Parent then billboard.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    activeNPCESP[npc] = {
+        billboard = billboard,
+        label = textLabel,
+        hum = hum,
+        root = root,
+        name = npc.Name
+    }
+end
+
+local function cleanupNPCESP(npc)
+    local data = activeNPCESP[npc]
+    if not data then return end
+    pcall(function() data.billboard:Destroy() end)
+    activeNPCESP[npc] = nil
+end
+
+local function updateNPCESP()
+    for npc, data in pairs(activeNPCESP) do
+        if not npc or not npc.Parent or not data.root.Parent or data.hum.Health <= 0 then
+            cleanupNPCESP(npc)
+        else
+            local on = Config.NPCESPEnabled
+            data.billboard.Enabled = on
+            if on then
+                local hp = math.floor(data.hum.Health)
+                data.label.Text = string.format('<font color="#ffffff">%s</font>\n<font color="#00ff00">%d HP</font>', data.name, hp)
+            end
+        end
+    end
+end
+
+local function scanNPCESP()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if isValidNPC(v) then
+            setupNPCESP(v)
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(v)
+    task.wait(0.2)
+    if Config.NPCESPEnabled and isValidNPC(v) then
+        setupNPCESP(v)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(2) do
+        if Config.NPCESPEnabled then
+            scanNPCESP()
+        end
+    end
+end)
+
+local targetItems = { ["Burger"] = true, ["GoldenBurger"] = true, ["DiamondBurger"] = true }
+local burgerColors = { ["Burger"] = Color3.fromRGB(205, 133, 63), ["GoldenBurger"] = Color3.fromRGB(255, 215, 0), ["DiamondBurger"] = Color3.fromRGB(0, 255, 255) }
+
+local itemQueue = {}
+local activeBurgers = {}
+local manaQueue = {}
+local greaterManaQueue = {}
+local healQueue = {}
+local greaterHealQueue = {}
+local speedQueue = {}
+local vitalityQueue = {}
+
+local activeItemESP = {}
+
+local function getItemColor(itemModel)
+    local rarity = "Common"
+    local priceValue = 0
+    for _, child in pairs(itemModel:GetDescendants()) do
+        if child:IsA("StringValue") then
+            local valLower = string.lower(child.Value)
+            if valLower == "common" or valLower == "uncommon" or valLower == "rare"
+            or valLower == "epic" or valLower == "legendary" or valLower == "mythic" then
+                rarity = child.Value
+                break
+            end
+        elseif child:IsA("IntValue") or child:IsA("NumberValue") then
+            if string.find(string.lower(child.Name), "value")
+            or string.find(string.lower(child.Name), "price")
+            or child.Name == "Gold" then
+                priceValue = child.Value
+            end
+        end
+    end
+    local attrRarity = itemModel:GetAttribute("Rarity") or itemModel:GetAttribute("Tier")
+    if attrRarity then rarity = tostring(attrRarity) end
+    local attrValue = itemModel:GetAttribute("Value") or itemModel:GetAttribute("Price")
+    if attrValue and type(attrValue) == "number" then priceValue = attrValue end
+    local rarityLower = string.lower(rarity)
+    if string.find(rarityLower, "uncommon")  then return Color3.fromRGB(50, 225, 50)
+    elseif string.find(rarityLower, "rare")  then return Color3.fromRGB(0, 162, 255)
+    elseif string.find(rarityLower, "epic")  then return Color3.fromRGB(162, 0, 255)
+    elseif string.find(rarityLower, "legendary") then return Color3.fromRGB(255, 145, 0)
+    elseif string.find(rarityLower, "mythic") then return Color3.fromRGB(255, 0, 50)
+    end
+    if priceValue > 0 then
+        if priceValue >= 1000 then return Color3.fromRGB(255, 0, 50)
+        elseif priceValue >= 500 then return Color3.fromRGB(255, 145, 0)
+        elseif priceValue >= 100 then return Color3.fromRGB(162, 0, 255)
+        elseif priceValue >= 50  then return Color3.fromRGB(0, 162, 255)
+        end
+    end
+    local nameLower = string.lower(itemModel.Name)
+    if string.find(nameLower, "gold") or string.find(nameLower, "coin") then
+        return Color3.fromRGB(255, 215, 0)
+    elseif string.find(nameLower, "magic") or string.find(nameLower, "potion") then
+        return Color3.fromRGB(0, 255, 255)
+    end
+    return Color3.fromRGB(255, 255, 255)
+end
+
+local function getItemRarity(itemModel)
+    local rarity = "Common"
+    for _, child in pairs(itemModel:GetDescendants()) do
+        if child:IsA("StringValue") then
+            local v = string.lower(child.Value)
+            if v == "common" or v == "uncommon" or v == "rare"
+            or v == "epic" or v == "legendary" or v == "mythic"
+            or v == "mythical" or v == "transcended" then
+                rarity = child.Value
+                break
+            end
+        end
+    end
+    local attr = itemModel:GetAttribute("Rarity") or itemModel:GetAttribute("Tier")
+    if attr then rarity = tostring(attr) end
+    local r = string.lower(rarity)
+    if string.find(r, "transcend") then return "Transcended"
+    elseif string.find(r, "mythic")   then return "Mythical"
+    elseif string.find(r, "legend")   then return "Legendary"
+    elseif string.find(r, "epic")     then return "Epic"
+    elseif string.find(r, "rare")     then return "Rare"
+    elseif string.find(r, "uncommon") then return "Uncommon"
+    end
+    return "Common"
+end
+
+local function isItemEquipped(obj)
+    local ancestor = obj.Parent
+    while ancestor and ancestor ~= workspace do
+        if ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
+
+local function hasItemData(obj)
+    for _, child in ipairs(obj:GetDescendants()) do
+        if child:IsA("StringValue") then
+            local valLower = string.lower(child.Value)
+            if valLower == "common" or valLower == "uncommon" or valLower == "rare"
+            or valLower == "epic" or valLower == "legendary" or valLower == "mythic"
+            or valLower == "mythical" or valLower == "transcended"
+            or valLower == "sellable" or valLower == "usable" or valLower == "valuable"
+            or valLower == "fuel" or valLower == "tool" or valLower == "junk"
+            or valLower == "potion" or valLower == "weapon" or valLower == "armor" then
+                return true
+            end
+        elseif child:IsA("IntValue") or child:IsA("NumberValue") then
+            local nLower = string.lower(child.Name)
+            if string.find(nLower, "price") or string.find(nLower, "value") or child.Name == "Gold" or child.Name == "Mana" then
+                if child.Value > 0 then return true end
+            end
+        end
+    end
+    if obj:GetAttribute("Rarity") or obj:GetAttribute("Tier") or obj:GetAttribute("Price") or obj:GetAttribute("Value") then
+        return true
+    end
+    return false
+end
+
+local function isValidDroppedItem(obj)
+    if not (obj:IsA("Model") or obj:IsA("Tool")) then return false end
+    if not obj.Parent then return false end
+    if isItemEquipped(obj) then return false end
+    if targetItems[obj.Name] then return false end
+    local mapFolder = workspace:FindFirstChild("Map")
+    if mapFolder and obj:IsDescendantOf(mapFolder) then return false end
+    if obj:FindFirstChildOfClass("Humanoid") then return false end
+
+    if hasItemData(obj) then
+        local size = obj:IsA("Model") and obj:GetExtentsSize() or (obj:IsA("BasePart") and obj.Size) or Vector3.new(2, 2, 2)
+        if size.X < 35 and size.Y < 35 and size.Z < 35 then
+            return true
+        end
+    end
+    return false
+end
+
+local function createItemESP(itemModel)
+    if activeItemESP[itemModel] then return end
+    local rarity = getItemRarity(itemModel)
+    if not Config.ItemESPRarities[rarity] then return end
+    local targetPart = itemModel.PrimaryPart or itemModel:FindFirstChildWhichIsA("BasePart")
+    if not targetPart then return end
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "StarCrowItemESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 150, 0, 30)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = itemModel.Name
+    label.TextColor3 = getItemColor(itemModel)
+    label.TextSize = 14
+    label.Font = Enum.Font.SourceSansBold
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.Parent = billboard
+    billboard.Parent = targetPart
+    activeItemESP[itemModel] = billboard
+    local conn
+    conn = itemModel.AncestryChanged:Connect(function()
+        if not itemModel:IsDescendantOf(workspace) or isItemEquipped(itemModel) then
+            if billboard and billboard.Parent then billboard:Destroy() end
+            activeItemESP[itemModel] = nil
+            conn:Disconnect()
+        end
+    end)
+end
+
+local function cleanupAllItemESP()
+    for model, billboard in pairs(activeItemESP) do
+        if billboard and billboard.Parent then billboard:Destroy() end
+        activeItemESP[model] = nil
+    end
+end
+
+local function scanItemESP()
+    if not Config.ItemESPEnabled then return end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if isValidDroppedItem(obj) then createItemESP(obj) end
+    end
+    local m = workspace:FindFirstChild("Models")
+    if m then
+        for _, obj in ipairs(m:GetChildren()) do
+            if isValidDroppedItem(obj) then createItemESP(obj) end
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(descendant)
+    if Config.ItemESPEnabled and isValidDroppedItem(descendant) then
+        createItemESP(descendant)
+    end
+end)
+
+local function buildBurgerESP(obj)
+    local old = obj:FindFirstChild("StarCrowBurgerESP")
+    if old then old:Destroy() end
+
+    local espFolder = Instance.new("Folder")
+    espFolder.Name = "StarCrowBurgerESP"
+    espFolder.Parent = obj
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "Chams"
+    highlight.FillColor = burgerColors[obj.Name] or Color3.fromRGB(255, 255, 255)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0.2
+    highlight.Enabled = Config.BurgerESPEnabled
+    highlight.Parent = espFolder
+
+    local targetPart = obj:IsA("Model") and obj.PrimaryPart or obj
+    if not targetPart and obj:IsA("Model") then targetPart = obj:FindFirstChildWhichIsA("BasePart") end
+
+    if targetPart then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "Text"
+        billboard.Size = UDim2.new(0, 200, 0, 50)
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 5000
+        billboard.Adornee = targetPart
+        billboard.Enabled = Config.BurgerESPEnabled
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = obj.Name
+        label.TextColor3 = burgerColors[obj.Name] or Color3.fromRGB(255, 255, 255)
+        label.TextStrokeTransparency = 0
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 12
+        label.Parent = billboard
+        billboard.Parent = espFolder
+    end
+end
+
+local function isValidBurger(obj)
+    if not (obj and obj.Parent and targetItems[obj.Name]) then return false end
+    if obj:FindFirstAncestor("Spawners") or obj:FindFirstAncestor("Spawner") then return false end
+    if obj:FindFirstAncestor("FloatingCastle") then return false end
+    local map = workspace:FindFirstChild("Map")
+    if map and obj:IsDescendantOf(map) then return false end
+    if isItemEquipped(obj) then return false end
+    local p = obj.Parent
+    if p and string.find(string.lower(p.Name), "spawn") then return false end
+    return true
+end
+
+local function setupBurgerESP(obj)
+    if not isValidBurger(obj) then return end
+    local found = false
+    for _, v in ipairs(activeBurgers) do
+        if v == obj then found = true break end
+    end
+    if not found then table.insert(activeBurgers, obj) end
+    buildBurgerESP(obj)
+end
+
+local function addToQueue(obj)
+    if isValidBurger(obj) then
+        for _, v in ipairs(itemQueue) do if v == obj then return end end
+        table.insert(itemQueue, obj)
+        setupBurgerESP(obj)
+    end
+end
+
+for _, obj in ipairs(workspace:GetChildren()) do if targetItems[obj.Name] then addToQueue(obj) end end
+local modelsFolder = workspace:FindFirstChild("Models")
+if modelsFolder then
+    for _, obj in ipairs(modelsFolder:GetChildren()) do if targetItems[obj.Name] then addToQueue(obj) end end
+end
+workspace.DescendantAdded:Connect(addToQueue)
+
+local function updateBurgerESP()
+    for i = #activeBurgers, 1, -1 do
+        local obj = activeBurgers[i]
+        if not isValidBurger(obj) then
+            local espFolder = obj and obj:FindFirstChild("StarCrowBurgerESP")
+            if espFolder then espFolder:Destroy() end
+            table.remove(activeBurgers, i)
+        else
+            local espFolder = obj:FindFirstChild("StarCrowBurgerESP")
+            if not espFolder then
+                buildBurgerESP(obj)
+                espFolder = obj:FindFirstChild("StarCrowBurgerESP")
+            end
+            if espFolder then
+                local highlight = espFolder:FindFirstChild("Chams")
+                if highlight then highlight.Enabled = Config.BurgerESPEnabled end
+                local billboard = espFolder:FindFirstChild("Text")
+                if billboard then
+                    billboard.Enabled = Config.BurgerESPEnabled
+                    if Config.BurgerESPEnabled then
+                        local label = billboard:FindFirstChildWhichIsA("TextLabel")
+                        local targetPart = billboard.Adornee
+                        if label and targetPart and Camera then
+                            local dist = math.floor((Camera.CFrame.Position - targetPart.Position).Magnitude)
+                            label.Text = string.format("%s\n[%dm]", obj.Name, dist)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local targetPotions = {
+    ["ManaPotion"] = "Mana",
+    ["GreaterManaPotion"] = "GreaterMana",
+    ["HealingPotion"] = "Heal",
+    ["HealthPotion"] = "Heal",
+    ["GreaterHealthPotion"] = "GreaterHeal",
+    ["GreaterHealingPotion"] = "GreaterHeal",
+    ["SpeedPotion"] = "Speed",
+    ["PotionOfVitality"] = "Vitality",
+    ["VitalityPotion"] = "Vitality"
+}
+
+local function isValidPotion(obj)
+    if not (obj and obj.Parent) then return false end
+    if not obj:IsDescendantOf(workspace) then return false end
+    if isItemEquipped(obj) then return false end
+    local map = workspace:FindFirstChild("Map")
+    if map and obj:IsDescendantOf(map) then return false end
+    return true
+end
+
+local function setupPotionPrompt(obj)
+    for _, p in ipairs(obj:GetDescendants()) do
+        if p:IsA("ProximityPrompt") then
+            p.RequiresLineOfSight = false
+            if p.MaxActivationDistance < 25 then
+                p.MaxActivationDistance = 25
+            end
+        end
+    end
+end
+
+local function addPotionToQueue(obj)
+    local pType = targetPotions[obj.Name]
+    if not pType then return end
+    if not isValidPotion(obj) then return end
+
+    local q
+    if pType == "Heal" then q = healQueue
+    elseif pType == "GreaterHeal" then q = greaterHealQueue
+    elseif pType == "Mana" then q = manaQueue
+    elseif pType == "GreaterMana" then q = greaterManaQueue
+    elseif pType == "Speed" then q = speedQueue
+    elseif pType == "Vitality" then q = vitalityQueue
+    end
+
+    if q then
+        for _, v in ipairs(q) do
+            if v == obj then return end
+        end
+        table.insert(q, obj)
+        setupPotionPrompt(obj)
+    end
+end
+
+local function scanAllPotions()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        addPotionToQueue(obj)
+    end
+    local m = workspace:FindFirstChild("Models")
+    if m then
+        for _, obj in ipairs(m:GetChildren()) do
+            addPotionToQueue(obj)
+        end
+    end
+end
+
+scanAllPotions()
+
+workspace.DescendantAdded:Connect(function(obj)
+    if targetPotions[obj.Name] then
+        addPotionToQueue(obj)
+    end
+end)
+
+local scanBurgerTimer = 0
+task.spawn(function()
+    while true do
+        local dt = task.wait(0.1)
+        updateBurgerESP()
+        updateNPCESP()
+        scanBurgerTimer = scanBurgerTimer + dt
+        if scanBurgerTimer >= 1.5 then
+            scanBurgerTimer = 0
+            if Config.ItemESPEnabled then
+                scanItemESP()
+            end
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if targetItems[obj.Name] then addToQueue(obj) end
+                if targetPotions[obj.Name] then addPotionToQueue(obj) end
+            end
+            local m = workspace:FindFirstChild("Models")
+            if m then
+                for _, obj in ipairs(m:GetChildren()) do
+                    if targetItems[obj.Name] then addToQueue(obj) end
+                    if targetPotions[obj.Name] then addPotionToQueue(obj) end
+                end
+            end
+        end
+    end
+end)
+
+local function bringItemToPlayer(item, targetCFrame, camPos)
+    local targetPart = (item:IsA("Model") or item:IsA("Tool")) and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or (item:IsA("BasePart") and item)
+    if targetPart and (camPos - targetPart.Position).Magnitude <= 1000 then
+        if item:IsA("Model") or item:IsA("Tool") then
+            item:PivotTo(targetCFrame)
+            for _, p in ipairs(item:GetChildren()) do
+                if p:IsA("BasePart") then
+                    p.CanCollide = false
+                    p.AssemblyLinearVelocity = Vector3.zero
+                    p.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        elseif item:IsA("BasePart") then
+            item.CFrame = targetCFrame
+            item.CanCollide = false
+            item.AssemblyLinearVelocity = Vector3.zero
+            item.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local anyEnabled = Config.BringBurger or Config.BringMana or Config.BringGreaterMana or Config.BringHeal or Config.BringGreaterHeal or Config.BringSpeed or Config.BringVitality
+    if not anyEnabled then return end
+
+    local dist = 6
+    local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -dist)
+    local camPos = Camera.CFrame.Position
+
+    if Config.BringBurger then
+        for i = #itemQueue, 1, -1 do
+            local item = itemQueue[i]
+            if not isValidBurger(item) then
+                table.remove(itemQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringMana then
+        for i = #manaQueue, 1, -1 do
+            local item = manaQueue[i]
+            if not isValidPotion(item) then
+                table.remove(manaQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringGreaterMana then
+        for i = #greaterManaQueue, 1, -1 do
+            local item = greaterManaQueue[i]
+            if not isValidPotion(item) then
+                table.remove(greaterManaQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringHeal then
+        for i = #healQueue, 1, -1 do
+            local item = healQueue[i]
+            if not isValidPotion(item) then
+                table.remove(healQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringGreaterHeal then
+        for i = #greaterHealQueue, 1, -1 do
+            local item = greaterHealQueue[i]
+            if not isValidPotion(item) then
+                table.remove(greaterHealQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringSpeed then
+        for i = #speedQueue, 1, -1 do
+            local item = speedQueue[i]
+            if not isValidPotion(item) then
+                table.remove(speedQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+
+    if Config.BringVitality then
+        for i = #vitalityQueue, 1, -1 do
+            local item = vitalityQueue[i]
+            if not isValidPotion(item) then
+                table.remove(vitalityQueue, i)
+            else
+                bringItemToPlayer(item, targetCFrame, camPos)
+            end
+        end
+    end
+end)
+
+local mineParams = RaycastParams.new()
+mineParams.FilterType = Enum.RaycastFilterType.Include
+
+local function getMineTarget()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return nil end
+    mineParams.FilterDescendantsInstances = { map }
+    local result = workspace:Raycast(Camera.CFrame.Position, Camera.CFrame.LookVector * 10, mineParams)
+    if not result then return nil end
+    local inst = result.Instance
+    while inst and inst.Parent do
+        if inst.Parent == map and inst:IsA("Model") then return inst end
+        inst = inst.Parent
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Config.AutoMineEnabled then return end
+    local target = getMineTarget()
+    if not target then return end
+    local char = LocalPlayer.Character
+    local tool = char and char:FindFirstChildOfClass("Tool") or nil
+    SharedSignals.Mining:Fire("Mine", target, tool)
+end)
+
+
+local activeOreESP = {}
+
+local function getOreColor(name)
+    local n = name:lower()
+    if n:find("gold")        then return Color3.fromRGB(255, 215, 0)
+    elseif n:find("meteor")  then return Color3.fromRGB(255, 80, 20)
+    elseif n:find("mythril") then return Color3.fromRGB(160, 80, 255)
+    elseif n:find("copper")  then return Color3.fromRGB(205, 127, 50)
+    elseif n:find("iron")    then return Color3.fromRGB(230, 230, 255)
+    elseif n:find("silver")  then return Color3.fromRGB(210, 210, 255)
+    elseif n:find("mana")    then return Color3.fromRGB(80, 80, 255)
+    elseif n:find("yellow")  then return Color3.fromRGB(255, 230, 0)
+    elseif n:find("red")     then return Color3.fromRGB(255, 60, 60)
+    elseif n:find("green")   then return Color3.fromRGB(0, 220, 80)
+    elseif n:find("blue")    then return Color3.fromRGB(0, 150, 255)
+    elseif n:find("purple")  then return Color3.fromRGB(180, 0, 255)
+    elseif n:find("crystal") then return Color3.fromRGB(100, 200, 255)
+    end
+    return Color3.fromRGB(200, 200, 200)
+end
+
+local function isValidOre(obj)
+    if not obj or not obj.Parent then return false end
+    if not obj:IsA("Model") then return false end
+    local n = obj.Name:lower()
+    if not (n:find("rock") or n:find("crystal") or n:find("manastone")) then return false end
+    local map = workspace:FindFirstChild("Map")
+    return map ~= nil and obj.Parent == map
+end
+
+local function createOreESP(obj)
+    if activeOreESP[obj] then return end
+    local color = getOreColor(obj.Name)
+    local targetPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+    if not targetPart then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "StarCrowOreHL"
+    highlight.FillColor = color
+    highlight.OutlineColor = color
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0.1
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = obj
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "StarCrowOreBB"
+    billboard.Size = UDim2.new(0, 120, 0, 40)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = 800
+    billboard.Adornee = targetPart
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 0.55, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = obj.Name
+    nameLabel.TextColor3 = color
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 11
+    nameLabel.Parent = billboard
+
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Name = "DistLabel"
+    distLabel.Size = UDim2.new(1, 0, 0.45, 0)
+    distLabel.Position = UDim2.new(0, 0, 0.55, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = ""
+    distLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distLabel.TextStrokeTransparency = 0
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = 10
+    distLabel.Parent = billboard
+
+    billboard.Parent = targetPart
+
+    activeOreESP[obj] = { highlight = highlight, billboard = billboard, part = targetPart }
+
+    obj.AncestryChanged:Connect(function()
+        if not obj.Parent then
+            pcall(function() highlight:Destroy() end)
+            pcall(function() billboard:Destroy() end)
+            activeOreESP[obj] = nil
+        end
+    end)
+end
+
+local function cleanupAllOreESP()
+    for obj, data in pairs(activeOreESP) do
+        pcall(function() data.highlight:Destroy() end)
+        pcall(function() data.billboard:Destroy() end)
+        activeOreESP[obj] = nil
+    end
+end
+
+local function scanOreESP()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return end
+    for _, obj in ipairs(map:GetChildren()) do
+        if isValidOre(obj) then createOreESP(obj) end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+    if Config.OreESPEnabled then
+        task.defer(function()
+            if isValidOre(obj) then createOreESP(obj) end
+        end)
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not Config.OreESPEnabled then return end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    for obj, data in pairs(activeOreESP) do
+        if not obj.Parent then
+            activeOreESP[obj] = nil
+        elseif data.part and data.part.Parent then
+            local dist = math.floor((hrp.Position - data.part.Position).Magnitude)
+            local dl = data.billboard and data.billboard:FindFirstChild("DistLabel")
+            if dl then dl.Text = dist .. "m" end
+        end
+    end
+end)
+
+local function isMelee(tool)
+    local cfg = tool:FindFirstChildOfClass("Configuration")
+    return cfg and cfg:GetAttribute("Type") == "Melee"
+end
+
+local originalSoundVolumes = setmetatable({}, { __mode = "k" })
+
+local function isAttackSound(name)
+    local sName = string.lower(name or "")
+    return string.find(sName, "slash") or string.find(sName, "swing") or string.find(sName, "hit") or string.find(sName, "attack") or string.find(sName, "melee") or string.find(sName, "woosh") or string.find(sName, "sword")
+end
+
+local function silenceAttackSounds(parent)
+    if not parent then return end
+    for _, obj in ipairs(parent:GetDescendants()) do
+        if obj:IsA("Sound") and isAttackSound(obj.Name) then
+            if originalSoundVolumes[obj] == nil then
+                originalSoundVolumes[obj] = obj.Volume > 0 and obj.Volume or 1
+            end
+            pcall(function()
+                obj.Volume = 0
+                obj:Stop()
+            end)
+        end
+    end
+end
+
+local function restoreAllSounds()
+    for obj, origVol in pairs(originalSoundVolumes) do
+        if obj and obj.Parent then
+            pcall(function() obj.Volume = origVol end)
+        end
+    end
+    table.clear(originalSoundVolumes)
+end
+
+local function activateHeldTool()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    local tool = char:FindFirstChildWhichIsA("Tool")
+    if tool and isMelee(tool) then
+        pcall(function()
+            tool:Activate()
+            if Config.KillAuraEnabled then
+                silenceAttackSounds(tool)
+                silenceAttackSounds(char)
+                if animator then
+                    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                        local animName = string.lower(track.Name or "")
+                        if string.find(animName, "slash") or string.find(animName, "attack") or string.find(animName, "swing") or string.find(animName, "hit") or string.find(animName, "melee") or string.find(animName, "punch") or track.Priority == Enum.AnimationPriority.Action or track.Priority == Enum.AnimationPriority.Action4 then
+                            track:Stop(0)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local function hookCharAnimations(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+    local animator = hum:WaitForChild("Animator", 5)
+    if not animator then return end
+    animator.AnimationPlayed:Connect(function(track)
+        if not Config.KillAuraEnabled then return end
+        local animName = string.lower(track.Name or "")
+        if string.find(animName, "slash") or string.find(animName, "attack") or string.find(animName, "swing") or string.find(animName, "hit") or string.find(animName, "melee") or string.find(animName, "punch") or track.Priority == Enum.AnimationPriority.Action or track.Priority == Enum.AnimationPriority.Action4 then
+            track:Stop(0)
+        end
+    end)
+    char.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") and isAttackSound(obj.Name) then
+            if originalSoundVolumes[obj] == nil then
+                originalSoundVolumes[obj] = obj.Volume > 0 and obj.Volume or 1
+            end
+            if Config.KillAuraEnabled then
+                pcall(function()
+                    obj.Volume = 0
+                    obj:Stop()
+                end)
+            end
+            obj.Played:Connect(function()
+                if Config.KillAuraEnabled then
+                    obj.Volume = 0
+                    obj:Stop()
+                end
+            end)
+        end
+    end)
+end
+
+if LocalPlayer.Character then
+    hookCharAnimations(LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(hookCharAnimations)
+
+task.spawn(function()
+    while true do
+        task.wait(0.12)
+        if Config.KillAuraEnabled then
+            activateHeldTool()
+        end
+    end
+end)
+
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrowHub",
+    SubTitle = "Dead Spells",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = Config.UITheme or "Amethyst",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Item = Window:AddTab({ Title = "Item", Icon = "package" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+local FastAttackToggleObj, FastAttackSliderObj, NPCHitboxToggleObj, NPCHitboxSliderObj
+local KillAuraToggleObj, KillAuraSliderObj
+local BringBurgerToggleObj
+local performDash
+local dashFloatBtn
+local oldNamecall_aw = nil
+
+local MobCache = {}
+
+local function cacheMob(obj)
+    if isValidNPC(obj) and not string.find(string.lower(obj.Name), "lizard") then
+        MobCache[obj] = true
+    end
+end
+
+for _, obj in ipairs(workspace:GetDescendants()) do
+    cacheMob(obj)
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+    task.wait(0.5)
+    cacheMob(obj)
+end)
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if Config.AutoBringMobs then
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local cam = workspace.CurrentCamera
+                local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+                if flatLook.Magnitude > 0 then flatLook = flatLook.Unit else flatLook = Vector3.new(0, 0, 1) end
+                local bringPos = root.Position + flatLook * Config.BringMobOffset
+                
+                for mob in pairs(MobCache) do
+                    if mob.Parent and isValidNPC(mob) then
+                        local part = mob.PrimaryPart or mob:FindFirstChildWhichIsA("BasePart")
+                        if part then
+                            local dist = (part.Position - root.Position).Magnitude
+                            if dist <= Config.BringMobRange then
+                                part.CFrame = CFrame.new(bringPos.X, root.Position.Y + 1, bringPos.Z)
+                                if not part.Anchored then
+                                    part.Velocity = Vector3.new(0, 0, 0)
+                                    part.RotVelocity = Vector3.new(0, 0, 0)
+                                end
+                            end
+                        end
+                    else
+                        MobCache[mob] = nil
+                    end
+                end
+            end
+        end
+    end
+end)
+
+Tabs.Main:AddSection("Combat")
+
+KillAuraToggleObj = Tabs.Main:AddToggle("KillAuraToggle", {
+    Title = "Kill Aura",
+    Default = Config.KillAuraEnabled,
+    Callback = function(Value)
+        Config.KillAuraEnabled = Value
+        if not Value then
+            restoreAllSounds()
+        end
+        SaveConfig()
+    end
+})
+
+KillAuraSliderObj = Tabs.Main:AddSlider("KillAuraDistanceSlider", {
+    Title = "Aura Distance",
+    Default = Config.KillAuraDistance,
+    Min = 10,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.KillAuraDistance = Value
+        SaveConfig()
+    end
+})
+
+FastAttackToggleObj = Tabs.Main:AddToggle("FastAttackToggle", {
+    Title = "Fast Attack",
+    Default = Config.FastAttackEnabled,
+    Callback = function(Value)
+        Config.FastAttackEnabled = Value
+        SaveConfig()
+    end
+})
+
+FastAttackSliderObj = Tabs.Main:AddSlider("FastAttackSlider", {
+    Title = "Fast Attack",
+    Default = Config.FastAttackMultiplier,
+    Min = 10,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.FastAttackMultiplier = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("StackWeaponToggle", {
+    Title = "Stack Weapon",
+    Default = Config.StackWeapon,
+    Callback = function(Value)
+        Config.StackWeapon = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Mob")
+
+NPCHitboxToggleObj = Tabs.Main:AddToggle("NPCHitboxToggle", {
+    Title = "Enable NPC Hitbox",
+    Default = Config.NPCHitboxEnabled,
+    Callback = function(Value)
+        Config.NPCHitboxEnabled = Value
+        SaveConfig()
+        if not Value then
+            clearHitbox()
+        end
+    end
+})
+
+NPCHitboxSliderObj = Tabs.Main:AddSlider("NPCHitboxSlider", {
+    Title = "NPC Hitbox Size",
+    Default = Config.NPCHitboxSize,
+    Min = 2,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.NPCHitboxSize = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoBringMobsToggle", {
+    Title = "Auto Bring Mobs",
+    Default = Config.AutoBringMobs,
+    Callback = function(Value)
+        Config.AutoBringMobs = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("BringMobRangeSlider", {
+    Title = "Bring Range",
+    Default = Config.BringMobRange,
+    Min = 10,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.BringMobRange = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddInput("BringMobOffsetInput", {
+    Title = "Mob Distance",
+    Default = tostring(Config.BringMobOffset),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "Enter distance...",
+    Callback = function(Value)
+        local parsed = tonumber(Value)
+        if parsed then
+            Config.BringMobOffset = parsed
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Main:AddSection("Mining")
+
+Tabs.Main:AddToggle("AutoMineToggle", {
+    Title = "Auto Mine",
+    Description = "Equip tool and stand near trees or rocks, do not click",
+    Default = Config.AutoMineEnabled,
+    Callback = function(Value)
+        Config.AutoMineEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddToggle("ESPPlayers", {
+    Title = "ESP Players",
+    Default = Config.ESPEnabled,
+    Callback = function(Value)
+        Config.ESPEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddToggle("ESPBurgersToggle", {
+    Title = "ESP Burgers",
+    Default = Config.BurgerESPEnabled,
+    Callback = function(Value)
+        Config.BurgerESPEnabled = Value
+        SaveConfig()
+        for _, obj in ipairs(activeBurgers) do
+            if obj and obj.Parent then
+                local espFolder = obj:FindFirstChild("StarCrowBurgerESP")
+                if espFolder then
+                    for _, child in ipairs(espFolder:GetChildren()) do
+                        if child:IsA("Highlight") or child:IsA("BillboardGui") then
+                            child.Enabled = Value
+                        end
+                    end
+                end
+            end
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPNPCToggle", {
+    Title = "ESP Mob",
+    Default = Config.NPCESPEnabled,
+    Callback = function(Value)
+        Config.NPCESPEnabled = Value
+        SaveConfig()
+        if Value then
+            scanNPCESP()
+        else
+            for npc in pairs(activeNPCESP) do
+                cleanupNPCESP(npc)
+            end
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPItemToggle", {
+    Title = "ESP Item",
+    Default = Config.ItemESPEnabled,
+    Callback = function(Value)
+        Config.ItemESPEnabled = Value
+        SaveConfig()
+        if Value then
+            scanItemESP()
+        else
+            cleanupAllItemESP()
+        end
+    end
+})
+
+local allItemRarities = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Transcended"}
+for _, r in ipairs(allItemRarities) do
+    Config.ItemESPRarities[r] = true
+end
+
+Tabs.ESP:AddDropdown("ItemESPRarityDropdown", {
+    Title = "Select Item ESP",
+    Values = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Transcended"},
+    Default = allItemRarities,
+    Multi = true,
+    ScrollingEnabled = true,
+    Callback = function(Value)
+        for rarity, _ in pairs(Config.ItemESPRarities) do
+            Config.ItemESPRarities[rarity] = false
+        end
+        for rarity, selected in pairs(Value) do
+            if selected then
+                Config.ItemESPRarities[rarity] = true
+            end
+        end
+        SaveConfig()
+        if Config.ItemESPEnabled then
+            cleanupAllItemESP()
+            scanItemESP()
+        end
+    end
+})
+
+
+Tabs.ESP:AddToggle("ESPOreToggle", {
+    Title = "ESP Ore",
+    Default = Config.OreESPEnabled,
+    Callback = function(Value)
+        Config.OreESPEnabled = Value
+        SaveConfig()
+        if Value then
+            scanOreESP()
+        else
+            cleanupAllOreESP()
+        end
+    end
+})
+
+Tabs.Player:AddToggle("LoopSpeedToggle", {
+    Title = "Enable WalkSpeed",
+    Default = Config.LoopSpeedEnabled,
+    Callback = function(Value)
+        Config.LoopSpeedEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("WalkSpeedSlider", {
+    Title = "Speed Amount",
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 250,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("FlyToggle", {
+    Title = "Fly",
+    Default = Config.FlyEnabled,
+    Callback = function(Value)
+        Config.FlyEnabled = Value
+        SaveConfig()
+        if Value then
+            startFly()
+        else
+            stopFly()
+        end
+    end
+})
+
+Tabs.Player:AddSlider("FlySpeedSlider", {
+    Title = "Fly Speed",
+    Default = Config.FlySpeed,
+    Min = 1,
+    Max = 20,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.FlySpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Default = Config.NoclipEnabled,
+    Callback = function(Value)
+        Config.NoclipEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJumpToggle", {
+    Title = "Infinite Jump",
+    Default = Config.InfJumpEnabled,
+    Callback = function(Value)
+        Config.InfJumpEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("DashPowerSlider", {
+    Title = "Dash Distance",
+    Default = Config.DashPower,
+    Min = 20,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.DashPower = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("DashFloatToggle", {
+    Title = "Show Dash Button",
+    Default = Config.DashFloatVisible,
+    Callback = function(Value)
+        if dashFloatBtn then
+            dashFloatBtn.Visible = Value
+        end
+        Config.DashFloatVisible = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("AirWeldToggle", {
+    Title = "Air Weld",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            oldNamecall_aw = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                local args = {...}
+                if method == "GetPartsInPart" and self == workspace and not checkcaller() then
+                    local params = args[2]
+                    if params and typeof(params) == "OverlapParams" then
+                        local filter = params.FilterDescendantsInstances
+                        if filter and type(filter) == "table" and filter[1] and filter[1].Name == "Cart" then
+                            local cart = workspace:FindFirstChild("Cart")
+                            if cart then
+                                local wagons = cart:FindFirstChild("Wagons")
+                                if wagons then
+                                    local targetPart = nil
+                                    for _, wagon in ipairs(wagons:GetChildren()) do
+                                        local floor = wagon:FindFirstChild("Floor")
+                                        if floor and floor:FindFirstChildWhichIsA("BasePart") then
+                                            targetPart = floor:FindFirstChildWhichIsA("BasePart")
+                                            break
+                                        end
+                                    end
+                                    if targetPart then
+                                        return {targetPart}
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                return oldNamecall_aw(self, ...)
+            end)
+        else
+            if oldNamecall_aw then
+                hookmetamethod(game, "__namecall", oldNamecall_aw)
+                oldNamecall_aw = nil
+            end
+        end
+    end
+})
+
+Tabs.Player:AddSection("Auto Heal")
+
+Tabs.Player:AddToggle("AutoHealToggle", {
+    Title = "Auto Heal",
+    Default = Config.AutoHealEnabled,
+    Callback = function(Value)
+        Config.AutoHealEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("AutoHealSlider", {
+    Title = "HP %",
+    Default = Config.AutoHealThreshold,
+    Min = 1,
+    Max = 99,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AutoHealThreshold = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddSection("Bring Item")
+
+Tabs.Item:AddParagraph({
+    Title = "Bring Items Note",
+    Content = "You must equip the Sack and put the items into it to prevent errors!"
+})
+
+Tabs.Item:AddButton({
+    Title = "Bring Nearby Items",
+    Description = "Requires Sack equipped",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if isValidDroppedItem(obj) then
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                if part then
+                    local dist = (part.Position - root.Position).Magnitude
+                    local rarity = getItemRarity(obj)
+                    if dist <= Config.BringItemRange and Config.BringItemRarities[rarity] then
+                        local cam = game:GetService("Workspace").CurrentCamera
+                        local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit
+                        local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z).Unit
+                        local forwardDist = math.random(8, 12)
+                        local sideDist = math.random(-4, 4)
+                        local xz = root.Position + flatLook * forwardDist + flatRight * sideDist
+                        local rayParams = RaycastParams.new()
+                        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                        rayParams.FilterDescendantsInstances = {LocalPlayer.Character, obj}
+                        local rayResult = workspace:Raycast(
+                            xz + Vector3.new(0, 500, 0),
+                            Vector3.new(0, -1000, 0),
+                            rayParams
+                        )
+                        local groundY = rayResult and rayResult.Position.Y or root.Position.Y
+                        part.CFrame = CFrame.new(Vector3.new(xz.X, groundY + 1, xz.Z))
+                        if not part.Anchored then
+                            part.Velocity = Vector3.new(0, 0, 0)
+                            part.RotVelocity = Vector3.new(0, 0, 0)
+                        end
+                    end
+                end
+            end
+        end
+    end
+})
+
+Tabs.Item:AddSlider("BringItemRangeSlider", {
+    Title = "Bring Range",
+    Default = Config.BringItemRange,
+    Min = 10,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.BringItemRange = Value
+        SaveConfig()
+    end
+})
+
+local allBringRarities = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Transcended"}
+for _, r in ipairs(allBringRarities) do
+    Config.BringItemRarities[r] = true
+end
+
+Tabs.Item:AddDropdown("BringRarityDropdown", {
+    Title = "Bring Rarities",
+    Values = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Transcended"},
+    Default = allBringRarities,
+    Multi = true,
+    ScrollingEnabled = true,
+    Callback = function(Value)
+        for rarity, _ in pairs(Config.BringItemRarities) do
+            Config.BringItemRarities[rarity] = false
+        end
+        for rarity, selected in pairs(Value) do
+            if selected then
+                Config.BringItemRarities[rarity] = true
+            end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddSection("Burgers & Potions")
+
+BringBurgerToggleObj = Tabs.Item:AddToggle("BringBurgerToggle", {
+    Title = "Bring Burger",
+    Default = Config.BringBurger,
+    Callback = function(Value)
+        Config.BringBurger = Value
+        if Value then
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if targetItems[obj.Name] then addToQueue(obj) end
+            end
+            local m = workspace:FindFirstChild("Models")
+            if m then
+                for _, obj in ipairs(m:GetChildren()) do
+                    if targetItems[obj.Name] then addToQueue(obj) end
+                end
+            end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringManaToggle", {
+    Title = "Bring Mana Potion",
+    Default = Config.BringMana,
+    Callback = function(Value)
+        Config.BringMana = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringGreaterManaToggle", {
+    Title = "Bring Greater Mana Potion",
+    Default = Config.BringGreaterMana,
+    Callback = function(Value)
+        Config.BringGreaterMana = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringHealToggle", {
+    Title = "Bring Heal Potion",
+    Default = Config.BringHeal,
+    Callback = function(Value)
+        Config.BringHeal = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringGreaterHealToggle", {
+    Title = "Bring Greater Heal Potion",
+    Default = Config.BringGreaterHeal,
+    Callback = function(Value)
+        Config.BringGreaterHeal = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringSpeedToggle", {
+    Title = "Bring Speed Potion",
+    Default = Config.BringSpeed,
+    Callback = function(Value)
+        Config.BringSpeed = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("BringVitalityToggle", {
+    Title = "Bring Potion of Vitality",
+    Default = Config.BringVitality,
+    Callback = function(Value)
+        Config.BringVitality = Value
+        if Value then scanAllPotions() end
+        SaveConfig()
+    end
+})
+
+
+Tabs.Item:AddSection("Money Bag")
+
+local function getGoldBagPrompt(obj)
+    for _, v in ipairs(obj:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then
+            return v
+        end
+    end
+    return nil
+end
+
+local function handleGoldBag(obj)
+    if obj.Name ~= "GoldBag" then return end
+    task.spawn(function()
+        local prompt = getGoldBagPrompt(obj)
+        if not prompt then
+            prompt = obj:WaitForChild("ProximityPrompt", 3)
+        end
+        if prompt then
+            task.wait(0.2)
+            if Config.AutoPickGoldBagEnabled then
+                prompt.MaxActivationDistance = 1000
+                fireproximityprompt(prompt, prompt.HoldDuration)
+            end
+        end
+    end)
+end
+
+workspace.DescendantAdded:Connect(handleGoldBag)
+
+Tabs.Item:AddToggle("AutoPickGoldBagToggle", {
+    Title = "Auto Pick Up Money Bag",
+    Default = Config.AutoPickGoldBagEnabled,
+    Callback = function(Value)
+        Config.AutoPickGoldBagEnabled = Value
+        SaveConfig()
+        if Value then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                handleGoldBag(obj)
+            end
+        end
+    end
+})
+
+Tabs.Misc:AddToggle("NoFogToggle", {
+    Title = "No Fog",
+    Default = Config.NoFogEnabled,
+    Callback = function(Value)
+        Config.NoFogEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddToggle("FullBrightToggle", {
+    Title = "Full Bright",
+    Default = Config.FullBrightEnabled,
+    Callback = function(Value)
+        Config.FullBrightEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddToggle("InstantPromptToggle", {
+    Title = "Instant Interact",
+    Default = Config.InstantPromptEnabled,
+    Callback = function(Value)
+        Config.InstantPromptEnabled = Value
+        SaveConfig()
+        for _, prompt in ipairs(workspace:GetDescendants()) do
+            if prompt:IsA("ProximityPrompt") then
+                if Value then
+                    applyInstantPrompt(prompt)
+                else
+                    restoreInstantPrompt(prompt)
+                end
+            end
+        end
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "First Person Camera",
+    Callback = function()
+        LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+        LocalPlayer.CameraMinZoomDistance = 0.5
+        LocalPlayer.CameraMaxZoomDistance = 0.5
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Third Person Camera",
+    Callback = function()
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMinZoomDistance = 0.5
+        LocalPlayer.CameraMaxZoomDistance = 1000
+    end
+})
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
+        minimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+    end
+})
+
+local function getDashKey()
+    local k = Config.DashKeybind or "Q"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.Q
+end
+
+Tabs.Settings:AddToggle("DashKeybindToggle", {
+    Title = "Enable Dash Keybind",
+    Default = Config.DashKeybindEnabled ~= false,
+    Callback = function(Value)
+        Config.DashKeybindEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddKeybind("DashKeybind", {
+    Title = "Dash Keybind",
+    Mode = "Toggle",
+    Default = Config.DashKeybind or "Q",
+    Callback = function()
+        if Config.DashKeybindEnabled ~= false and performDash then
+            performDash()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.DashKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if Config.DashKeybindEnabled == false then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local targetKey = getDashKey()
+        if input.KeyCode == targetKey then
+            if performDash then
+                performDash()
+            end
+        end
+    end
+end)
+
+
+
+local function makeDraggableFloat(b, posKey)
+    local dragging, moved, startPos, startBtnPos, activeInput = false, false, nil, nil, nil
+    b.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved, startPos, startBtnPos, activeInput = true, false, input.Position, b.Position, input
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    activeInput = nil
+                    if moved and posKey then
+                        local p = b.Position
+                        Config[posKey] = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
+                        SaveConfig()
+                    end
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input == activeInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - startPos
+            if delta.Magnitude > 6 then moved = true end
+            b.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
+        end
+    end)
+    return function() return moved end, function() moved = false end
+end
+
+local function setFloatStrokeActive(stroke, active)
+    if not stroke then return end
+    local oldGradient = stroke:FindFirstChildOfClass("UIGradient")
+    if oldGradient then oldGradient:Destroy() end
+    local gradient = Instance.new("UIGradient")
+    if active then
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 2.2
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
+        end)
+    else
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 1.6
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 180 }):Play()
+        end)
+    end
+end
+
+dashFloatBtn = Instance.new("TextButton")
+local dp = Config.DashFloatPos
+dashFloatBtn.Size = UDim2.new(0, 46, 0, 46)
+dashFloatBtn.Position = UDim2.new(dp.xs, dp.xo, dp.ys, dp.yo)
+dashFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+dashFloatBtn.BackgroundTransparency = 0.88
+dashFloatBtn.BorderSizePixel = 0
+dashFloatBtn.Text = "Dash"
+dashFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+dashFloatBtn.TextScaled = false
+dashFloatBtn.TextSize = 13
+dashFloatBtn.Font = Enum.Font.GothamBold
+dashFloatBtn.ZIndex = 15
+dashFloatBtn.Visible = Config.DashFloatVisible
+dashFloatBtn.Parent = LogoGui
+Instance.new("UICorner", dashFloatBtn).CornerRadius = UDim.new(0, 8)
+local dashFloatStroke = Instance.new("UIStroke", dashFloatBtn)
+dashFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(dashFloatStroke, false)
+
+local getMoved, resetMoved = makeDraggableFloat(dashFloatBtn, "DashFloatPos")
+
+local lastDash = 0
+
+performDash = function()
+    local now = tick()
+    if now - lastDash < 0.25 then return end
+    lastDash = now
+
+    if dashFloatStroke then
+        setFloatStrokeActive(dashFloatStroke, true)
+        task.delay(0.15, function()
+            if dashFloatStroke then
+                setFloatStrokeActive(dashFloatStroke, false)
+            end
+        end)
+    end
+
+    local c = LocalPlayer.Character
+    if not c then return end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
+
+    local look = Camera.CFrame.LookVector
+    local flat = Vector3.new(look.X, 0, look.Z)
+    local dir = flat.Magnitude > 0.01 and flat.Unit or hrp.CFrame.LookVector
+    local power = tonumber(Config.DashPower) or 80
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = dir * power
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.P = 9e9
+    bv.Parent = hrp
+
+    pcall(function()
+        hrp.AssemblyLinearVelocity = dir * power
+        hrp.Velocity = dir * power
+    end)
+
+    task.delay(0.15, function()
+        if bv and bv.Parent then bv:Destroy() end
+    end)
+end
+
+dashFloatBtn.MouseButton1Click:Connect(function()
+    if getMoved() then resetMoved() return end
+    performDash()
+end)
+
+local isHealing = false
+local function checkAndHeal(humanoid, char)
+    if not Config.AutoHealEnabled or isHealing then return end
+    if not humanoid or humanoid.Health <= 0 then return end
+    
+    local hpPercent = (humanoid.Health / humanoid.MaxHealth) * 100
+    if hpPercent <= Config.AutoHealThreshold then
+        local potion = LocalPlayer.Backpack:FindFirstChild("HealingPotion") or char:FindFirstChild("HealingPotion") or LocalPlayer.Backpack:FindFirstChild("GreaterHealthPotion") or char:FindFirstChild("GreaterHealthPotion")
+        if potion then
+            isHealing = true
+            if potion.Parent ~= char then
+                humanoid:EquipTool(potion)
+                task.wait(0.1)
+            end
+            potion:Activate()
+            task.wait(1.5)
+            isHealing = false
+        end
+    end
+end
+
+local function setupAutoHealForCharacter(char)
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.HealthChanged:Connect(function()
+        checkAndHeal(humanoid, char)
+    end)
+end
+
+if LocalPlayer.Character then
+    setupAutoHealForCharacter(LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(setupAutoHealForCharacter)
+
+Window:SelectTab(1) 
