@@ -470,19 +470,30 @@ LogoBtn.ZIndex = 5
 LogoBtn.Parent = LogoFrame
 
 
+local cachedMainFrame = nil
 local function ToggleFluentUI(visible)
+    if Window and Window.Root then
+        Window.Root.Visible = visible
+        return
+    end
+    if cachedMainFrame and cachedMainFrame.Parent then
+        cachedMainFrame.Visible = visible
+        return
+    end
     for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
         if gui:IsA("ScreenGui") then
-            local mainFrame = nil
             for _, desc in ipairs(gui:GetDescendants()) do
                 if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
                     local p = desc.Parent
                     while p and p.Parent ~= gui do p = p.Parent end
-                    if p and p:IsA("Frame") then mainFrame = p end
+                    if p and p:IsA("Frame") then
+                        cachedMainFrame = p
+                        cachedMainFrame.Visible = visible
+                        return
+                    end
                     break
                 end
             end
-            if mainFrame then mainFrame.Visible = visible return end
         end
     end
 end
@@ -490,37 +501,46 @@ end
 local uiVisible = true
 do
     local dragging = false
-    local dragged = false
+    local moved = false
     local dragStart = nil
     local startPos = nil
+    local activeInput = nil
 
     LogoBtn.InputBegan:Connect(function(input)
+        if dragging then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            dragged = false
+            moved = false
             dragStart = input.Position
             startPos = LogoFrame.Position
-            
-            input.Changed:Connect(function()
+            activeInput = input
+
+            local conn
+            conn = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
+                    activeInput = nil
+                    if conn then conn:Disconnect() end
                 end
             end)
         end
     end)
 
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+    LogoBtn.InputChanged:Connect(function(input)
+        if dragging and input == activeInput then
             local delta = input.Position - dragStart
-            if delta.Magnitude > 5 then
-                dragged = true
-                LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            if delta.Magnitude > 6 then
+                moved = true
             end
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
 
-    LogoBtn.MouseButton1Click:Connect(function()
-        if dragged then dragged = false return end
+    LogoBtn.Activated:Connect(function()
+        if moved then
+            moved = false
+            return
+        end
         uiVisible = not uiVisible
         ToggleFluentUI(uiVisible)
     end)
