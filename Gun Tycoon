@@ -1096,11 +1096,13 @@ local Window = Fluent:CreateWindow({
 })
 
 local Tabs = {
-    GunMod = Window:AddTab({ Title = "Gun Mod", Icon = "crosshair" }),
+    GunMod = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
+
+Tabs.GunMod:AddSection("Silent Aim")
 
 Tabs.GunMod:AddToggle("SilentAimT", {
     Title = "Silent Aim",
@@ -1169,6 +1171,8 @@ Tabs.GunMod:AddToggle("FriendCheckT", {
         SaveConfig()
     end
 })
+
+Tabs.GunMod:AddSection("Gun Mods")
 
 Tabs.GunMod:AddToggle("InfAmmoT", {
     Title = "Inf Ammo",
@@ -1245,7 +1249,7 @@ Tabs.GunMod:AddInput("BulletsPerShotInput", {
 })
 
 Tabs.ESP:AddToggle("ESPPlayers", {
-    Title = "ESP Players (Name | Dist | HP | Chams)",
+    Title = "ESP Players",
     Default = Config.ESPEnabled,
     Callback = function(v)
         Config.ESPEnabled = v
