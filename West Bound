@@ -1332,8 +1332,8 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                 local Banks = {
                     {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
                     {Name = "Grayridge",  arg2 = false, prePos = Vector3.new(1546.87, 120.09, 1603.42), p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
-                    {Name = "Plainview",  arg2 = false, prePos = nil, p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
-                    {Name = "Silverton",  arg2 = false, prePos = nil, p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
+                    {Name = "Plainview",  arg2 = false, prePos = Vector3.new(60.15, 51.20, 2931.69), p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
+                    {Name = "Silverton",  arg2 = false, prePos = Vector3.new(2022.95, 160.92, 3410.41), p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
                     {Name = "StoneCreek", arg2 = false, prePos = nil, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
                 }
 
