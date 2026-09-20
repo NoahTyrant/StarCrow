@@ -571,80 +571,6 @@ LogoBtn.InputEnded:Connect(function(input)
     end
 end)
 
-local BlurEffect = Instance.new("BlurEffect")
-BlurEffect.Size = 0
-BlurEffect.Parent = Lighting
-
-local FarmOverlay = Instance.new("ScreenGui")
-FarmOverlay.Name = "StarCrowFarmOverlay"
-FarmOverlay.ResetOnSpawn = false
-FarmOverlay.IgnoreGuiInset = true
-FarmOverlay.DisplayOrder = 1000
-pcall(function() FarmOverlay.Parent = game:GetService("CoreGui") end)
-if not FarmOverlay.Parent then FarmOverlay.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-FarmOverlay.Enabled = false
-
-local OverlayFrame = Instance.new("Frame")
-OverlayFrame.Size = UDim2.new(1, 0, 1, 0)
-OverlayFrame.BackgroundTransparency = 0.4
-OverlayFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-OverlayFrame.Active = false
-OverlayFrame.Parent = FarmOverlay
-
-local ListLayout = Instance.new("UIListLayout")
-ListLayout.Parent = OverlayFrame
-ListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-ListLayout.Padding = UDim.new(0, 10)
-
-local TitleText = Instance.new("TextLabel")
-TitleText.Text = "StarCrowHub"
-TitleText.TextColor3 = Color3.fromRGB(170, 85, 255)
-TitleText.TextSize = 50
-TitleText.Font = Enum.Font.FredokaOne
-TitleText.BackgroundTransparency = 1
-TitleText.Size = UDim2.new(1, 0, 0, 55)
-TitleText.Parent = OverlayFrame
-local TitleStroke = Instance.new("UIStroke", TitleText)
-TitleStroke.Thickness = 2.5
-TitleStroke.Color = Color3.fromRGB(0, 0, 0)
-
-local TimeText = Instance.new("TextLabel")
-TimeText.Text = "Time : 00:00:00"
-TimeText.TextColor3 = Color3.fromRGB(255, 255, 255)
-TimeText.TextSize = 25
-TimeText.Font = Enum.Font.GothamBold
-TimeText.BackgroundTransparency = 1
-TimeText.Size = UDim2.new(1, 0, 0, 30)
-TimeText.Parent = OverlayFrame
-local TimeStroke = Instance.new("UIStroke", TimeText)
-TimeStroke.Thickness = 2
-TimeStroke.Color = Color3.fromRGB(0, 0, 0)
-
-local CashText = Instance.new("TextLabel")
-CashText.Text = "Total cash : $0"
-CashText.TextColor3 = Color3.fromRGB(255, 255, 255)
-CashText.TextSize = 25
-CashText.Font = Enum.Font.GothamBold
-CashText.BackgroundTransparency = 1
-CashText.Size = UDim2.new(1, 0, 0, 30)
-CashText.Parent = OverlayFrame
-local CashStroke = Instance.new("UIStroke", CashText)
-CashStroke.Thickness = 2
-CashStroke.Color = Color3.fromRGB(0, 0, 0)
-
-local StatusText = Instance.new("TextLabel")
-StatusText.Text = "Status : Syncing..."
-StatusText.TextColor3 = Color3.fromRGB(255, 255, 255)
-StatusText.TextSize = 25
-StatusText.Font = Enum.Font.GothamBold
-StatusText.BackgroundTransparency = 1
-StatusText.Size = UDim2.new(1, 0, 0, 30)
-StatusText.Parent = OverlayFrame
-local StatusStroke = Instance.new("UIStroke", StatusText)
-StatusStroke.Thickness = 2
-StatusStroke.Color = Color3.fromRGB(0, 0, 0)
-
 local processedChars = {}
 
 local function removeOutline(character)
@@ -1245,7 +1171,7 @@ local function TriggerRob()
     end
 end
 
-local function SpawnAndTP(spawnName, arg2, tpPos1, tpPos2)
+local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
     if not getgenv().StarCrowAutoBank then return end
 
     local char = LocalPlayer.Character
@@ -1275,7 +1201,17 @@ local function SpawnAndTP(spawnName, arg2, tpPos1, tpPos2)
     hum = char:WaitForChild("Humanoid", 9e9)
 
     if root and hum then
+        if not prePos and not tpPos1 and not tpPos2 then return end
+
         task.wait(1.5)
+
+        if prePos then
+            if not getgenv().StarCrowAutoBank then return end
+            char:PivotTo(CFrame.new(prePos))
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            task.wait(0.5)
+        end
 
         if tpPos1 then
             if not getgenv().StarCrowAutoBank then return end
@@ -1295,32 +1231,6 @@ local function SpawnAndTP(spawnName, arg2, tpPos1, tpPos2)
         end
     end
 end
-
-local function GetPlayerMoneyStat()
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local bestStat = leaderstats:FindFirstChild("Cash")
-                      or leaderstats:FindFirstChild("Money")
-                      or leaderstats:FindFirstChild("Coins")
-                      or leaderstats:FindFirstChild("Bounty")
-                      or leaderstats:FindFirstChild("$$")
-        if not bestStat then
-            for _, stat in ipairs(leaderstats:GetChildren()) do
-                if stat:IsA("IntValue") or stat:IsA("NumberValue") then
-                    bestStat = stat
-                    break
-                end
-            end
-        end
-        return bestStat
-    end
-    return nil
-end
-
-local farmStartTime = 0
-local farmEarnedCash = 0
-local uiRenderConn = nil
-local moneyTrackConn = nil
 
 local Window = Fluent:CreateWindow({ Title = "StarCrowHub", SubTitle = "West Bound", TabWidth = 130, Size = UDim2.fromOffset(460, 400), Acrylic = false, Theme = S.Config.UITheme or "Amethyst", MinimizeKey = Enum.KeyCode.LeftControl })
 
@@ -1368,22 +1278,37 @@ Tabs.AutoFarm:AddButton({
     Title = "FPS Boost",
     Description = "Optimizes map graphics for maximum performance.",
     Callback = function()
+        pcall(function()
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 9e9
+        Lighting.Brightness = 1
         for _, v in ipairs(Lighting:GetDescendants()) do
-            if v:IsA("Atmosphere") or v:IsA("Clouds") then
+            if v:IsA("Atmosphere") or v:IsA("Clouds") or v:IsA("Sky") then
                 v:Destroy()
-            elseif v:IsA("BloomEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") then
+            elseif v:IsA("PostEffect") or v:IsA("BloomEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("BlurEffect") then
                 v.Enabled = false
             end
+        end
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            pcall(function()
+                sethiddenproperty(terrain, "Decoration", false)
+            end)
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
         end
         local function Optimize(v)
             if v:IsA("BasePart") and not v.Parent:FindFirstChild("Humanoid") then
                 v.Material = Enum.Material.SmoothPlastic
                 v.Reflectance = 0
+                v.CastShadow = false
             elseif v:IsA("Decal") or v:IsA("Texture") then
                 v.Transparency = 1
-            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("Beam") or v:IsA("Highlight") then
                 v.Enabled = false
             elseif v:IsA("PointLight") or v:IsA("SurfaceLight") or v:IsA("SpotLight") then
                 v.Enabled = false
@@ -1391,7 +1316,7 @@ Tabs.AutoFarm:AddButton({
         end
         for _, v in ipairs(workspace:GetDescendants()) do Optimize(v) end
         workspace.DescendantAdded:Connect(Optimize)
-        if Fluent then Fluent:Notify({ Title = "Success", Content = "Maximum FPS Boost Applied!", Duration = 3 }) end
+        if Fluent then Fluent:Notify({ Title = "Success", Content = "Ultra FPS Boost Applied!", Duration = 3 }) end
     end
 })
 
@@ -1403,59 +1328,23 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
         S.Config.AutoBankEnabled = v
         SaveConfig()
         if v then
-            farmStartTime = os.time()
-            farmEarnedCash = 0
-            BlurEffect.Size = 15
-            FarmOverlay.Enabled = true
-            ToggleFluentUI(false)
-
-            local moneyStat = GetPlayerMoneyStat()
-            if moneyStat then
-                local currentVal = moneyStat.Value
-                moneyTrackConn = moneyStat:GetPropertyChangedSignal("Value"):Connect(function()
-                    if moneyStat.Value > currentVal then
-                        farmEarnedCash = farmEarnedCash + (moneyStat.Value - currentVal)
-                    end
-                    currentVal = moneyStat.Value
-                end)
-            end
-
-            uiRenderConn = RunService.RenderStepped:Connect(function()
-                local elapsed = os.time() - farmStartTime
-                local h = math.floor(elapsed / 3600)
-                local m = math.floor((elapsed % 3600) / 60)
-                local s = elapsed % 60
-                TimeText.Text = string.format("Time : %02d:%02d:%02d", h, m, s)
-
-                local formattedCash = tostring(farmEarnedCash):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
-                CashText.Text = "Total cash : $" .. formattedCash
-
-                local currentStat = GetPlayerMoneyStat()
-                if currentStat then
-                    local formattedCurrent = tostring(currentStat.Value):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
-                    StatusText.Text = "Status : " .. formattedCurrent
-                else
-                    StatusText.Text = "Status : Syncing..."
-                end
-            end)
-
             task.spawn(function()
                 local Banks = {
-                    {Name = "Tumbleweed", arg2 = false, p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
-                    {Name = "Grayridge",  arg2 = false, p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
-                    {Name = "Plainview",  arg2 = false, p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
-                    {Name = "Silverton",  arg2 = false, p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
-                    {Name = "StoneCreek", arg2 = false, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
+                    {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
+                    {Name = "Grayridge",  arg2 = false, prePos = Vector3.new(1546.87, 120.09, 1603.42), p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
+                    {Name = "Plainview",  arg2 = false, prePos = nil, p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
+                    {Name = "Silverton",  arg2 = false, prePos = nil, p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
+                    {Name = "StoneCreek", arg2 = false, prePos = nil, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
                 }
 
                 local i = 1
                 while getgenv().StarCrowAutoBank do
                     local bank = Banks[i]
 
-                    SpawnAndTP(bank.Name, bank.arg2, bank.p1, bank.p2)
+                    SpawnAndTP(bank.Name, bank.arg2, bank.prePos, bank.p1, bank.p2)
 
                     if IsBagFull() then
-                        SpawnAndTP("FortCassidy", true, nil, nil)
+                        SpawnAndTP("FortCassidy", true, nil, nil, nil)
 
                         local timeout = 0
                         repeat
@@ -1470,12 +1359,6 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                     task.wait(0.5)
                 end
             end)
-        else
-            BlurEffect.Size = 0
-            FarmOverlay.Enabled = false
-            ToggleFluentUI(true)
-            if uiRenderConn then uiRenderConn:Disconnect() uiRenderConn = nil end
-            if moneyTrackConn then moneyTrackConn:Disconnect() moneyTrackConn = nil end
         end
     end
 })
@@ -1495,29 +1378,6 @@ Tabs.AutoFarm:AddInput("SpawnDelay", {
         end
     end
 })
-
-local MoneyStatus = Tabs.AutoFarm:AddParagraph({
-    Title = "Status",
-    Content = "Syncing data..."
-})
-
-task.spawn(function()
-    while task.wait(1) do
-        local moneyStat = GetPlayerMoneyStat()
-        local moneyText = "Leaderboard data not found"
-
-        if moneyStat then
-            local formattedValue = tostring(moneyStat.Value):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
-            moneyText = moneyStat.Name .. ": " .. formattedValue
-        else
-            moneyText = "Valid currency stat not found"
-        end
-
-        pcall(function()
-            MoneyStatus:SetDesc(moneyText)
-        end)
-    end
-end)
 
 
 
