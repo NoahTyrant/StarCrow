@@ -8,6 +8,7 @@ end)
 local S = {
     Config = {
         KillAura = false,
+        KillAuraAnimals = false,
         KillAuraDist = 100,
         KillAuraTeamCheck = false,
         KillAuraFriendCheck = false,
@@ -1398,7 +1399,7 @@ Tabs.Aim:AddSlider("HeadboxSize", { Title = "Hit Box Size", Default = S.Config.H
 
 Tabs.Aim:AddSection("Kill Aura")
 Tabs.Aim:AddToggle("KillAura", {
-    Title = "Kill Aura Player",
+    Title = "Kill Aura",
     Default = false,
     Callback = function(v)
         getgenv().KillAura = v
@@ -1440,19 +1441,41 @@ Tabs.Aim:AddToggle("KillAura", {
                             end
                         end
                     end
+                    local animalsFolder = workspace:FindFirstChild("Animals")
+                    if animalsFolder then
+                        for _, animal in ipairs(animalsFolder:GetChildren()) do
+                            local EnemyHumanoid = animal:FindFirstChildWhichIsA("Humanoid")
+                            local EnemyRoot = animal:FindFirstChild("Torso") or animal:FindFirstChild("LowerTorso") or animal:FindFirstChild("HumanoidRootPart")
+                            if EnemyHumanoid and EnemyRoot and EnemyHumanoid.Health > 0 then
+                                local Distance = (Root.Position - EnemyRoot.Position).Magnitude
+                                if Distance <= S.Config.KillAuraDist then
+                                    pcall(function()
+                                        if Tool.Name == "Knife" then
+                                            local Remote = Tool:FindFirstChild("EnableDamage")
+                                            if Remote then Remote:FireServer(1) end
+                                        elseif Tool.Name == "Machete" then
+                                            local Remote = Tool:FindFirstChild("Remote")
+                                            if Remote then Remote:FireServer(1) end
+                                        end
+                                        firetouchinterest(Handle, EnemyRoot, 0)
+                                        firetouchinterest(Handle, EnemyRoot, 1)
+                                    end)
+                                end
+                            end
+                        end
+                    end
                 end
             end)
         end
     end
 })
 
-
 local killAuraDistSaveThread = nil
 Tabs.Aim:AddSlider("KillAuraDist", {
     Title = "Aura Distance",
     Default = S.Config.KillAuraDist,
     Min = 10,
-    Max = 10000,
+    Max = 2000,
     Rounding = 0,
     Callback = function(v)
         S.Config.KillAuraDist = v
