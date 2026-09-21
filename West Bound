@@ -34,6 +34,7 @@ local S = {
         AntiFallDame     = false,
         ESPAnimals       = false,
         ItemMansionESP   = false,
+        JewelryESP       = false,
         ChestESP         = false,
         BagsESP          = false,
         AuraRobEnabled   = false,
@@ -265,9 +266,20 @@ local function CreateFloatButton(name, text, defaultPos, configKey)
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
+    btn.TextScaled = true
+    btn.TextWrapped = true
     btn.Visible = false
     btn.Parent = FloatGui
+
+    local sizeConstraint = Instance.new("UITextSizeConstraint", btn)
+    sizeConstraint.MaxTextSize = 16
+    sizeConstraint.MinTextSize = 8
+
+    local pad = Instance.new("UIPadding", btn)
+    pad.PaddingTop = UDim.new(0.2, 0)
+    pad.PaddingBottom = UDim.new(0.2, 0)
+    pad.PaddingLeft = UDim.new(0.12, 0)
+    pad.PaddingRight = UDim.new(0.12, 0)
 
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0.25, 0)
     local stroke = Instance.new("UIStroke", btn)
@@ -319,7 +331,6 @@ AuraBtn.MouseButton1Click:Connect(function()
     if auraMoved() then auraReset() return end
     if isRobbing then return end
     isRobbing = true
-    AuraBtn.Text = "..."
     setFloatStrokeActive(auraStroke, true)
     task.spawn(function()
         local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
@@ -364,7 +375,7 @@ AuraBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
-local AimNPCBtn, aimNPCStroke, aimNPCMoved, aimNPCReset = CreateFloatButton("AimNPCBtn", "Aim NPC", UDim2.new(0.8, 0, 0.15, 0), "FloatAimNPCPos")
+local AimNPCBtn, aimNPCStroke, aimNPCMoved, aimNPCReset = CreateFloatButton("AimNPCBtn", "Aim", UDim2.new(0.8, 0, 0.15, 0), "FloatAimNPCPos")
 setFloatStrokeActive(aimNPCStroke, S.Config.AimNPC)
 
 local isSilentAimHooked = false
@@ -1365,7 +1376,7 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
 })
 
 Tabs.AutoFarm:AddInput("SpawnDelay", {
-    Title = "DeathDelaySpawn",
+    Title = "Delay Spawn",
     Default = tostring(S.Config.SpawnDelay),
     Numeric = true,
     Finished = false,
@@ -1384,7 +1395,7 @@ Tabs.AutoFarm:AddInput("SpawnDelay", {
 
 Tabs.Aim:AddSection("Silent Aim")
 Tabs.Aim:AddToggle("AimPlayer", { Title = "Silent Aim Player", Default = S.Config.AimPlayer, Callback = function(v) S.Config.AimPlayer = v if v then InitSilentAimHook() end SaveConfig() end })
-Tabs.Aim:AddToggle("AimNPC", { Title = "Silent Aim NPC", Default = S.Config.AimNPC, Callback = function(v) S.Config.AimNPC = v if aimNPCStroke then setFloatStrokeActive(aimNPCStroke, v) end if v then InitSilentAimHook() end SaveConfig() end })
+Tabs.Aim:AddToggle("AimNPC", { Title = "Silent Aim Animals", Default = S.Config.AimNPC, Callback = function(v) S.Config.AimNPC = v if aimNPCStroke then setFloatStrokeActive(aimNPCStroke, v) end if v then InitSilentAimHook() end SaveConfig() end })
 Tabs.Aim:AddToggle("AimLasso", { Title = "Silent Aim Lasso", Default = S.Config.AimLasso, Callback = function(v) S.Config.AimLasso = v SaveConfig() end })
 Tabs.Aim:AddSlider("FOVRadius", { Title = "FOV Radius", Default = S.Config.FOVRadius, Min = 50, Max = 600, Rounding = 0, Callback = function(v) S.Config.FOVRadius = v SaveConfig() end })
 Tabs.Aim:AddDropdown("AimPart", { Title = "Aim Part", Values = {"Head", "Body"}, Default = S.Config.AimPart or "Head", Callback = function(v) S.Config.AimPart = v SaveConfig() end })
@@ -1731,7 +1742,7 @@ do
     end)
 
     Tabs.ESP:AddToggle("ItemMansionESP", {
-        Title = "Esp Item Manssion",
+        Title = "ESP Jewelry",
         Default = S.Config.ItemMansionESP,
         Callback = function(v)
             S.Config.ItemMansionESP = v
@@ -2202,7 +2213,7 @@ Tabs.Westbound:AddToggle("LassoTrollCivilians", {
 })
 
 Tabs.Westbound:AddSection("Auto Collect")
-Tabs.Westbound:AddParagraph({ Title = "Info", Content = "Auto Collect Bag, Item Manssion, Skin Animals, Open Chest" })
+Tabs.Westbound:AddParagraph({ Title = "Info", Content = "Auto Collect Bag, Jewelry, Skin Animals, Open Chest" })
 
 local AutoCollectEnabled = S.Config.AutoCollectEnabled
 Tabs.Westbound:AddToggle("AutoCollect", {
@@ -2316,7 +2327,7 @@ Tabs.Settings:AddToggle("ShowFloatAura", {
 })
 local isFirstLoadAimNPC = true
 Tabs.Settings:AddToggle("ShowFloatAimNPC", {
-    Title = "Show Float Aim NPC", Default = S.Config.ShowFloatAimNPC,
+    Title = "Show Float Aim Animals", Default = S.Config.ShowFloatAimNPC,
     Callback = function(v)
         AimNPCBtn.Visible = v
         if v and not isFirstLoadAimNPC then AimNPCBtn.Position = UDim2.new(0.8, 0, 0.15, 0) S.Config.FloatAimNPCPos = {0.8, 0, 0.15, 0} end
