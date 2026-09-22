@@ -5,7 +5,7 @@ end
 local queueTeleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
 if queueTeleport then
     pcall(function()
-        queueTeleport('repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character; loadstring(game:HttpGet("https://raw.githubusercontent.com/user2083811/Script-Public-Source/refs/heads/main/Auto%20Farm%20Burger"))()')
+        queueTeleport('repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character; loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Auto%20Farm%20Burger"))()')
     end)
 end
 
