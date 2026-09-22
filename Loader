@@ -1,0 +1,15 @@
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+local pid = game.PlaceId
+
+if pid == 2474168535 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/West%20Bound"))()
+elseif pid == 18286009370 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Gun%20Tycoon"))()
+elseif pid == 104770044244450 then
+    lp:Kick("Do not execute in Lobby")
+elseif pid == 89744231770777 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Dead%20Spells"))()
+else
+    lp:Kick("Game not supported")
+end
