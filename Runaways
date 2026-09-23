@@ -1,3 +1,8 @@
+pcall(function()
+    local networkPause = game:GetService("CoreGui").RobloxGui:FindFirstChild("CoreScripts/NetworkPause", true)
+    if networkPause then networkPause:Destroy() end
+end)
+
 if _G.StarCrowHubRunning then return end
 _G.StarCrowHubRunning = true
 
