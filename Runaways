@@ -420,25 +420,111 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
+local TimerFrame = Instance.new("Frame")
+TimerFrame.Name = "TimerFrame"
+TimerFrame.Size = UDim2.new(0, 150, 0, 32)
+TimerFrame.Position = UDim2.new(0.5, -75, 0, 45)
+TimerFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+TimerFrame.BackgroundTransparency = 0.15
+TimerFrame.BorderSizePixel = 0
+TimerFrame.Visible = false
+TimerFrame.Parent = LogoGui
+
+local timerCorner = Instance.new("UICorner", TimerFrame)
+timerCorner.CornerRadius = UDim.new(0, 8)
+
+local timerStroke = Instance.new("UIStroke", TimerFrame)
+timerStroke.Thickness = 1.5
+timerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local timerGrad = Instance.new("UIGradient", timerStroke)
+timerGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function()
+    TweenService:Create(timerGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
+end)
+
+local TimerLabel = Instance.new("TextLabel")
+TimerLabel.Size = UDim2.new(1, 0, 1, 0)
+TimerLabel.BackgroundTransparency = 1
+TimerLabel.Font = Enum.Font.GothamBold
+TimerLabel.Text = "AutoWin: 120s"
+TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TimerLabel.TextSize = 13
+TimerLabel.Parent = TimerFrame
+
+local tDragging, tDragInput, tDragStart, tStartPos = false, nil, nil, nil
+TimerFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragging, tDragInput, tDragStart, tStartPos = true, input, input.Position, TimerFrame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if tDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - tDragStart
+        TimerFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragging = false
+        tDragInput = nil
+    end
+end)
+
+local function showTimer(text)
+    TimerLabel.Text = text
+    TimerFrame.Visible = true
+end
+
+local function hideTimer()
+    TimerFrame.Visible = false
+end
+
 local uiVisible = true
 local minimizeKey = Enum.KeyCode.LeftControl
 local lastToggleTime = 0
+local cachedMainFrame = nil
+
+local function findMainFrame()
+    if cachedMainFrame and cachedMainFrame.Parent then return cachedMainFrame end
+    local roots = {}
+    if gethui then
+        local h = gethui()
+        if h then table.insert(roots, h) end
+    end
+    table.insert(roots, game:GetService("CoreGui"))
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if pGui then table.insert(roots, pGui) end
+    for _, root in ipairs(roots) do
+        for _, gui in ipairs(root:GetChildren()) do
+            if gui:IsA("ScreenGui") then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
+                        local p = desc.Parent
+                        while p and p.Parent ~= gui do p = p.Parent end
+                        if p and (p:IsA("Frame") or p:IsA("CanvasGroup") or p:IsA("GuiObject")) then
+                            cachedMainFrame = p
+                            return p
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
 
 local function toggleUI()
     local now = tick()
     if now - lastToggleTime < 0.3 then return end
     lastToggleTime = now
     uiVisible = not uiVisible
-    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
-        if gui:IsA("ScreenGui") then
-            for _, desc in ipairs(gui:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
-                    local p = desc.Parent
-                    while p and p.Parent ~= gui do p = p.Parent end
-                    if p and p:IsA("Frame") then p.Visible = uiVisible return end
-                end
-            end
-        end
+    local mf = findMainFrame()
+    if mf then
+        mf.Visible = uiVisible
     end
 end
 
@@ -512,6 +598,7 @@ Tabs.Main:AddToggle("AutoWinToggle", {
             purgeHeli()
             if runAutoWin then task.spawn(runAutoWin) end
         else
+            hideTimer()
             local char = LocalPlayer.Character
             if char and char:FindFirstChild("HumanoidRootPart") then
                 char.HumanoidRootPart.Anchored = false
@@ -726,31 +813,160 @@ Tabs.Vehicle:AddToggle("InfFuelToggle", {
     end
 })
 
+local cachedTimerLabel = nil
+local function getGameTimer()
+    if cachedTimerLabel and cachedTimerLabel.Parent and cachedTimerLabel.Text and cachedTimerLabel.Text ~= "" then
+        local m, s = cachedTimerLabel.Text:match("(%d+)m%s*(%d+)s")
+        if m and s then return tonumber(m) * 60 + tonumber(s), cachedTimerLabel.Text end
+        local m2, s2 = cachedTimerLabel.Text:match("(%d+):(%d+)")
+        if m2 and s2 then return tonumber(m2) * 60 + tonumber(s2), cachedTimerLabel.Text end
+    end
+    cachedTimerLabel = nil
+    local cmd = workspace:FindFirstChild("Command", true)
+    local customs = workspace:FindFirstChild("CustomsFinal", true)
+    local office = workspace:FindFirstChild("CustomsOffice", true)
+    local roots = {}
+    if cmd then table.insert(roots, cmd) end
+    if office then table.insert(roots, office) end
+    if customs then table.insert(roots, customs) end
+
+    for _, root in ipairs(roots) do
+        for _, desc in ipairs(root:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
+                local m, s = desc.Text:match("(%d+)m%s*(%d+)s")
+                if m and s then
+                    cachedTimerLabel = desc
+                    return tonumber(m) * 60 + tonumber(s), desc.Text
+                end
+                local m2, s2 = desc.Text:match("(%d+):(%d+)")
+                if m2 and s2 then
+                    cachedTimerLabel = desc
+                    return tonumber(m2) * 60 + tonumber(s2), desc.Text
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
 local function findCommandKey()
     for _, prompt in ipairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") and (prompt.ActionText == "Activate" or prompt.ObjectText == "Activate") then
+        if prompt:IsA("ProximityPrompt") and (prompt.ActionText:lower():find("activate") or prompt.ObjectText:lower():find("activate")) then
             local part = prompt.Parent
             if part and part:IsA("BasePart") then
                 return part, prompt
             end
         end
     end
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v.Name == "CommandButton" then
-            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
-            local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if part then
-                return part, prompt
-            end
-        end
-    end
     local cmd = workspace:FindFirstChild("Command", true)
     if cmd then
+        local console = cmd:FindFirstChild("Console", true)
+        if console and console:IsA("BasePart") then
+            local prompt = console:FindFirstChildWhichIsA("ProximityPrompt", true) or cmd:FindFirstChildWhichIsA("ProximityPrompt", true)
+            return console, prompt
+        end
         local part = cmd:FindFirstChildWhichIsA("BasePart", true)
         local prompt = cmd:FindFirstChildWhichIsA("ProximityPrompt", true)
         if part then return part, prompt end
     end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v.Name == "CommandButton" or v.Name == "Console" then
+            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+            local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if part then return part, prompt end
+        end
+    end
     return nil, nil
+end
+
+local function isCommandActive()
+    local part, prompt = findCommandKey()
+    if prompt then
+        if not prompt.Enabled then return true end
+        if prompt:GetAttribute("Active") == true or prompt:GetAttribute("Activated") == true then return true end
+        return false
+    end
+    local gameSecs = getGameTimer()
+    if gameSecs and gameSecs > 0 and gameSecs < 119 then
+        return true
+    end
+    if part then
+        if part:GetAttribute("Active") == true or part:GetAttribute("Activated") == true then return true end
+        local parent = part.Parent
+        if parent and (parent:GetAttribute("Active") == true or parent:GetAttribute("Activated") == true) then return true end
+    end
+    return false
+end
+
+local function activateCommand()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 10)
+    if not hrp then return false end
+
+    for attempt = 1, 10 do
+        if not Config.AutoWin then return false end
+
+        local keyPart, prompt = findCommandKey()
+        if prompt and not prompt.Enabled then
+            return true
+        end
+
+        local offsets = {
+            CFrame.new(0, 0, 1.5),
+            CFrame.new(0, 0, -1.5),
+            CFrame.new(0, 1, 0)
+        }
+        local offset = offsets[((attempt - 1) % #offsets) + 1]
+
+        if keyPart then
+            char:PivotTo(keyPart.CFrame * offset)
+        else
+            char:PivotTo(CFrame.new(530.9, 1746.5, 83581.1))
+        end
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.3)
+
+        if not prompt then
+            keyPart, prompt = findCommandKey()
+        end
+
+        if isCommandActive() then
+            return true
+        end
+
+        local holdTime = 2.5
+        if prompt and prompt.HoldDuration and prompt.HoldDuration > 0 then
+            holdTime = prompt.HoldDuration + 0.5
+        end
+
+        if prompt and fireproximityprompt then
+            pcall(function() fireproximityprompt(prompt) end)
+        end
+
+        pcall(function()
+            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            local elapsed = 0
+            while elapsed < holdTime and not isCommandActive() do
+                task.wait(0.15)
+                elapsed = elapsed + 0.15
+                if prompt and fireproximityprompt then
+                    pcall(function() fireproximityprompt(prompt) end)
+                end
+            end
+            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+
+        task.wait(0.4)
+
+        if isCommandActive() then
+            return true
+        end
+
+        task.wait(0.2)
+    end
+
+    return isCommandActive()
 end
 
 local function findOfficeCFrame()
@@ -764,7 +980,7 @@ local function findOfficeCFrame()
             end
         end
     end
-    return CFrame.new(461.7, 2207.1, 83458.0)
+    return CFrame.new(530.9, 1746.5, 83581.1)
 end
 
 local function findEndCFrame()
@@ -930,28 +1146,31 @@ end)
 local vim = game:GetService("VirtualInputManager")
 local autoWinRunning = false
 
-local queuedTeleport = false
 local function queueAutoExec()
-    if not Config.AutoWin or queuedTeleport then return end
-    queuedTeleport = true
-    local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+    if not Config.AutoWin then return end
+    _G.StarCrowHubRunning = nil
+    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (getgenv and getgenv().queue_on_teleport)
     if qot then
         pcall(function()
             qot([[
-                if _G.StarCrowTeleportLoaded then return end
-                _G.StarCrowTeleportLoaded = true
-                task.wait(1)
-                local paths = {"Runaways.txt", "Runaways.lua"}
-                for _, path in ipairs(paths) do
-                    if isfile and isfile(path) then
-                        loadstring(readfile(path))()
-                        break
-                    end
-                end
+                _G.StarCrowHubRunning = nil
+                repeat task.wait(0.5) until game:IsLoaded()
+                task.wait(1.5)
+                pcall(function()
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Loader"))()
+                end)
             ]])
         end)
     end
 end
+
+pcall(function()
+    LocalPlayer.OnTeleport:Connect(function()
+        if Config.AutoWin then
+            queueAutoExec()
+        end
+    end)
+end)
 
 local function getActiveReplayButton()
     local pGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -1061,34 +1280,7 @@ runAutoWin = function()
         end
         hrp.Anchored = false
 
-        char:PivotTo(findOfficeCFrame())
-        task.wait(0.5)
-        if not Config.AutoWin then break end
-
-        local keyPart, prompt = findCommandKey()
-        if not keyPart then
-            char:PivotTo(CFrame.new(-356.5, 2328.4, 83595.9))
-            task.wait(0.8)
-            keyPart, prompt = findCommandKey()
-        end
-        if not Config.AutoWin then break end
-
-        if keyPart then
-            char:PivotTo(keyPart.CFrame * CFrame.new(0, 0, 3))
-        else
-            char:PivotTo(CFrame.new(-356.5, 2328.4, 83595.9))
-        end
-        task.wait(0.4)
-
-        if prompt and fireproximityprompt then
-            fireproximityprompt(prompt)
-        end
-        pcall(function()
-            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(1.5)
-            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
-        task.wait(0.3)
+        activateCommand()
         if not Config.AutoWin then break end
 
         char:PivotTo(findOfficeCFrame())
@@ -1097,8 +1289,17 @@ runAutoWin = function()
         hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.Anchored = false
 
-        local waitTime = 120
+        local waitTime = 118
         while waitTime > 0 and Config.AutoWin do
+            local gameSecs, gameText = getGameTimer()
+            if gameSecs then
+                waitTime = gameSecs
+                showTimer(string.format("AutoWin: %s", gameText))
+                if gameSecs <= 0 then break end
+            else
+                showTimer(string.format("AutoWin: %ds", waitTime))
+            end
+
             task.wait(1)
             waitTime = waitTime - 1
 
@@ -1110,6 +1311,7 @@ runAutoWin = function()
                 break
             end
         end
+        hideTimer()
 
         if not Config.AutoWin then break end
 
@@ -1139,6 +1341,8 @@ runAutoWin = function()
 
         local replayTimeout = tick() + 90
         while Config.AutoWin and tick() < replayTimeout do
+            local rem = math.max(0, math.ceil(replayTimeout - tick()))
+            showTimer(string.format("Replay: %ds", rem))
             task.wait(0.5)
             local btn = getActiveReplayButton()
             if btn then
@@ -1149,10 +1353,12 @@ runAutoWin = function()
                 end
             end
         end
+        hideTimer()
 
         task.wait(1)
     end
 
+    hideTimer()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         char.HumanoidRootPart.Anchored = false
@@ -1558,3 +1764,15 @@ UserInputService.JumpRequest:Connect(function()
 end)
 
 Window:SelectTab(1)
+
+task.spawn(function()
+    for _ = 1, 30 do
+        task.wait(0.1)
+        local mf = findMainFrame()
+        if mf then
+            uiVisible = false
+            mf.Visible = false
+            break
+        end
+    end
+end)
