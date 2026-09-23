@@ -94,8 +94,146 @@ workspace.DescendantRemoving:Connect(function(obj)
     if breakableCache[obj] then breakableCache[obj] = nil end
 end)
 
-local GunsModule = ReplicatedStorage:WaitForChild("Data"):WaitForChild("Tools"):WaitForChild("Guns")
-local GunsData = require(GunsModule)
+local weaponConfigs = {}
+local origWeaponStats = {}
+
+local function registerWeaponConfig(name, stats)
+    if type(stats) ~= "table" then return end
+    if not weaponConfigs[name] then
+        weaponConfigs[name] = stats
+        origWeaponStats[name] = {
+            magCapacity = stats.magCapacity,
+            infiniteAmmo = stats.infiniteAmmo,
+            maxRpm = stats.maxRpm,
+            mode = stats.mode,
+            inaccuracy = stats.inaccuracy,
+            delay = stats.delay,
+            recoilPattern = stats.recoilPattern and {
+                pushback = stats.recoilPattern.pushback,
+                lift = stats.recoilPattern.lift,
+                shake = stats.recoilPattern.shake,
+                cameraLift = stats.recoilPattern.cameraLift
+            }
+        }
+    end
+end
+
+local function applyWeaponMods(name, stats)
+    if type(stats) ~= "table" then return end
+    local orig = origWeaponStats[name] or stats
+    if Config.InfAmmo then
+        stats.magCapacity = 99999
+        stats.infiniteAmmo = true
+    elseif orig.magCapacity ~= nil then
+        stats.magCapacity = orig.magCapacity
+        stats.infiniteAmmo = orig.infiniteAmmo
+    end
+    if Config.FastFire then
+        stats.maxRpm = 1200
+        stats.mode = "auto"
+        if stats.delay ~= nil then
+            stats.delay = 0.001
+        end
+    elseif orig.maxRpm ~= nil then
+        stats.maxRpm = orig.maxRpm
+        stats.mode = orig.mode
+        if stats.delay ~= nil then
+            stats.delay = orig.delay
+        end
+    end
+    if Config.NoSpread then
+        stats.inaccuracy = 0
+    elseif orig.inaccuracy ~= nil then
+        stats.inaccuracy = orig.inaccuracy
+    end
+    if type(stats.recoilPattern) == "table" then
+        if Config.NoRecoil then
+            stats.recoilPattern.pushback = 0
+            stats.recoilPattern.lift = 0
+            stats.recoilPattern.shake = 0
+            stats.recoilPattern.cameraLift = 0
+        elseif orig.recoilPattern then
+            stats.recoilPattern.pushback = orig.recoilPattern.pushback
+            stats.recoilPattern.lift = orig.recoilPattern.lift
+            stats.recoilPattern.shake = orig.recoilPattern.shake
+            stats.recoilPattern.cameraLift = orig.recoilPattern.cameraLift
+        end
+    end
+end
+
+local function scanWeapons()
+    pcall(function()
+        local dataFolder = ReplicatedStorage:FindFirstChild("Data")
+        local toolsFolder = dataFolder and dataFolder:FindFirstChild("Tools")
+        if toolsFolder then
+            for _, child in ipairs(toolsFolder:GetChildren()) do
+                if child:IsA("ModuleScript") then
+                    pcall(function()
+                        local res = require(child)
+                        if type(res) == "table" then
+                            if res.maxRpm or res.recoilPattern or res.displayName or res.magCapacity then
+                                registerWeaponConfig(child.Name, res)
+                                applyWeaponMods(child.Name, res)
+                            else
+                                for subName, subStats in pairs(res) do
+                                    if type(subStats) == "table" then
+                                        registerWeaponConfig(subName, subStats)
+                                        applyWeaponMods(subName, subStats)
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+
+        local DataModule = ReplicatedStorage:FindFirstChild("Data")
+        if DataModule then
+            local Data = require(DataModule)
+            if Data and Data.Tools and Data.Tools.GetToolConfig then
+                local toolList = {"Minigun", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
+                for _, tName in ipairs(toolList) do
+                    pcall(function()
+                        local cfg = Data.Tools.GetToolConfig(tName)
+                        if cfg and type(cfg) == "table" then
+                            registerWeaponConfig(tName, cfg)
+                            applyWeaponMods(tName, cfg)
+                        end
+                    end)
+                end
+
+                for _, pName in ipairs({"Punch", "Punches"}) do
+                    local punchCfg = Data.Tools.GetToolConfig(pName)
+                    if punchCfg then
+                        punchCfg.hitsPerSecond = 9999
+                        punchCfg.damage = Config.PunchDamage or 10
+                        punchCfg.destructibleDamage = Config.PunchDamage or 10
+                    end
+                end
+
+                if not Data.Tools._StarCrowHooked then
+                    Data.Tools._StarCrowHooked = true
+                    local oldGet = Data.Tools.GetToolConfig
+                    Data.Tools.GetToolConfig = function(name)
+                        local cfg = oldGet(name)
+                        if cfg and type(cfg) == "table" then
+                            registerWeaponConfig(name, cfg)
+                            applyWeaponMods(name, cfg)
+                        end
+                        return cfg
+                    end
+                end
+            end
+        end
+
+        for name, stats in pairs(weaponConfigs) do
+            applyWeaponMods(name, stats)
+        end
+    end)
+end
+
+scanWeapons()
 
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Visible = false
@@ -1076,44 +1214,28 @@ RunService.Stepped:Connect(function(_, dt)
         end
     end
 
-    pcall(function()
-        local DataModule = ReplicatedStorage:FindFirstChild("Data")
-        if DataModule then
-            local Data = require(DataModule)
-            if Data and Data.Tools and Data.Tools.GetToolConfig then
-                local punchCfg = Data.Tools.GetToolConfig("Punch")
-                if punchCfg then
-                    punchCfg.hitsPerSecond = 9999
-                    punchCfg.damage = Config.PunchDamage or 10
-                    punchCfg.destructibleDamage = Config.PunchDamage or 10
-                end
-            end
-        end
-    end)
+    scanWeapons()
 
-    pcall(function()
-        for name, stats in pairs(GunsData) do
-            if type(stats) == "table" then
-                if Config.InfAmmo then
-                    stats.magCapacity = 99999
-                    stats.infiniteAmmo = true
-                end
-                if Config.FastFire then
-                    stats.maxRpm = 1200
-                    stats.mode = "auto"
-                end
-                if Config.NoSpread then
-                    stats.inaccuracy = 0
-                end
-                if Config.NoRecoil and type(stats.recoilPattern) == "table" then
-                    stats.recoilPattern.pushback = 0
-                    stats.recoilPattern.lift = 0
-                    stats.recoilPattern.shake = 0
-                    stats.recoilPattern.cameraLift = 0
+    if Config.InfAmmo then
+        pcall(function()
+            local char = LocalPlayer.Character
+            if char then
+                for _, item in ipairs(char:GetChildren()) do
+                    if item:IsA("Tool") then
+                        item:SetAttribute("Ammo", 999)
+                    end
                 end
             end
-        end
-    end)
+            local bp = LocalPlayer:FindFirstChild("Backpack")
+            if bp then
+                for _, item in ipairs(bp:GetChildren()) do
+                    if item:IsA("Tool") then
+                        item:SetAttribute("Ammo", 999)
+                    end
+                end
+            end
+        end)
+    end
 end)
 
 pcall(function()
@@ -1131,46 +1253,127 @@ pcall(function()
 end)
 
 local holdingPunch = false
+local punchThreadRunning = false
+
+local function startPunchLoop()
+    if punchThreadRunning then return end
+    punchThreadRunning = true
+    task.spawn(function()
+        while holdingPunch and Config.NoPunchCooldown do
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 1 and hrp and not char:FindFirstChildOfClass("Tool") then
+                playLocalPunchAnim(hum)
+                pcall(function()
+                    FlowEvent:FireServer("Punches", "ReplicateSound", hrp, "Swoosh")
+                end)
+                local npcs, breakables = getPunchTargets(hrp.Position)
+                local dmg = Config.PunchDamage or 10
+                for _, enemyHum in ipairs(npcs) do
+                    pcall(function()
+                        FlowEvent:FireServer("NPCs", "Damage", enemyHum, dmg)
+                    end)
+                end
+                for _, bObj in ipairs(breakables) do
+                    pcall(function()
+                        FlowEvent:FireServer("DamageToOpen", "Damage", bObj, dmg, "melee")
+                    end)
+                end
+            end
+            task.wait(0.02)
+        end
+        punchThreadRunning = false
+    end)
+end
+
+local function onPunchBegan()
+    holdingPunch = true
+    if Config.NoPunchCooldown then
+        startPunchLoop()
+    end
+end
+
+local function onPunchEnded()
+    holdingPunch = false
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        holdingPunch = true
-        if Config.NoPunchCooldown then
-            task.spawn(function()
-                while holdingPunch and Config.NoPunchCooldown do
-                    local char = LocalPlayer.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hum and hum.Health > 1 and hrp and not char:FindFirstChildOfClass("Tool") then
-                        playLocalPunchAnim(hum)
-                        pcall(function()
-                            FlowEvent:FireServer("Punches", "ReplicateSound", hrp, "Swoosh")
-                        end)
-                        local npcs, breakables = getPunchTargets(hrp.Position)
-                        local dmg = Config.PunchDamage or 10
-                        for _, enemyHum in ipairs(npcs) do
-                            pcall(function()
-                                FlowEvent:FireServer("NPCs", "Damage", enemyHum, dmg)
-                            end)
-                        end
-                        for _, bObj in ipairs(breakables) do
-                            pcall(function()
-                                FlowEvent:FireServer("DamageToOpen", "Damage", bObj, dmg, "melee")
-                            end)
-                        end
-                    end
-                    task.wait(0.02)
-                end
-            end)
-        end
+        onPunchBegan()
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        holdingPunch = false
+        onPunchEnded()
     end
 end)
+
+UserInputService.TouchStarted:Connect(function(touch, processed)
+    if not processed then
+        local char = LocalPlayer.Character
+        if char and not char:FindFirstChildOfClass("Tool") then
+            onPunchBegan()
+        end
+    end
+end)
+
+UserInputService.TouchEnded:Connect(function(touch, processed)
+    if not processed then
+        onPunchEnded()
+    end
+end)
+
+local function bindPunchGui(obj)
+    if not obj or not (obj:IsA("GuiObject")) then return end
+    if obj:GetAttribute("PunchBound") then return end
+    obj:SetAttribute("PunchBound", true)
+
+    obj.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            onPunchBegan()
+        end
+    end)
+
+    obj.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            onPunchEnded()
+        end
+    end)
+
+    if obj:IsA("GuiButton") then
+        obj.MouseButton1Down:Connect(onPunchBegan)
+        obj.MouseButton1Up:Connect(onPunchEnded)
+        obj.TouchTap:Connect(function()
+            onPunchBegan()
+            task.delay(0.2, onPunchEnded)
+        end)
+    end
+end
+
+local function scanAndBindPunchGui()
+    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pgui then
+        for _, desc in ipairs(pgui:GetDescendants()) do
+            if desc.Name == "Punch" and (desc:IsA("GuiObject")) then
+                bindPunchGui(desc)
+            end
+        end
+    end
+end
+
+scanAndBindPunchGui()
+
+local pguiObj = LocalPlayer:WaitForChild("PlayerGui", 9e9)
+if pguiObj then
+    pguiObj.DescendantAdded:Connect(function(desc)
+        if desc.Name == "Punch" and (desc:IsA("GuiObject")) then
+            bindPunchGui(desc)
+        end
+    end)
+end
 
 
 RunService.RenderStepped:Connect(function()
