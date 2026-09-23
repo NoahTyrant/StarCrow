@@ -300,6 +300,26 @@ local Tabs = {
 
 local runAutoWin
 
+local function purgeHeli()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == "Helicopter" or (obj:IsA("Model") and obj.Name:lower():find("heli")) then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+    local h = workspace:FindFirstChild("Helicopter", true)
+    if h then
+        pcall(function() h:Destroy() end)
+    end
+end
+
+workspace.ChildAdded:Connect(function(child)
+    if Config.AutoWin and (child.Name == "Helicopter" or child.Name:lower():find("heli")) then
+        task.defer(function()
+            pcall(function() child:Destroy() end)
+        end)
+    end
+end)
+
 Tabs.Main:AddToggle("AutoWinToggle", {
     Title = "Auto Win",
     Default = Config.AutoWin,
@@ -307,6 +327,7 @@ Tabs.Main:AddToggle("AutoWinToggle", {
         Config.AutoWin = Value
         if Value then
             Config.KillAura = true
+            purgeHeli()
             if runAutoWin then task.spawn(runAutoWin) end
         else
             local char = LocalPlayer.Character
@@ -548,8 +569,21 @@ Tabs.Teleport:AddButton({
     Title = "Teleport To End",
     Callback = function()
         local char = LocalPlayer.Character
-        if char and char:FindFirstChild("HumanoidRootPart") then
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if char and hrp then
+            hrp.Anchored = true
             char:PivotTo(findOfficeCFrame())
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+            task.wait(5)
+            local curChar = LocalPlayer.Character
+            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+            if curChar and curHrp then
+                curChar:PivotTo(findOfficeCFrame())
+                curHrp.AssemblyLinearVelocity = Vector3.zero
+                curHrp.AssemblyAngularVelocity = Vector3.zero
+                curHrp.Anchored = false
+            end
         end
     end
 })
@@ -749,6 +783,7 @@ end
 task.spawn(function()
     while task.wait(0.3) do
         if Config.AutoWin then
+            purgeHeli()
             local btn = getActiveReplayButton()
             if btn then
                 queueAutoExec()
@@ -763,6 +798,7 @@ runAutoWin = function()
     autoWinRunning = true
 
     while Config.AutoWin do
+        purgeHeli()
         local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
         local hrp = char:WaitForChild("HumanoidRootPart", 10)
         local hum = char:WaitForChild("Humanoid", 10)
