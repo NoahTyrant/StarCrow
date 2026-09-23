@@ -1,1 +1,713 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+
+local LocalPlayer = Players.LocalPlayer
+local FlowEvent = ReplicatedStorage:WaitForChild("FlowClient", 9e9):WaitForChild("ClientRunner", 9e9):WaitForChild("Event", 9e9)
+local FlowFunction = ReplicatedStorage:WaitForChild("FlowClient", 9e9):WaitForChild("ClientRunner", 9e9):WaitForChild("Function", 9e9)
+
+if getconnections then
+    for _, v in pairs(getconnections(LocalPlayer.Idled)) do
+        v:Disable()
+    end
+else
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
+
+local Config = {
+    KillAura = false,
+    AuraRange = 50,
+    AutoBreakSafes = false,
+    WalkSpeedEnabled = false,
+    WalkSpeed = 30,
+    Noclip = false,
+    InfJump = false,
+    ESPPlayer = false,
+    ESPMob = false,
+    AutoPickupItem = false,
+    InfAmmo = false,
+    FastFire = false,
+    NoRecoil = false,
+    NoSpread = false,
+    SilentAim = false,
+    PovMode = "Pov",
+    PovSize = 150,
+    AimPart = "Head"
+}
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then Config[k] = v end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+
+local breakableCache = {}
+local function checkBreakable(obj)
+    if obj.Name == "Safe" or obj.Name == "CashRegister" or obj.Name == "ATM" then
+        breakableCache[obj] = true
+    end
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+    checkBreakable(v)
+end
+
+workspace.DescendantAdded:Connect(checkBreakable)
+workspace.DescendantRemoving:Connect(function(obj)
+    if breakableCache[obj] then breakableCache[obj] = nil end
+end)
+
+local GunsModule = ReplicatedStorage:WaitForChild("Data"):WaitForChild("Tools"):WaitForChild("Guns")
+local GunsData = require(GunsModule)
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = false
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness = 1.5
+FOVCircle.Transparency = 1
+FOVCircle.Filled = false
+
+local currentTarget = nil
+
+local function getClosestNPCToCenter()
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+
+    local closest = nil
+    local shortestDistance = math.huge
+    local centerPos = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+
+    local npcs = {}
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, v in ipairs(npcsFolder:GetChildren()) do
+            table.insert(npcs, v)
+        end
+    end
+    for _, v in ipairs(CollectionService:GetTagged("NPC")) do
+        local model = v:IsA("Model") and v or v:FindFirstAncestorOfClass("Model")
+        if model and not table.find(npcs, model) then
+            table.insert(npcs, model)
+        elseif not model and not table.find(npcs, v) then
+            table.insert(npcs, v)
+        end
+    end
+
+    for _, npc in ipairs(npcs) do
+        local hum = npc:FindFirstChildOfClass("Humanoid") or npc:FindFirstChild("Humanoid")
+        if hum and hum.Health > 0 then
+            local targetPart
+            if Config.AimPart == "Body" then
+                targetPart = npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
+            else
+                targetPart = npc:FindFirstChild("Head") or npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart")
+            end
+
+            if targetPart then
+                local screenPos, onScreen = cam.WorldToViewportPoint(cam, targetPart.Position)
+                if screenPos.Z > 0 then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerPos).Magnitude
+                    local inFov = (Config.PovMode == "No Pov") or (dist <= Config.PovSize)
+                    if inFov and dist < shortestDistance then
+                        closest = targetPart
+                        shortestDistance = dist
+                    end
+                end
+            end
+        end
+    end
+
+    return closest
+end
+
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+
+    if not checkcaller() then
+        if Config.SilentAim and (method == "Raycast" or method == "raycast") and self == workspace then
+            local target = currentTarget
+            if target and target.Parent then
+                local args = {...}
+                local origin = args[1]
+                local direction = args[2]
+                local params = args[3]
+                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" and direction.Magnitude > 50 then
+                    local toTarget = target.Position - origin
+                    local newDir = toTarget.Unit * math.max(direction.Magnitude, 1000)
+                    return oldNamecall(self, origin, newDir, params)
+                end
+            end
+        end
+
+        if method == "FireServer" and self.Name == "Event" then
+            local args = table.pack(...)
+            if Config.InfAmmo and args[1] == "Ammo" and args[2] == "setAmmo" then
+                args[4] = 999
+                return oldNamecall(self, table.unpack(args, 1, args.n))
+            end
+        end
+    end
+
+    return oldNamecall(self, ...)
+end)
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+        dragInput = nil
+    end
+end)
+
+local uiVisible = true
+local minimizeKey = Enum.KeyCode.LeftControl
+local lastToggleTime = 0
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
+    uiVisible = not uiVisible
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do p = p.Parent end
+                    if p and p:IsA("Frame") then p.Visible = uiVisible return end
+                end
+            end
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == minimizeKey then toggleUI() end
+end)
+
+local clickStartPos = Vector2.new()
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+end)
+LogoBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude < 10 then toggleUI() end
+    end
+end)
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrowHub",
+    SubTitle = "Runaways",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = "Amethyst",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Gun = Window:AddTab({ Title = "Gun", Icon = "swords" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Item = Window:AddTab({ Title = "Item", Icon = "package" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+Tabs.Main:AddToggle("KillAuraToggle", {
+    Title = "Kill Aura",
+    Default = Config.KillAura,
+    Callback = function(Value)
+        Config.KillAura = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoBreakSafesToggle", {
+    Title = "Auto Break Safes, ATM & Register",
+    Default = Config.AutoBreakSafes,
+    Callback = function(Value)
+        Config.AutoBreakSafes = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("AuraRangeSlider", {
+    Title = "Aura Range",
+    Default = Config.AuraRange,
+    Min = 1,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AuraRange = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddToggle("SilentAimToggle", {
+    Title = "Silent Aim NPC",
+    Default = Config.SilentAim,
+    Callback = function(Value)
+        Config.SilentAim = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddDropdown("PovModeDropdown", {
+    Title = "Pov Mode",
+    Values = {"Pov", "No Pov"},
+    Multi = false,
+    Default = Config.PovMode,
+    Callback = function(Value)
+        Config.PovMode = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddSlider("PovSizeSlider", {
+    Title = "Pov Size",
+    Default = Config.PovSize,
+    Min = 10,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.PovSize = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddDropdown("AimPartDropdown", {
+    Title = "Aim Target Part",
+    Values = {"Head", "Body"},
+    Multi = false,
+    Default = Config.AimPart,
+    Callback = function(Value)
+        Config.AimPart = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddToggle("InfAmmoToggle", {
+    Title = "Infinite Ammo",
+    Default = Config.InfAmmo,
+    Callback = function(Value)
+        Config.InfAmmo = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddToggle("FastFireToggle", {
+    Title = "Fast Fire",
+    Default = Config.FastFire,
+    Callback = function(Value)
+        Config.FastFire = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddToggle("NoSpreadToggle", {
+    Title = "No Spread",
+    Default = Config.NoSpread,
+    Callback = function(Value)
+        Config.NoSpread = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Gun:AddToggle("NoRecoilToggle", {
+    Title = "No Recoil",
+    Default = Config.NoRecoil,
+    Callback = function(Value)
+        Config.NoRecoil = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("SpeedToggle", {
+    Title = "Speed",
+    Default = Config.WalkSpeedEnabled,
+    Callback = function(Value)
+        Config.WalkSpeedEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("SpeedSlider", {
+    Title = "Speed Value",
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 250,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Default = Config.Noclip,
+    Callback = function(Value)
+        Config.Noclip = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJumpToggle", {
+    Title = "Infinite Jump",
+    Default = Config.InfJump,
+    Callback = function(Value)
+        Config.InfJump = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("AutoPickupItemToggle", {
+    Title = "Auto Pickup Item",
+    Default = Config.AutoPickupItem,
+    Callback = function(Value)
+        Config.AutoPickupItem = Value
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddToggle("ESPPlayerToggle", {
+    Title = "ESP Players",
+    Default = Config.ESPPlayer,
+    Callback = function(Value)
+        Config.ESPPlayer = Value
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddToggle("ESPMobToggle", {
+    Title = "ESP Mobs",
+    Default = Config.ESPMob,
+    Callback = function(Value)
+        Config.ESPMob = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
+        minimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+    end
+})
+
+task.spawn(function()
+    while task.wait(0.1) do
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local myHrp = char.HumanoidRootPart
+            
+            if Config.KillAura then
+                local npcsFolder = workspace:FindFirstChild("NPCs")
+                if npcsFolder then
+                    for _, npc in ipairs(npcsFolder:GetChildren()) do
+                        local enemyHum = npc:FindFirstChild("Humanoid")
+                        local enemyHrp = npc:FindFirstChild("HumanoidRootPart")
+                        if enemyHum and enemyHum.Health > 0 and enemyHrp then
+                            if (myHrp.Position - enemyHrp.Position).Magnitude <= Config.AuraRange then
+                                pcall(function() FlowEvent:FireServer("Punches", "ReplicateSound", enemyHrp, "Swoosh") end)
+                                pcall(function() FlowEvent:FireServer("NPCs", "Damage", enemyHum, 99999) end)
+                            end
+                        end
+                    end
+                end
+            end
+
+            if Config.AutoBreakSafes then
+                for obj in pairs(breakableCache) do
+                    if obj.Parent then
+                        local targetPart = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+                        if targetPart then
+                            if (myHrp.Position - targetPart.Position).Magnitude <= Config.AuraRange then
+                                pcall(function() FlowEvent:FireServer("Punches", "ReplicateSound", targetPart, "Swoosh") end)
+                                pcall(function() FlowEvent:FireServer("DamageToOpen", "Damage", obj, 99999, "melee") end)
+                            end
+                        end
+                    else
+                        breakableCache[obj] = nil
+                    end
+                end
+            end
+            
+            if Config.AutoPickupItem then
+                local lootFolder = workspace:FindFirstChild("Loot")
+                if lootFolder then
+                    for _, item in ipairs(lootFolder:GetChildren()) do
+                        local handle = item:FindFirstChild("Handle")
+                        if handle then
+                            if (myHrp.Position - handle.Position).Magnitude <= 50 then
+                                pcall(function()
+                                    FlowFunction:InvokeServer("Loot", "LootEquip", handle)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local _noclipThrottle = 0
+RunService.Stepped:Connect(function(_, dt)
+    local char = LocalPlayer.Character
+    if char then
+        if Config.Noclip then
+            _noclipThrottle = _noclipThrottle + dt
+            if _noclipThrottle >= 0.1 then
+                _noclipThrottle = 0
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then 
+                        part.CanCollide = false 
+                    end
+                end
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and Config.WalkSpeedEnabled then 
+            hum.WalkSpeed = Config.WalkSpeed 
+        end
+    end
+
+    pcall(function()
+        for name, stats in pairs(GunsData) do
+            if type(stats) == "table" then
+                if Config.InfAmmo then
+                    stats.magCapacity = 99999
+                    stats.infiniteAmmo = true
+                end
+                if Config.FastFire then
+                    stats.maxRpm = 1200
+                    stats.mode = "auto"
+                end
+                if Config.NoSpread then
+                    stats.inaccuracy = 0
+                end
+                if Config.NoRecoil and type(stats.recoilPattern) == "table" then
+                    stats.recoilPattern.pushback = 0
+                    stats.recoilPattern.lift = 0
+                    stats.recoilPattern.shake = 0
+                    stats.recoilPattern.cameraLift = 0
+                end
+            end
+        end
+    end)
+end)
+
+RunService.RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    if Config.SilentAim then
+        currentTarget = getClosestNPCToCenter()
+    else
+        currentTarget = nil
+    end
+
+    if Config.SilentAim and Config.PovMode == "Pov" then
+        FOVCircle.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+        FOVCircle.Radius = Config.PovSize
+        FOVCircle.Visible = true
+    else
+        FOVCircle.Visible = false
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
+                local hum = char.Humanoid
+                local head = char.Head
+                local esp = head:FindFirstChild("StarCrowPlayerESP")
+                local chams = char:FindFirstChild("StarCrowPlayerChams")
+
+                if Config.ESPPlayer and hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowPlayerESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 200, 0, 40)
+                        esp.StudsOffset = Vector3.new(0, 3, 0)
+                        esp.AlwaysOnTop = true
+                        
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.Font = Enum.Font.GothamBold
+                        text.TextSize = 13
+                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        text.TextStrokeTransparency = 0
+                        text.RichText = true
+                        esp.Parent = head
+                    end
+                    
+                    local teamColor = (player.Team and player.Team.TeamColor) and player.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+                    local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
+                    local hp = math.floor(hum.Health)
+                    
+                    esp.NameText.Text = string.format('<font color="rgb(%d,%d,%d)">%s</font> <font color="rgb(180,180,180)">[%dm]</font>\n<font color="rgb(0,255,0)">%d HP</font>', teamColor.R*255, teamColor.G*255, teamColor.B*255, player.DisplayName, dist, hp)
+
+                    if not chams then
+                        chams = Instance.new("Highlight")
+                        chams.Name = "StarCrowPlayerChams"
+                        chams.Parent = char
+                    end
+                    chams.FillColor = teamColor
+                    chams.OutlineColor = teamColor
+                    chams.FillTransparency = 0.7
+                    chams.OutlineTransparency = 0
+                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                else
+                    if esp then esp:Destroy() end
+                    if chams then chams:Destroy() end
+                end
+            end
+        end
+    end
+
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            local hum = npc:FindFirstChild("Humanoid")
+            local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+
+            if hum and head then
+                local esp = head:FindFirstChild("StarCrowMobESP")
+                
+                if Config.ESPMob and hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowMobESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 200, 0, 40)
+                        esp.StudsOffset = Vector3.new(0, 3, 0)
+                        esp.AlwaysOnTop = true
+                        
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.Font = Enum.Font.GothamBold
+                        text.TextSize = 12
+                        text.TextColor3 = Color3.fromRGB(255, 50, 50)
+                        text.TextStrokeTransparency = 0
+                        text.RichText = true
+                        esp.Parent = head
+                    end
+                    
+                    local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
+                    local hp = math.floor(hum.Health)
+                    esp.NameText.Text = string.format('%s <font color="rgb(180,180,180)">[%dm]</font>\n<font color="rgb(0,255,0)">%d HP</font>', npc.Name, dist, hp)
+                else
+                    if esp then esp:Destroy() end
+                end
+            end
+        end
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfJump then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end
+    end
+end)
+
+Window:SelectTab(1)
