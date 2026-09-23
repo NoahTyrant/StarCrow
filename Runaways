@@ -108,6 +108,10 @@ local function registerWeaponConfig(name, stats)
             mode = stats.mode,
             inaccuracy = stats.inaccuracy,
             delay = stats.delay,
+            ammoPerSecond = stats.ammoPerSecond,
+            raycastPerSecond = stats.raycastPerSecond,
+            grenadeSpeed = stats.grenadeSpeed,
+            rocketSpeed = stats.rocketSpeed,
             recoilPattern = stats.recoilPattern and {
                 pushback = stats.recoilPattern.pushback,
                 lift = stats.recoilPattern.lift,
@@ -124,9 +128,15 @@ local function applyWeaponMods(name, stats)
     if Config.InfAmmo then
         stats.magCapacity = 99999
         stats.infiniteAmmo = true
+        if stats.ammoPerSecond ~= nil then
+            stats.ammoPerSecond = 0
+        end
     elseif orig.magCapacity ~= nil then
         stats.magCapacity = orig.magCapacity
         stats.infiniteAmmo = orig.infiniteAmmo
+        if stats.ammoPerSecond ~= nil then
+            stats.ammoPerSecond = orig.ammoPerSecond
+        end
     end
     if Config.FastFire then
         stats.maxRpm = 1200
@@ -134,11 +144,29 @@ local function applyWeaponMods(name, stats)
         if stats.delay ~= nil then
             stats.delay = 0.001
         end
+        if stats.raycastPerSecond ~= nil then
+            stats.raycastPerSecond = 100
+        end
+        if stats.grenadeSpeed ~= nil then
+            stats.grenadeSpeed = 300
+        end
+        if stats.rocketSpeed ~= nil then
+            stats.rocketSpeed = 300
+        end
     elseif orig.maxRpm ~= nil then
         stats.maxRpm = orig.maxRpm
         stats.mode = orig.mode
         if stats.delay ~= nil then
             stats.delay = orig.delay
+        end
+        if stats.raycastPerSecond ~= nil then
+            stats.raycastPerSecond = orig.raycastPerSecond
+        end
+        if stats.grenadeSpeed ~= nil then
+            stats.grenadeSpeed = orig.grenadeSpeed
+        end
+        if stats.rocketSpeed ~= nil then
+            stats.rocketSpeed = orig.rocketSpeed
         end
     end
     if Config.NoSpread then
@@ -171,7 +199,7 @@ local function scanWeapons()
                     pcall(function()
                         local res = require(child)
                         if type(res) == "table" then
-                            if res.maxRpm or res.recoilPattern or res.displayName or res.magCapacity then
+                            if res.maxRpm or res.recoilPattern or res.displayName or res.magCapacity or res.ammoPerSecond then
                                 registerWeaponConfig(child.Name, res)
                                 applyWeaponMods(child.Name, res)
                             else
@@ -192,7 +220,7 @@ local function scanWeapons()
         if DataModule then
             local Data = require(DataModule)
             if Data and Data.Tools and Data.Tools.GetToolConfig then
-                local toolList = {"Minigun", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
+                local toolList = {"Minigun", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "Flamethrower", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
                 for _, tName in ipairs(toolList) do
                     pcall(function()
                         local cfg = Data.Tools.GetToolConfig(tName)
