@@ -33,7 +33,7 @@ local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
 local Config = {
     KillAura = false,
     AutoWin = false,
-    AuraRange = 50,
+    AuraRange = 2000,
     AutoBreakSafes = false,
     WalkSpeedEnabled = false,
     WalkSpeed = 30,
@@ -936,7 +936,7 @@ local function queueAutoExec()
                 if _G.StarCrowTeleportLoaded then return end
                 _G.StarCrowTeleportLoaded = true
                 task.wait(1)
-                local paths = {"StarCrowHub/Runaways.lua", "Runaways.txt", "Runaways.lua"}
+                local paths = {"Runaways.txt", "Runaways.lua"}
                 for _, path in ipairs(paths) do
                     if isfile and isfile(path) then
                         loadstring(readfile(path))()
@@ -1326,36 +1326,52 @@ local function onPunchEnded()
     holdingPunch = false
 end
 
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        onPunchBegan()
+local function getPunchButton()
+    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pgui then
+        local hud = pgui:FindFirstChild("HudGui")
+        if hud then
+            local tc = hud:FindFirstChild("TouchControl")
+            if tc then
+                local pb = tc:FindFirstChild("Punch")
+                if pb and pb:IsA("GuiObject") then
+                    return pb
+                end
+            end
+        end
+        for _, desc in ipairs(pgui:GetDescendants()) do
+            if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
+                return desc
+            end
+        end
     end
-end)
+    return nil
+end
 
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        onPunchEnded()
-    end
-end)
+local activePunchTouch = nil
 
-UserInputService.TouchStarted:Connect(function(touch, processed)
-    if not processed then
-        local char = LocalPlayer.Character
-        if char and not char:FindFirstChildOfClass("Tool") then
+UserInputService.TouchStarted:Connect(function(touch)
+    local btn = getPunchButton()
+    if btn and btn.Visible then
+        local ap = btn.AbsolutePosition
+        local as = btn.AbsoluteSize
+        local p = touch.Position
+        if p.X >= ap.X and p.X <= ap.X + as.X and p.Y >= ap.Y and p.Y <= ap.Y + as.Y then
+            activePunchTouch = touch
             onPunchBegan()
         end
     end
 end)
 
-UserInputService.TouchEnded:Connect(function(touch, processed)
-    if not processed then
+UserInputService.TouchEnded:Connect(function(touch)
+    if activePunchTouch and touch == activePunchTouch then
+        activePunchTouch = nil
         onPunchEnded()
     end
 end)
 
 local function bindPunchGui(obj)
-    if not obj or not (obj:IsA("GuiObject")) then return end
+    if not obj or not obj:IsA("GuiObject") then return end
     if obj:GetAttribute("PunchBound") then return end
     obj:SetAttribute("PunchBound", true)
 
@@ -1374,21 +1390,13 @@ local function bindPunchGui(obj)
     if obj:IsA("GuiButton") then
         obj.MouseButton1Down:Connect(onPunchBegan)
         obj.MouseButton1Up:Connect(onPunchEnded)
-        obj.TouchTap:Connect(function()
-            onPunchBegan()
-            task.delay(0.2, onPunchEnded)
-        end)
     end
 end
 
 local function scanAndBindPunchGui()
-    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pgui then
-        for _, desc in ipairs(pgui:GetDescendants()) do
-            if desc.Name == "Punch" and (desc:IsA("GuiObject")) then
-                bindPunchGui(desc)
-            end
-        end
+    local btn = getPunchButton()
+    if btn then
+        bindPunchGui(btn)
     end
 end
 
@@ -1397,11 +1405,26 @@ scanAndBindPunchGui()
 local pguiObj = LocalPlayer:WaitForChild("PlayerGui", 9e9)
 if pguiObj then
     pguiObj.DescendantAdded:Connect(function(desc)
-        if desc.Name == "Punch" and (desc:IsA("GuiObject")) then
+        if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
             bindPunchGui(desc)
         end
     end)
 end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then return end
+        onPunchBegan()
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then return end
+        onPunchEnded()
+    end
+end)
 
 
 RunService.RenderStepped:Connect(function()
