@@ -1234,14 +1234,22 @@ local function clickButton(btn)
     end)
 end
 
+local lastReplayClick = 0
+local function handleReplay(btn)
+    local now = tick()
+    if now - lastReplayClick < 8 then return end
+    lastReplayClick = now
+    queueAutoExec()
+    clickButton(btn)
+end
+
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.5) do
         if Config.AutoWin then
             purgeHeli()
             local btn = getActiveReplayButton()
             if btn then
-                queueAutoExec()
-                clickButton(btn)
+                handleReplay(btn)
             end
         end
     end
@@ -1263,8 +1271,7 @@ runAutoWin = function()
 
         local initialReplay = getActiveReplayButton()
         if initialReplay then
-            queueAutoExec()
-            clickButton(initialReplay)
+            handleReplay(initialReplay)
             task.wait(2)
             continue
         end
@@ -1339,21 +1346,15 @@ runAutoWin = function()
             end
         end
 
-        local replayTimeout = tick() + 90
-        while Config.AutoWin and tick() < replayTimeout do
-            local rem = math.max(0, math.ceil(replayTimeout - tick()))
-            showTimer(string.format("Replay: %ds", rem))
+        while Config.AutoWin do
             task.wait(0.5)
             local btn = getActiveReplayButton()
             if btn then
+                handleReplay(btn)
                 task.wait(2)
-                if not getActiveReplayButton() then
-                    task.wait(2)
-                    break
-                end
+                break
             end
         end
-        hideTimer()
 
         task.wait(1)
     end
