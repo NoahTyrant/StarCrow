@@ -10,6 +10,10 @@ elseif pid == 104770044244450 then
     lp:Kick("Do not execute in Lobby")
 elseif pid == 89744231770777 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Dead%20Spells"))()
+elseif pid == 117311404196294 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Runaways"))()
+elseif pid == 118418618261207 then
+    lp:Kick("Do not execute in Lobby")
 else
     lp:Kick("Game not supported")
 end
