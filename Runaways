@@ -1,3 +1,6 @@
+if _G.StarCrowHubRunning then return end
+_G.StarCrowHubRunning = true
+
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
 local Players = game:GetService("Players")
@@ -46,7 +49,10 @@ local Config = {
     SilentAim = false,
     PovMode = "Pov",
     PovSize = 150,
-    AimPart = "Head"
+    AimPart = "Head",
+    InfFuel = false,
+    NoPunchCooldown = false,
+    PunchDamage = 10
 }
 
 local function SaveConfig()
@@ -62,6 +68,9 @@ local function LoadConfig()
             local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
             for k, v in pairs(decoded) do
                 if Config[k] ~= nil then Config[k] = v end
+            end
+            if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
+                Config.PunchDamage = 10
             end
         end
     end)
@@ -292,6 +301,7 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
     Gun = Window:AddTab({ Title = "Gun", Icon = "swords" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Vehicle = Window:AddTab({ Title = "Vehicle", Icon = "car" }),
     Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Item = Window:AddTab({ Title = "Item", Icon = "package" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
@@ -320,13 +330,14 @@ workspace.ChildAdded:Connect(function(child)
     end
 end)
 
+Tabs.Main:AddSection("Auto Win")
+
 Tabs.Main:AddToggle("AutoWinToggle", {
     Title = "Auto Win",
     Default = Config.AutoWin,
     Callback = function(Value)
         Config.AutoWin = Value
         if Value then
-            Config.KillAura = true
             purgeHeli()
             if runAutoWin then task.spawn(runAutoWin) end
         else
@@ -338,6 +349,8 @@ Tabs.Main:AddToggle("AutoWinToggle", {
         SaveConfig()
     end
 })
+
+Tabs.Main:AddSection("Aura")
 
 Tabs.Main:AddToggle("KillAuraToggle", {
     Title = "Kill Aura",
@@ -366,6 +379,42 @@ Tabs.Main:AddSlider("AuraRangeSlider", {
     Callback = function(Value)
         Config.AuraRange = Value
         SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Punch")
+
+Tabs.Main:AddToggle("NoPunchCooldownToggle", {
+    Title = "Punch No Cooldown",
+    Default = Config.NoPunchCooldown,
+    Callback = function(Value)
+        Config.NoPunchCooldown = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("PunchDamageSlider", {
+    Title = "Dame",
+    Default = Config.PunchDamage or 10,
+    Min = 10,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.PunchDamage = Value
+        SaveConfig()
+        pcall(function()
+            local DataModule = ReplicatedStorage:FindFirstChild("Data")
+            if DataModule then
+                local Data = require(DataModule)
+                if Data and Data.Tools and Data.Tools.GetToolConfig then
+                    local punchCfg = Data.Tools.GetToolConfig("Punch")
+                    if punchCfg then
+                        punchCfg.damage = Value
+                        punchCfg.destructibleDamage = Value
+                    end
+                end
+            end
+        end)
     end
 })
 
@@ -491,6 +540,17 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     Default = Config.InfJump,
     Callback = function(Value)
         Config.InfJump = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSection("Fuel")
+
+Tabs.Vehicle:AddToggle("InfFuelToggle", {
+    Title = "Infinite Fuel",
+    Default = Config.InfFuel,
+    Callback = function(Value)
+        Config.InfFuel = Value
         SaveConfig()
     end
 })
@@ -632,7 +692,7 @@ task.spawn(function()
         if char and char:FindFirstChild("HumanoidRootPart") then
             local myHrp = char.HumanoidRootPart
             
-            if Config.KillAura then
+            if Config.KillAura or Config.AutoWin then
                 local npcsFolder = workspace:FindFirstChild("NPCs")
                 if npcsFolder then
                     for _, npc in ipairs(npcsFolder:GetChildren()) do
@@ -699,12 +759,16 @@ end)
 local vim = game:GetService("VirtualInputManager")
 local autoWinRunning = false
 
+local queuedTeleport = false
 local function queueAutoExec()
-    if not Config.AutoWin then return end
+    if not Config.AutoWin or queuedTeleport then return end
+    queuedTeleport = true
     local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
     if qot then
         pcall(function()
             qot([[
+                if _G.StarCrowTeleportLoaded then return end
+                _G.StarCrowTeleportLoaded = true
                 task.wait(1)
                 local paths = {"StarCrowHub/Runaways.lua", "Runaways.txt", "Runaways.lua"}
                 for _, path in ipairs(paths) do
@@ -825,7 +889,6 @@ runAutoWin = function()
             task.wait(0.2)
         end
         hrp.Anchored = false
-        Config.KillAura = true
 
         char:PivotTo(findOfficeCFrame())
         task.wait(0.5)
@@ -930,6 +993,58 @@ if Config.AutoWin then
     task.spawn(runAutoWin)
 end
 
+local punchAnim1 = nil
+local punchAnim2 = nil
+local punchAnimToggle = false
+local function playLocalPunchAnim(hum)
+    pcall(function()
+        local animFolder = ReplicatedStorage:FindFirstChild("FlowClient") and ReplicatedStorage.FlowClient:FindFirstChild("Punches")
+        if animFolder and hum then
+            local animator = hum:FindFirstChildOfClass("Animator") or hum
+            if not punchAnim1 and animFolder:FindFirstChild("Action") then
+                punchAnim1 = animator:LoadAnimation(animFolder.Action)
+            end
+            if not punchAnim2 and animFolder:FindFirstChild("SecondaryAction") then
+                punchAnim2 = animator:LoadAnimation(animFolder.SecondaryAction)
+            end
+            punchAnimToggle = not punchAnimToggle
+            if punchAnimToggle and punchAnim1 then
+                punchAnim1:Play(0, 1, 4)
+            elseif punchAnim2 then
+                punchAnim2:Play(0, 1, 4)
+            end
+        end
+    end)
+end
+
+local function getPunchTargets(myPos)
+    local npcs = {}
+    local breakables = {}
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            local hum = npc:FindFirstChildOfClass("Humanoid")
+            local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Torso") or (npc:IsA("Model") and npc.PrimaryPart)
+            if hum and hum.Health > 0 and root then
+                if (root.Position - myPos).Magnitude <= 20 then
+                    table.insert(npcs, hum)
+                end
+            end
+        end
+    end
+    for obj, _ in pairs(breakableCache) do
+        if obj and obj.Parent then
+            local p = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+            if p then
+                if (p.Position - myPos).Magnitude <= 20 then
+                    table.insert(breakables, obj)
+                end
+            end
+        end
+    end
+    return npcs, breakables
+end
+
 local _noclipThrottle = 0
 RunService.Stepped:Connect(function(_, dt)
     local char = LocalPlayer.Character
@@ -949,7 +1064,32 @@ RunService.Stepped:Connect(function(_, dt)
         if hum and Config.WalkSpeedEnabled then 
             hum.WalkSpeed = Config.WalkSpeed 
         end
+        if hum and hum.SeatPart then
+            local seat = hum.SeatPart
+            local veh = seat:FindFirstAncestorWhichIsA("Model")
+            if veh and Config.InfFuel then
+                local gas = veh:FindFirstChild("gasLevel")
+                if gas and gas:IsA("ValueBase") then
+                    pcall(function() gas.Value = 99999 end)
+                end
+            end
+        end
     end
+
+    pcall(function()
+        local DataModule = ReplicatedStorage:FindFirstChild("Data")
+        if DataModule then
+            local Data = require(DataModule)
+            if Data and Data.Tools and Data.Tools.GetToolConfig then
+                local punchCfg = Data.Tools.GetToolConfig("Punch")
+                if punchCfg then
+                    punchCfg.hitsPerSecond = 9999
+                    punchCfg.damage = Config.PunchDamage or 10
+                    punchCfg.destructibleDamage = Config.PunchDamage or 10
+                end
+            end
+        end
+    end)
 
     pcall(function()
         for name, stats in pairs(GunsData) do
@@ -975,6 +1115,63 @@ RunService.Stepped:Connect(function(_, dt)
         end
     end)
 end)
+
+pcall(function()
+    if hookmetamethod then
+        local oldIndex
+        oldIndex = hookmetamethod(game, "__index", function(self, key)
+            if not checkcaller() and key == "Value" and typeof(self) == "Instance" then
+                if Config.InfFuel and self.Name == "gasLevel" then
+                    return 99999
+                end
+            end
+            return oldIndex(self, key)
+        end)
+    end
+end)
+
+local holdingPunch = false
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holdingPunch = true
+        if Config.NoPunchCooldown then
+            task.spawn(function()
+                while holdingPunch and Config.NoPunchCooldown do
+                    local char = LocalPlayer.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 1 and hrp and not char:FindFirstChildOfClass("Tool") then
+                        playLocalPunchAnim(hum)
+                        pcall(function()
+                            FlowEvent:FireServer("Punches", "ReplicateSound", hrp, "Swoosh")
+                        end)
+                        local npcs, breakables = getPunchTargets(hrp.Position)
+                        local dmg = Config.PunchDamage or 10
+                        for _, enemyHum in ipairs(npcs) do
+                            pcall(function()
+                                FlowEvent:FireServer("NPCs", "Damage", enemyHum, dmg)
+                            end)
+                        end
+                        for _, bObj in ipairs(breakables) do
+                            pcall(function()
+                                FlowEvent:FireServer("DamageToOpen", "Damage", bObj, dmg, "melee")
+                            end)
+                        end
+                    end
+                    task.wait(0.02)
+                end
+            end)
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holdingPunch = false
+    end
+end)
+
 
 RunService.RenderStepped:Connect(function()
     local cam = workspace.CurrentCamera
