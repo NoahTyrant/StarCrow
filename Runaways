@@ -29,6 +29,7 @@ local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
 
 local Config = {
     KillAura = false,
+    AutoWin = false,
     AuraRange = 50,
     AutoBreakSafes = false,
     WalkSpeedEnabled = false,
@@ -291,10 +292,31 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
     Gun = Window:AddTab({ Title = "Gun", Icon = "swords" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Item = Window:AddTab({ Title = "Item", Icon = "package" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
+
+local runAutoWin
+
+Tabs.Main:AddToggle("AutoWinToggle", {
+    Title = "Auto Win",
+    Default = Config.AutoWin,
+    Callback = function(Value)
+        Config.AutoWin = Value
+        if Value then
+            Config.KillAura = true
+            if runAutoWin then task.spawn(runAutoWin) end
+        else
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.Anchored = false
+            end
+        end
+        SaveConfig()
+    end
+})
 
 Tabs.Main:AddToggle("KillAuraToggle", {
     Title = "Kill Aura",
@@ -325,6 +347,8 @@ Tabs.Main:AddSlider("AuraRangeSlider", {
         SaveConfig()
     end
 })
+
+Tabs.Gun:AddSection("Silent Aim")
 
 Tabs.Gun:AddToggle("SilentAimToggle", {
     Title = "Silent Aim NPC",
@@ -369,6 +393,8 @@ Tabs.Gun:AddDropdown("AimPartDropdown", {
     end
 })
 
+Tabs.Gun:AddSection("Gun Mod")
+
 Tabs.Gun:AddToggle("InfAmmoToggle", {
     Title = "Infinite Ammo",
     Default = Config.InfAmmo,
@@ -405,6 +431,8 @@ Tabs.Gun:AddToggle("NoRecoilToggle", {
     end
 })
 
+Tabs.Player:AddSection("Movement")
+
 Tabs.Player:AddToggle("SpeedToggle", {
     Title = "Speed",
     Default = Config.WalkSpeedEnabled,
@@ -426,6 +454,8 @@ Tabs.Player:AddSlider("SpeedSlider", {
     end
 })
 
+Tabs.Player:AddSection("Character")
+
 Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
     Default = Config.Noclip,
@@ -441,6 +471,86 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     Callback = function(Value)
         Config.InfJump = Value
         SaveConfig()
+    end
+})
+
+local function findCommandKey()
+    for _, prompt in ipairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") and (prompt.ActionText == "Activate" or prompt.ObjectText == "Activate") then
+            local part = prompt.Parent
+            if part and part:IsA("BasePart") then
+                return part, prompt
+            end
+        end
+    end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v.Name == "CommandButton" then
+            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+            local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if part then
+                return part, prompt
+            end
+        end
+    end
+    local cmd = workspace:FindFirstChild("Command", true)
+    if cmd then
+        local part = cmd:FindFirstChildWhichIsA("BasePart", true)
+        local prompt = cmd:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if part then return part, prompt end
+    end
+    return nil, nil
+end
+
+local function findOfficeCFrame()
+    local customs = workspace:FindFirstChild("CustomsFinal", true)
+    if customs then
+        local office = customs:FindFirstChild("CustomsOffice", true)
+        if office then
+            local floor = office:FindFirstChild("Floor", true)
+            if floor and floor:IsA("BasePart") then
+                return floor.CFrame * CFrame.new(0, 3.5, 0)
+            end
+        end
+    end
+    return CFrame.new(461.7, 2207.1, 83458.0)
+end
+
+local function findEndCFrame()
+    local customs = workspace:FindFirstChild("CustomsFinal", true)
+    if customs then
+        for _, desc in ipairs(customs:GetDescendants()) do
+            if desc:IsA("BasePart") and (CollectionService:HasTag(desc, "WorldEndPart") or desc.Name == "601" or desc.Name == "600") then
+                return desc.CFrame * CFrame.new(0, 3.5, 0)
+            end
+        end
+    end
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and CollectionService:HasTag(desc, "WorldEndPart") then
+            return desc.CFrame * CFrame.new(0, 3.5, 0)
+        end
+    end
+    return CFrame.new(343.7, 2205.7, 83637.0)
+end
+
+Tabs.Teleport:AddSection("Locations")
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Start",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char:PivotTo(CFrame.new(513.93, 2002.95, -15713.07))
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To End",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char:PivotTo(findOfficeCFrame())
+        end
     end
 })
 
@@ -518,6 +628,19 @@ task.spawn(function()
                         breakableCache[obj] = nil
                     end
                 end
+
+                local cashFolder = workspace:FindFirstChild("Cash")
+                if cashFolder then
+                    for _, item in ipairs(cashFolder:GetChildren()) do
+                        local targetCash = item:FindFirstChild("Cash", true) or (item.Name == "Cash" and item)
+                        if targetCash then
+                            local cashPart = targetCash:IsA("BasePart") and targetCash or item:FindFirstChildWhichIsA("BasePart")
+                            if not cashPart or (myHrp.Position - cashPart.Position).Magnitude <= math.max(Config.AuraRange, 200) then
+                                pcall(function() FlowEvent:FireServer("Cash", "Collect", targetCash) end)
+                            end
+                        end
+                    end
+                end
             end
             
             if Config.AutoPickupItem then
@@ -538,6 +661,238 @@ task.spawn(function()
         end
     end
 end)
+
+local vim = game:GetService("VirtualInputManager")
+local autoWinRunning = false
+
+local function queueAutoExec()
+    if not Config.AutoWin then return end
+    local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+    if qot then
+        pcall(function()
+            qot([[
+                task.wait(1)
+                local paths = {"StarCrowHub/Runaways.lua", "Runaways.txt", "Runaways.lua"}
+                for _, path in ipairs(paths) do
+                    if isfile and isfile(path) then
+                        loadstring(readfile(path))()
+                        break
+                    end
+                end
+            ]])
+        end)
+    end
+end
+
+local function getActiveReplayButton()
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return nil end
+
+    local endFrame = pGui:FindFirstChild("EndFrame")
+    if endFrame and endFrame:IsA("ScreenGui") and endFrame.Enabled then
+        local replay = endFrame:FindFirstChild("Replay", true)
+        if replay and replay:IsA("GuiButton") then
+            return replay
+        end
+    end
+
+    for _, desc in ipairs(pGui:GetDescendants()) do
+        if desc:IsA("GuiButton") then
+            local name = desc.Name:lower()
+            local text = desc:IsA("TextButton") and desc.Text:lower() or ""
+            if name == "replay" or text:find("replay") then
+                local sg = desc:FindFirstAncestorWhichIsA("ScreenGui")
+                if sg and sg.Enabled then
+                    return desc
+                end
+            end
+            for _, child in ipairs(desc:GetChildren()) do
+                if child:IsA("TextLabel") and child.Text:lower():find("replay") then
+                    local sg = desc:FindFirstAncestorWhichIsA("ScreenGui")
+                    if sg and sg.Enabled then
+                        return desc
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function clickButton(btn)
+    pcall(function()
+        if firesignal then
+            firesignal(btn.Activated)
+            firesignal(btn.MouseButton1Click)
+            firesignal(btn.MouseButton1Down)
+            firesignal(btn.MouseButton1Up)
+        end
+        if getconnections then
+            for _, conn in pairs(getconnections(btn.Activated)) do pcall(function() conn:Fire() end) end
+            for _, conn in pairs(getconnections(btn.MouseButton1Click)) do pcall(function() conn:Fire() end) end
+            for _, conn in pairs(getconnections(btn.MouseButton1Down)) do pcall(function() conn:Fire() end) end
+            for _, conn in pairs(getconnections(btn.MouseButton1Up)) do pcall(function() conn:Fire() end) end
+        end
+        local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2
+        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+        task.wait(0.05)
+        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+
+        local guiService = game:GetService("GuiService")
+        local inset = guiService:GetGuiInset()
+        vim:SendMouseButtonEvent(pos.X + inset.X, pos.Y + inset.Y, 0, true, game, 1)
+        task.wait(0.05)
+        vim:SendMouseButtonEvent(pos.X + inset.X, pos.Y + inset.Y, 0, false, game, 1)
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.3) do
+        if Config.AutoWin then
+            local btn = getActiveReplayButton()
+            if btn then
+                queueAutoExec()
+                clickButton(btn)
+            end
+        end
+    end
+end)
+
+runAutoWin = function()
+    if autoWinRunning then return end
+    autoWinRunning = true
+
+    while Config.AutoWin do
+        local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local hrp = char:WaitForChild("HumanoidRootPart", 10)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if not hrp or not hum then
+            task.wait(1)
+            continue
+        end
+
+        local initialReplay = getActiveReplayButton()
+        if initialReplay then
+            queueAutoExec()
+            clickButton(initialReplay)
+            task.wait(2)
+            continue
+        end
+
+        if hum.Health <= 0 then
+            task.wait(1)
+            continue
+        end
+
+        if hum.Sit then
+            hum.Sit = false
+            task.wait(0.2)
+        end
+        hrp.Anchored = false
+        Config.KillAura = true
+
+        char:PivotTo(findOfficeCFrame())
+        task.wait(0.5)
+        if not Config.AutoWin then break end
+
+        local keyPart, prompt = findCommandKey()
+        if not keyPart then
+            char:PivotTo(CFrame.new(-356.5, 2328.4, 83595.9))
+            task.wait(0.8)
+            keyPart, prompt = findCommandKey()
+        end
+        if not Config.AutoWin then break end
+
+        if keyPart then
+            char:PivotTo(keyPart.CFrame * CFrame.new(0, 0, 3))
+        else
+            char:PivotTo(CFrame.new(-356.5, 2328.4, 83595.9))
+        end
+        task.wait(0.4)
+
+        if prompt and fireproximityprompt then
+            fireproximityprompt(prompt)
+        end
+        pcall(function()
+            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(1.5)
+            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+        task.wait(0.3)
+        if not Config.AutoWin then break end
+
+        char:PivotTo(findOfficeCFrame())
+        task.wait(0.2)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Anchored = false
+
+        local waitTime = 120
+        while waitTime > 0 and Config.AutoWin do
+            task.wait(1)
+            waitTime = waitTime - 1
+
+            if getActiveReplayButton() then break end
+
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h and h.Health <= 0 then
+                break
+            end
+        end
+
+        if not Config.AutoWin then break end
+
+        if getActiveReplayButton() then
+            task.wait(3)
+            continue
+        end
+
+        char = LocalPlayer.Character
+        hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = false
+            char:PivotTo(findEndCFrame())
+            task.wait(0.3)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+
+            for step = 1, 8 do
+                if not Config.AutoWin or getActiveReplayButton() then break end
+                local curHrp = char:FindFirstChild("HumanoidRootPart")
+                if curHrp then
+                    char:PivotTo(char:GetPivot() * CFrame.new(0, 0, -60) + Vector3.new(0, 0, 60))
+                end
+                task.wait(0.25)
+            end
+        end
+
+        local replayTimeout = tick() + 90
+        while Config.AutoWin and tick() < replayTimeout do
+            task.wait(0.5)
+            local btn = getActiveReplayButton()
+            if btn then
+                task.wait(2)
+                if not getActiveReplayButton() then
+                    task.wait(2)
+                    break
+                end
+            end
+        end
+
+        task.wait(1)
+    end
+
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.Anchored = false
+    end
+    autoWinRunning = false
+end
+
+if Config.AutoWin then
+    task.spawn(runAutoWin)
+end
 
 local _noclipThrottle = 0
 RunService.Stepped:Connect(function(_, dt)
