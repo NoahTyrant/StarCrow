@@ -977,7 +977,7 @@ Tabs.Main:AddToggle("KillAuraToggle", {
 })
 
 Tabs.Main:AddToggle("AutoBreakSafesToggle", {
-    Title = "Auto Break Cash",
+    Title = "Auto Break Cash Source",
     Default = Config.AutoBreakSafes,
     Callback = function(Value)
         Config.AutoBreakSafes = Value
@@ -2407,7 +2407,7 @@ Tabs.ESP:AddToggle("ESPItemToggle", {
 })
 
 Tabs.ESP:AddToggle("ESPCashToggle", {
-    Title = "ESP Cash",
+    Title = "ESP Cash Source",
     Default = Config.ESPCash,
     Callback = function(Value)
         Config.ESPCash = Value
