@@ -14,6 +14,8 @@ local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local vim = VirtualInputManager
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 
@@ -60,7 +62,9 @@ local Config = {
     InfFuel = false,
     InfBombs = false,
     NoPunchCooldown = false,
-    PunchDamage = 10
+    PunchDamage = 10,
+    VehicleFly = false,
+    VehicleFlySpeed = 100
 }
 
 local function SaveConfig()
@@ -1053,6 +1057,71 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     end
 })
 
+Tabs.Player:AddSection("Camera")
+
+Tabs.Player:AddButton({
+    Title = "Unlock Third Person",
+    Callback = function()
+        pcall(function()
+            LocalPlayer.CameraMaxZoomDistance = 400
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CameraType = Enum.CameraType.Custom
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    cam.CameraSubject = hum
+                end
+            end
+        end)
+    end
+})
+
+Tabs.Player:AddButton({
+    Title = "First Person View",
+    Callback = function()
+        pcall(function()
+            LocalPlayer.CameraMaxZoomDistance = 0.5
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CameraType = Enum.CameraType.Custom
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    cam.CameraSubject = hum
+                end
+            end
+        end)
+    end
+})
+
+Tabs.Vehicle:AddSection("Flight")
+
+Tabs.Vehicle:AddToggle("VehicleFlyToggle", {
+    Title = "Vehicle Fly",
+    Default = Config.VehicleFly,
+    Callback = function(Value)
+        Config.VehicleFly = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleFlySpeedSlider", {
+    Title = "Fly speed",
+    Default = Config.VehicleFlySpeed,
+    Min = 20,
+    Max = 300,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleFlySpeed = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Vehicle:AddSection("Fuel")
 
 Tabs.Vehicle:AddToggle("InfFuelToggle", {
@@ -1149,13 +1218,13 @@ local function isCommandActive()
     return false
 end
 
-local function activateCommand()
+local function activateCommand(force)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart", 10)
     if not hrp then return false end
 
     for attempt = 1, 10 do
-        if not Config.AutoWin then return false end
+        if not Config.AutoWin and not force then return false end
 
         local keyPart, prompt = findCommandKey()
         if prompt and not prompt.Enabled then
@@ -1251,6 +1320,151 @@ local function findEndCFrame()
     return CFrame.new(343.7, 2205.7, 83637.0)
 end
 
+local function teleportEntity(cf)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if hum and hum.SeatPart then
+        local seat = hum.SeatPart
+        local veh = seat:FindFirstAncestorWhichIsA("Model")
+        if veh then
+            veh:PivotTo(cf)
+            for _, p in ipairs(veh:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity = Vector3.zero
+                    p.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            return
+        end
+    end
+
+    char:PivotTo(cf)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function getGasStations()
+    local list = {}
+    local seen = {}
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and desc.Name == "Road" then
+            local isGas = false
+            if desc.Parent and desc.Parent.Name == "Exterior" then
+                isGas = true
+            elseif desc.Parent and desc.Parent.Name:lower():find("gas") then
+                isGas = true
+            end
+            if isGas then
+                local pos = desc.Position
+                local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
+                if not seen[k] then
+                    seen[k] = true
+                    table.insert(list, {
+                        Position = pos,
+                        CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+                    })
+                end
+            end
+        end
+    end
+    if #list == 0 then
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("Model") and desc.Name:lower():find("gasstation") then
+                local ext = desc:FindFirstChild("Exterior", true)
+                local road = ext and ext:FindFirstChild("Road", true) or desc:FindFirstChild("Road", true)
+                if road and road:IsA("BasePart") then
+                    local pos = road.Position
+                    local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
+                    if not seen[k] then
+                        seen[k] = true
+                        table.insert(list, {
+                            Position = pos,
+                            CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+                        })
+                    end
+                end
+            end
+        end
+    end
+    return list
+end
+
+local function getPawnShops()
+    local list = {}
+    local seen = {}
+
+    local function addCandidate(pos, isPrimary)
+        if not pos then return end
+        local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
+        if not seen[k] then
+            seen[k] = true
+            table.insert(list, {
+                Position = pos,
+                CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)),
+                IsPrimary = isPrimary
+            })
+        end
+    end
+
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        local nameLower = desc.Name:lower()
+
+        if desc:IsA("BasePart") and desc.Name == "Road" then
+            if desc.Parent and (desc.Parent.Name:lower():find("pawn") or desc.Parent.Name:lower():find("trash")) then
+                addCandidate(desc.Position, true)
+            end
+        end
+
+        if nameLower:find("pawnshoplot") then
+            local road = desc:FindFirstChild("Road", true) or desc:FindFirstChildWhichIsA("BasePart", true) or (desc:IsA("BasePart") and desc)
+            if road then
+                local p = road:IsA("BasePart") and road.Position or (road:IsA("Model") and road:GetPivot().Position)
+                addCandidate(p, true)
+            end
+        end
+
+        if nameLower:find("trashamerica") or nameLower:find("trash_america") then
+            local p = desc.Parent
+            local pLot = (p and p:FindFirstChild("PawnShopLot", true)) or (p and p.Parent and p.Parent:FindFirstChild("PawnShopLot", true))
+            local road = pLot and (pLot:FindFirstChild("Road", true) or pLot:FindFirstChildWhichIsA("BasePart", true))
+            if road and road:IsA("BasePart") then
+                addCandidate(road.Position, true)
+            else
+                local cf = (desc:IsA("Model") and desc:GetPivot()) or (desc:IsA("BasePart") and desc.CFrame)
+                if cf then
+                    local front = (cf * CFrame.new(0, -6, -25)).Position
+                    addCandidate(front, false)
+                end
+            end
+        end
+
+        if nameLower == "pawnshop" or nameLower == "pawn" or (nameLower:find("pawn") and not nameLower:find("spawn")) then
+            if desc:IsA("Model") or desc:IsA("Folder") then
+                local road = desc:FindFirstChild("Road", true) or desc:FindFirstChild("PawnShopLot", true) or desc:FindFirstChildWhichIsA("BasePart", true)
+                if road then
+                    local p = road:IsA("BasePart") and road.Position or (road:IsA("Model") and road:GetPivot().Position)
+                    addCandidate(p, true)
+                end
+            end
+        end
+    end
+
+    local primary = {}
+    for _, item in ipairs(list) do
+        if item.IsPrimary then
+            table.insert(primary, item)
+        end
+    end
+    if #primary > 0 then
+        return primary
+    end
+    return list
+end
+
 Tabs.Teleport:AddSection("Locations")
 
 Tabs.Teleport:AddButton({
@@ -1264,25 +1478,102 @@ Tabs.Teleport:AddButton({
 })
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To End",
+    Title = "Teleport To Gate",
     Callback = function()
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if char and hrp then
-            hrp.Anchored = true
-            char:PivotTo(findOfficeCFrame())
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            task.wait(5)
+        task.spawn(function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            local keyPart, prompt = findCommandKey()
+            local gateCF = keyPart and keyPart.CFrame or findOfficeCFrame()
+            teleportEntity(gateCF * CFrame.new(0, 0, 3))
+            task.wait(0.2)
+
             local curChar = LocalPlayer.Character
-            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
-            if curChar and curHrp then
-                curChar:PivotTo(findOfficeCFrame())
-                curHrp.AssemblyLinearVelocity = Vector3.zero
-                curHrp.AssemblyAngularVelocity = Vector3.zero
-                curHrp.Anchored = false
+            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+            if curHum and curHum.Sit then
+                curHum.Sit = false
+                task.wait(0.2)
             end
-        end
+
+            local success = activateCommand(true)
+            if success then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Gate",
+                        Content = "Gate activated successfully",
+                        Duration = 3
+                    })
+                end)
+            else
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Gate",
+                        Content = "Teleported to Gate",
+                        Duration = 3
+                    })
+                end)
+            end
+        end)
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Gas Station",
+    Callback = function()
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local stations = getGasStations()
+            if #stations == 0 then
+                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "No Gas Station found in loaded map", Duration = 3 }) end)
+                return
+            end
+            local closest = nil
+            local minDist = math.huge
+            for _, st in ipairs(stations) do
+                local dist = (st.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = st
+                end
+            end
+            if closest then
+                teleportEntity(closest.CFrame)
+                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "Teleported to Gas Station", Duration = 3 }) end)
+            end
+        end)
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Pawn Shop",
+    Callback = function()
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local shops = getPawnShops()
+            if #shops == 0 then
+                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "No Pawn Shop found in loaded map", Duration = 3 }) end)
+                return
+            end
+            local closest = nil
+            local minDist = math.huge
+            for _, sh in ipairs(shops) do
+                local dist = (sh.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = sh
+                end
+            end
+            if closest then
+                teleportEntity(closest.CFrame)
+                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "Teleported to Pawn Shop", Duration = 3 }) end)
+            end
+        end)
     end
 })
 
@@ -1724,6 +2015,172 @@ local function getPunchTargets(myPos)
     return npcs, breakables
 end
 
+local lastVehFlyModel = nil
+local flyAlignGyro = nil
+local flyLinearVel = nil
+
+local function cleanupVehicleFly()
+    if flyAlignGyro then
+        pcall(function() flyAlignGyro:Destroy() end)
+        flyAlignGyro = nil
+    end
+    if flyLinearVel then
+        pcall(function() flyLinearVel:Destroy() end)
+        flyLinearVel = nil
+    end
+    if lastVehFlyModel then
+        pcall(function()
+            for _, p in ipairs(lastVehFlyModel:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity = Vector3.zero
+                    p.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end)
+        lastVehFlyModel = nil
+    end
+    local cam = workspace.CurrentCamera
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if cam and hum and cam.CameraSubject ~= hum then
+        cam.CameraSubject = hum
+    end
+end
+
+local function disableVehicleCamera()
+    pcall(function()
+        local pscripts = LocalPlayer:FindFirstChild("PlayerScripts")
+        local pmodule = pscripts and pscripts:FindFirstChild("PlayerModule")
+        if pmodule then
+            local camModule = require(pmodule:WaitForChild("CameraModule"))
+            if camModule and camModule.activeCameraController then
+                local curCam = camModule.activeCameraController
+                if curCam.vehicleCameraCore then
+                    curCam.vehicleCameraCore = nil
+                end
+            end
+        end
+    end)
+end
+
+local function handleVehicleFly(seat, veh, dt)
+    if not (seat and seat:IsA("VehicleSeat") and veh) then
+        cleanupVehicleFly()
+        return
+    end
+
+    if not Config.VehicleFly then
+        cleanupVehicleFly()
+        return
+    end
+
+    disableVehicleCamera()
+
+    lastVehFlyModel = veh
+    local root = seat.AssemblyRootPart or veh.PrimaryPart or seat
+    local cam = workspace.CurrentCamera
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+    local camCFrame = cam and cam.CFrame or root.CFrame
+    local camLook = camCFrame.LookVector
+    local fwdDir = camLook
+    local rightDir = camCFrame.RightVector
+
+    local speed = Config.VehicleFlySpeed or 100
+    local moveDir = Vector3.zero
+
+    local isMovingFwd = false
+    local isMovingBack = false
+    local isMovingLeft = false
+    local isMovingRight = false
+    local isMovingUp = false
+    local isMovingDown = false
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+        isMovingFwd = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+        isMovingBack = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+        isMovingLeft = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+        isMovingRight = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        isMovingUp = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+        isMovingDown = true
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.E) then
+        isMovingUp = true
+    end
+
+    if hum and hum.MoveDirection.Magnitude > 0.1 then
+        local md = hum.MoveDirection
+        local flatFwd = Vector3.new(fwdDir.X, 0, fwdDir.Z)
+        if flatFwd.Magnitude > 0.001 then flatFwd = flatFwd.Unit end
+        local flatRight = Vector3.new(rightDir.X, 0, rightDir.Z)
+        if flatRight.Magnitude > 0.001 then flatRight = flatRight.Unit end
+
+        local fwdDot = md:Dot(flatFwd)
+        local rightDot = md:Dot(flatRight)
+        if fwdDot > 0.2 then isMovingFwd = true end
+        if fwdDot < -0.2 then isMovingBack = true end
+        if rightDot > 0.2 then isMovingRight = true end
+        if rightDot < -0.2 then isMovingLeft = true end
+    end
+
+    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pgui then
+        local touchGui = pgui:FindFirstChild("TouchGui")
+        local tc = touchGui and touchGui:FindFirstChild("TouchControlFrame")
+        local jumpBtn = tc and tc:FindFirstChild("JumpButton")
+        if jumpBtn and jumpBtn.Visible and jumpBtn.ImageTransparency < 0.8 then
+            isMovingUp = true
+        end
+    end
+
+    if isMovingFwd then moveDir = moveDir + fwdDir end
+    if isMovingBack then moveDir = moveDir - fwdDir end
+    if isMovingRight then moveDir = moveDir + rightDir end
+    if isMovingLeft then moveDir = moveDir - rightDir end
+    if isMovingUp then moveDir = moveDir + Vector3.new(0, 1, 0) end
+    if isMovingDown then moveDir = moveDir + Vector3.new(0, -1, 0) end
+
+    local targetVel = Vector3.zero
+    if moveDir.Magnitude > 0.001 then
+        targetVel = moveDir.Unit * speed
+    end
+
+    local yawLook = Vector3.new(camLook.X, 0, camLook.Z)
+    if yawLook.Magnitude > 0.001 then
+        yawLook = yawLook.Unit
+        local curLook = root.CFrame.LookVector
+        local flatCur = Vector3.new(curLook.X, 0, curLook.Z)
+        if flatCur.Magnitude > 0.001 then flatCur = flatCur.Unit end
+
+        local crossY = flatCur:Cross(yawLook).Y
+        local dotP = math.clamp(flatCur:Dot(yawLook), -1, 1)
+        local angDiff = math.atan2(crossY, dotP)
+
+        root.AssemblyAngularVelocity = Vector3.new(0, angDiff * 10, 0)
+    else
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    root.AssemblyLinearVelocity = targetVel
+    for _, p in ipairs(veh:GetDescendants()) do
+        if p:IsA("BasePart") and p ~= root then
+            p.AssemblyLinearVelocity = targetVel
+            p.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+end
+
 local _noclipThrottle = 0
 local _ammoThrottle = 0
 RunService.Stepped:Connect(function(_, dt)
@@ -1749,6 +2206,9 @@ RunService.Stepped:Connect(function(_, dt)
                     pcall(function() gas.Value = 99999 end)
                 end
             end
+            handleVehicleFly(seat, veh, dt)
+        else
+            cleanupVehicleFly()
         end
     end
 
