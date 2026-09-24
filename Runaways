@@ -59,6 +59,7 @@ local Config = {
     PovSize = 90,
     AimPart = "Head",
     InfFuel = false,
+    InfBombs = false,
     NoPunchCooldown = false,
     PunchDamage = 10
 }
@@ -188,6 +189,8 @@ local function registerWeaponConfig(name, stats)
             grenadeSpeed = stats.grenadeSpeed,
             rocketSpeed = stats.rocketSpeed,
             chargeDuration = stats.chargeDuration,
+            throwSpeed = stats.throwSpeed,
+            throwAngle = stats.throwAngle,
             recoilPattern = stats.recoilPattern and {
                 pushback = stats.recoilPattern.pushback,
                 lift = stats.recoilPattern.lift,
@@ -232,6 +235,9 @@ local function applyWeaponMods(name, stats)
         if stats.chargeDuration ~= nil then
             stats.chargeDuration = 0.001
         end
+        if stats.throwSpeed ~= nil then
+            stats.throwSpeed = 300
+        end
     elseif orig.maxRpm ~= nil then
         stats.maxRpm = orig.maxRpm
         stats.mode = orig.mode
@@ -249,6 +255,9 @@ local function applyWeaponMods(name, stats)
         end
         if stats.chargeDuration ~= nil then
             stats.chargeDuration = orig.chargeDuration
+        end
+        if stats.throwSpeed ~= nil then
+            stats.throwSpeed = orig.throwSpeed
         end
     end
     if Config.NoSpread then
@@ -271,7 +280,31 @@ local function applyWeaponMods(name, stats)
     end
 end
 
+local THROWABLE_NAMES = {"C4", "Molotov", "PinguinPlushyAsMolotov"}
+
+local function hookThrowableDeleter()
+    pcall(function()
+        local FlowClientModule = ReplicatedStorage:FindFirstChild("FlowClient")
+        if FlowClientModule then
+            local FlowClient = require(FlowClientModule)
+            if FlowClient and FlowClient.ThrowableDeleter and not FlowClient.ThrowableDeleter._StarCrowHooked then
+                FlowClient.ThrowableDeleter._StarCrowHooked = true
+                for k, v in pairs(FlowClient.ThrowableDeleter) do
+                    if type(v) == "function" and k ~= "_StarCrowHooked" then
+                        local oldFn = v
+                        FlowClient.ThrowableDeleter[k] = function(...)
+                            if Config.InfBombs then return end
+                            return oldFn(...)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 local function scanWeapons()
+    hookThrowableDeleter()
     pcall(function()
         local dataFolder = ReplicatedStorage:FindFirstChild("Data")
         local toolsFolder = dataFolder and dataFolder:FindFirstChild("Tools")
@@ -302,7 +335,7 @@ local function scanWeapons()
         if DataModule then
             local Data = require(DataModule)
             if Data and Data.Tools and Data.Tools.GetToolConfig then
-                local toolList = {"Minigun", "MinigunAsLaser", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "GrenadeLauncherAsPlushyLauncher", "Flamethrower", "SoundCannon", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
+                local toolList = {"Minigun", "MinigunAsLaser", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "GrenadeLauncherAsPlushyLauncher", "Flamethrower", "SoundCannon", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol", "C4", "Molotov", "Grenade", "BananaAsGrenade", "PinguinPlushyAsMolotov"}
                 for _, tName in ipairs(toolList) do
                     pcall(function()
                         local cfg = Data.Tools.GetToolConfig(tName)
@@ -459,6 +492,9 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             if Config.InfAmmo and args[1] == "Ammo" and args[2] == "setAmmo" then
                 args[4] = 999
                 return oldNamecall(self, table.unpack(args, 1, args.n))
+            end
+            if Config.InfBombs and (args[1] == "ThrowableDeleter" or (type(args[1]) == "string" and string.find(args[1], "Delete"))) then
+                return
             end
         end
     end
@@ -662,7 +698,7 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-    Gun = Window:AddTab({ Title = "Gun", Icon = "swords" }),
+    Combat = Window:AddTab({ Title = "Combat", Icon = "swords" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
     Vehicle = Window:AddTab({ Title = "Vehicle", Icon = "car" }),
     Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
@@ -670,6 +706,7 @@ local Tabs = {
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
+Tabs.Gun = Tabs.Combat
 
 local runAutoWin
 
@@ -813,9 +850,9 @@ Tabs.Main:AddSlider("PunchDamageSlider", {
     end
 })
 
-Tabs.Gun:AddSection("Silent Aim")
+Tabs.Combat:AddSection("Silent Aim")
 
-Tabs.Gun:AddToggle("SilentAimToggle", {
+Tabs.Combat:AddToggle("SilentAimToggle", {
     Title = "Silent Aim NPC",
     Default = Config.SilentAim,
     Callback = function(Value)
@@ -824,7 +861,7 @@ Tabs.Gun:AddToggle("SilentAimToggle", {
     end
 })
 
-Tabs.Gun:AddDropdown("PovModeDropdown", {
+Tabs.Combat:AddDropdown("PovModeDropdown", {
     Title = "Pov Mode",
     Values = {"Pov", "No Pov"},
     Multi = false,
@@ -835,7 +872,7 @@ Tabs.Gun:AddDropdown("PovModeDropdown", {
     end
 })
 
-Tabs.Gun:AddSlider("PovSizeSlider", {
+Tabs.Combat:AddSlider("PovSizeSlider", {
     Title = "Pov Size",
     Default = Config.PovSize,
     Min = 10,
@@ -847,7 +884,7 @@ Tabs.Gun:AddSlider("PovSizeSlider", {
     end
 })
 
-Tabs.Gun:AddDropdown("AimPartDropdown", {
+Tabs.Combat:AddDropdown("AimPartDropdown", {
     Title = "Aim Target Part",
     Values = {"Head", "Body"},
     Multi = false,
@@ -858,9 +895,9 @@ Tabs.Gun:AddDropdown("AimPartDropdown", {
     end
 })
 
-Tabs.Gun:AddSection("Gun Mod")
+Tabs.Combat:AddSection("Gun Mod")
 
-Tabs.Gun:AddToggle("InfAmmoToggle", {
+Tabs.Combat:AddToggle("InfAmmoToggle", {
     Title = "Infinite Ammo",
     Default = Config.InfAmmo,
     Callback = function(Value)
@@ -869,7 +906,7 @@ Tabs.Gun:AddToggle("InfAmmoToggle", {
     end
 })
 
-Tabs.Gun:AddToggle("FastFireToggle", {
+Tabs.Combat:AddToggle("FastFireToggle", {
     Title = "Fast Fire",
     Default = Config.FastFire,
     Callback = function(Value)
@@ -879,7 +916,7 @@ Tabs.Gun:AddToggle("FastFireToggle", {
     end
 })
 
-Tabs.Gun:AddToggle("NoSpreadToggle", {
+Tabs.Combat:AddToggle("NoSpreadToggle", {
     Title = "No Spread",
     Default = Config.NoSpread,
     Callback = function(Value)
@@ -889,13 +926,25 @@ Tabs.Gun:AddToggle("NoSpreadToggle", {
     end
 })
 
-Tabs.Gun:AddToggle("NoRecoilToggle", {
+Tabs.Combat:AddToggle("NoRecoilToggle", {
     Title = "No Recoil",
     Default = Config.NoRecoil,
     Callback = function(Value)
         Config.NoRecoil = Value
         SaveConfig()
         scanWeapons()
+    end
+})
+
+Tabs.Combat:AddSection("Bomb & Throwable")
+
+Tabs.Combat:AddToggle("InfBombsToggle", {
+    Title = "Infinite Bombs",
+    Default = Config.InfBombs,
+    Callback = function(Value)
+        Config.InfBombs = Value
+        SaveConfig()
+        hookThrowableDeleter()
     end
 })
 
@@ -1681,6 +1730,42 @@ RunService.Stepped:Connect(function(_, dt)
                 end
             end)
         end
+    end
+
+    if Config.InfBombs then
+        local char = LocalPlayer.Character
+        local bp = LocalPlayer:FindFirstChild("Backpack")
+        if char then
+            for _, t in ipairs(char:GetChildren()) do
+                if t:IsA("Tool") and (t:HasTag("C4") or t.Name == "C4") then
+                    if t:HasTag("RemoteOnly") then
+                        t:RemoveTag("RemoteOnly")
+                    end
+                end
+            end
+        end
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and (t:HasTag("C4") or t.Name == "C4") then
+                    if t:HasTag("RemoteOnly") then
+                        t:RemoveTag("RemoteOnly")
+                    end
+                end
+            end
+        end
+        pcall(function()
+            local pgui = LocalPlayer:FindFirstChild("PlayerGui")
+            local wgui = pgui and pgui:FindFirstChild("WeaponGui")
+            if wgui and wgui.Enabled and wgui:FindFirstChild("Magazine") then
+                local ammo = wgui.Magazine:FindFirstChild("Ammo")
+                if ammo and char then
+                    local curTool = char:FindFirstChildOfClass("Tool")
+                    if curTool and table.find(THROWABLE_NAMES, curTool.Name) then
+                        ammo.Text = "inf"
+                    end
+                end
+            end
+        end)
     end
 end)
 
