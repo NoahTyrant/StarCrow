@@ -2795,7 +2795,7 @@ runAutoWin = function()
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
 
-            for step = 1, 8 do
+            for step = 1, 2 do
                 if not Config.AutoWin or getActiveReplayButton() then break end
                 local curHrp = char:FindFirstChild("HumanoidRootPart")
                 if curHrp then
