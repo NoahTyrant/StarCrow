@@ -1870,10 +1870,14 @@ local function getGateTimer(prompt)
     for _, desc in ipairs(finalDoor:GetDescendants()) do
         if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
             local text = desc.Text
-            local m, s = text:match("(%d+)%s*m%s*(%d+)%s*s")
+            local m, s = text:match("(%d+)%s*m[%s:]*(%d+)")
             if not m then m, s = text:match("(%d+)%s*:%s*(%d+)") end
             if m and s then
                 return tonumber(m) * 60 + tonumber(s), text
+            end
+            local onlyS = text:match("^(%d+)%s*s?$")
+            if onlyS then
+                return tonumber(onlyS), text
             end
         end
     end
@@ -2007,6 +2011,27 @@ local function teleportToEndGate()
     return true, prompt, direction, endZ
 end
 
+local function activateGatePrompt(prompt)
+    if not prompt then return false end
+    if type(fireproximityprompt) == "function" then
+        pcall(fireproximityprompt, prompt)
+    end
+    pcall(function()
+        local duration = prompt.HoldDuration
+        prompt.HoldDuration = 0
+        prompt:InputHoldBegin()
+        task.wait(0.05)
+        prompt:InputHoldEnd()
+        prompt.HoldDuration = duration
+    end)
+    pcall(function()
+        vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.1)
+        vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    return true
+end
+
 local function reachAndActivateGate()
     local ok, prompt, direction, endZ = teleportToEndGate()
     if not ok then return false, nil, 1, 83581.1 end
@@ -2025,26 +2050,7 @@ local function reachAndActivateGate()
             moveCharacter(destination)
             task.wait(0.2)
         end
-
-        local fired = false
-        if type(fireproximityprompt) == "function" then
-            fired = pcall(fireproximityprompt, prompt)
-        end
-        if not fired then
-            pcall(function()
-                local duration = prompt.HoldDuration
-                prompt.HoldDuration = 0
-                prompt:InputHoldBegin()
-                task.wait(0.1)
-                prompt:InputHoldEnd()
-                prompt.HoldDuration = duration
-            end)
-        end
-        pcall(function()
-            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.2)
-            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
+        activateGatePrompt(prompt)
     end
 
     return true, prompt, direction, endZ
@@ -2067,7 +2073,7 @@ local function isCommandActive()
     local prompt = getEndPrompt()
     if prompt and not prompt.Enabled then return true end
     local secs = getGateTimer(prompt)
-    if secs and secs < 119 then return true end
+    if secs and secs <= 119 then return true end
     return false
 end
 
@@ -2679,12 +2685,62 @@ runAutoWin = function()
             continue
         end
 
-        local safeCF = getSafeGateCFrame()
-        moveCharacter(safeCF)
-        task.wait(0.2)
+        local destination = (prompt and getEndPromptDestination(prompt, direction)) or (hrp and hrp.CFrame)
+        if destination then
+            moveCharacter(destination)
+            task.wait(0.2)
+        end
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.Anchored = false
+
+        while Config.AutoWin do
+            if not prompt or not prompt.Parent then
+                prompt = getEndPrompt()
+            end
+
+            local gameSecs, gameText = getGateTimer(prompt)
+            if gameSecs and gameSecs <= 119 then
+                break
+            end
+
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if not c or not h or h.Health <= 0 then
+                break
+            end
+            if getActiveReplayButton() then
+                break
+            end
+
+            destination = (prompt and getEndPromptDestination(prompt, direction)) or destination
+            if destination then
+                moveCharacter(destination)
+            end
+
+            activateGatePrompt(prompt)
+            despawnHeli()
+
+            if gameText then
+                showTimer(string.format("Activating: %s", gameText))
+            else
+                showTimer("Activating Gate...")
+            end
+
+            task.wait(0.25)
+        end
+
+        if not Config.AutoWin then break end
+
+        local curChar = LocalPlayer.Character
+        local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+        if not curChar or not curHum or curHum.Health <= 0 then
+            continue
+        end
+        if getActiveReplayButton() then
+            task.wait(2)
+            continue
+        end
 
         local waitTime = 125
         local startWait = os.time()
@@ -2701,14 +2757,23 @@ runAutoWin = function()
                 if rem <= 0 then break end
             end
 
+            local c = LocalPlayer.Character
+            local curHrp = c and c:FindFirstChild("HumanoidRootPart")
+            if curHrp and destination then
+                if (curHrp.Position - destination.Position).Magnitude > 8 then
+                    moveCharacter(destination)
+                end
+                curHrp.AssemblyLinearVelocity = Vector3.zero
+                curHrp.AssemblyAngularVelocity = Vector3.zero
+            end
+
             task.wait(0.5)
             waitTime = waitTime - 0.5
 
             if getActiveReplayButton() then break end
 
-            local c = LocalPlayer.Character
             local h = c and c:FindFirstChildOfClass("Humanoid")
-            if h and h.Health <= 0 then
+            if not c or not h or h.Health <= 0 then
                 break
             end
         end
