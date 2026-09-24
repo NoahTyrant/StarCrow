@@ -115,14 +115,23 @@ local function getAllItems()
             if item:IsA("Model") or item:IsA("BasePart") then
                 table.insert(items, item)
                 seen[item] = true
+            elseif item:IsA("Folder") then
+                for _, sub in ipairs(item:GetChildren()) do
+                    if (sub:IsA("Model") or sub:IsA("BasePart")) and not seen[sub] then
+                        table.insert(items, sub)
+                        seen[sub] = true
+                    end
+                end
             end
         end
     end
     for _, obj in ipairs(workspace:GetChildren()) do
         if not seen[obj] and obj ~= LocalPlayer.Character then
-            if obj:IsA("Model") and obj:FindFirstChild("Handle") and not obj:FindFirstChildOfClass("Humanoid") then
-                table.insert(items, obj)
-                seen[obj] = true
+            if obj:IsA("Model") and not obj:FindFirstChildOfClass("Humanoid") then
+                if obj:FindFirstChild("Handle") or obj.Name:lower():find("trash") or obj.Name:lower():find("bag") or obj.Name:lower():find("loot") then
+                    table.insert(items, obj)
+                    seen[obj] = true
+                end
             end
         end
     end
@@ -153,29 +162,64 @@ local function bringAllItems()
     isBringingItems = true
     task.spawn(function()
         local origCFrame = hrp.CFrame
-        local dropCFrame = origCFrame * CFrame.new(0, -1, -3)
         for _, item in ipairs(items) do
             if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
             local curHrp = LocalPlayer.Character.HumanoidRootPart
             pcall(function()
                 local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
                 if handle and handle.Parent then
-                    local targetPos = handle.Position + Vector3.new(0, 2, 0)
-                    curHrp.CFrame = CFrame.new(targetPos)
+                    curHrp.CFrame = CFrame.new(handle.Position + Vector3.new(0, 3, 0))
                     curHrp.AssemblyLinearVelocity = Vector3.zero
-                    task.wait(0.04)
+                    if item:IsA("BasePart") then
+                        item.CanCollide = false
+                        item.Anchored = false
+                        item.AssemblyLinearVelocity = Vector3.zero
+                        item.AssemblyAngularVelocity = Vector3.zero
+                    end
+                    for _, p in ipairs(item:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.CanCollide = false
+                            p.Anchored = false
+                            p.AssemblyLinearVelocity = Vector3.zero
+                            p.AssemblyAngularVelocity = Vector3.zero
+                        elseif p:IsA("BodyMover") or p:IsA("Constraint") then
+                            if not p:IsA("WeldConstraint") then
+                                pcall(function() p:Destroy() end)
+                            end
+                        end
+                        if p:IsA("WeldConstraint") or p:IsA("Weld") or p:IsA("Motor6D") then
+                            pcall(function()
+                                local p0 = p.Part0
+                                local p1 = p.Part1
+                                if (p0 and not p0:IsDescendantOf(item)) or (p1 and not p1:IsDescendantOf(item)) then
+                                    p:Destroy()
+                                end
+                            end)
+                        end
+                    end
+                    task.wait(0.035)
+                    curHrp.CFrame = origCFrame
+                    curHrp.AssemblyLinearVelocity = Vector3.zero
+                    local dropPos = origCFrame * CFrame.new(math.random(-15, 15) * 0.1, 1.2, -2.5 + math.random(-10, 10) * 0.1)
                     if item:IsA("Model") then
-                        item:PivotTo(dropCFrame)
+                        item:PivotTo(dropPos)
                     else
-                        handle.CFrame = dropCFrame
+                        handle.CFrame = dropPos
+                    end
+                    if item:IsA("BasePart") then
+                        item.AssemblyLinearVelocity = Vector3.zero
+                        item.AssemblyAngularVelocity = Vector3.zero
+                        item.CanCollide = true
+                    end
+                    for _, p in ipairs(item:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.AssemblyLinearVelocity = Vector3.zero
+                            p.AssemblyAngularVelocity = Vector3.zero
+                        end
                     end
                     if handle:IsA("BasePart") then
-                        handle.AssemblyLinearVelocity = Vector3.zero
-                        handle.AssemblyAngularVelocity = Vector3.zero
+                        handle.CanCollide = true
                     end
-                    pcall(function()
-                        FlowFunction:InvokeServer("Loot", "LootEquip", handle)
-                    end)
                 end
             end)
             task.wait(0.02)
