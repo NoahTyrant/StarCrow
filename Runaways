@@ -70,6 +70,8 @@ local Config = {
     ESPMob = false,
     ESPItem = false,
     ESPCash = false,
+    AuraLoot = false,
+    AutoLoot = false,
     AutoPickupItem = false,
     InfAmmo = false,
     FastFire = false,
@@ -355,6 +357,136 @@ local function bringAllItems()
         end
         isBringingItems = false
     end)
+end
+
+local autoLootRunning = false
+local stopAutoLoot = nil
+
+local function runAutoLoot()
+    if autoLootRunning then return end
+    autoLootRunning = true
+
+    while Config.AutoLoot do
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not char or not hrp or not hum or hum.Health <= 0 then
+            task.wait(1)
+            continue
+        end
+
+        if hum.SeatPart then
+            hum.Sit = false
+            task.wait(0.2)
+        end
+
+        local startPivot = char:GetPivot()
+        local cam = workspace.CurrentCamera
+        local camCF = cam and cam.CFrame
+        local camType = cam and cam.CameraType
+        local camSubject = cam and cam.CameraSubject
+
+        if cam and camCF then
+            pcall(function()
+                cam.CameraType = Enum.CameraType.Scriptable
+                cam.CFrame = camCF
+            end)
+        end
+
+        local function restoreState()
+            local curChar = LocalPlayer.Character
+            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+            if curChar and curHrp and curHum and curHum.Health > 0 then
+                pcall(function()
+                    curChar:PivotTo(startPivot)
+                    curHrp.AssemblyLinearVelocity = Vector3.zero
+                    curHrp.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
+            local curCam = workspace.CurrentCamera or cam
+            if curCam then
+                pcall(function()
+                    if curHum and curHum.Parent then
+                        curCam.CameraSubject = curHum
+                    elseif curHrp and curHrp.Parent then
+                        curCam.CameraSubject = curHrp
+                    elseif camSubject and camSubject.Parent then
+                        curCam.CameraSubject = camSubject
+                    end
+                    curCam.CameraType = camType or Enum.CameraType.Custom
+                    if camCF then
+                        curCam.CFrame = camCF
+                    end
+                end)
+            end
+        end
+
+        stopAutoLoot = restoreState
+
+        local items = getAllItems()
+        for _, item in ipairs(items) do
+            if not Config.AutoLoot then break end
+            local curChar = LocalPlayer.Character
+            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+            if not curChar or not curHrp or not curHum or curHum.Health <= 0 then break end
+
+            local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
+            if handle and handle.Parent then
+                curChar:PivotTo(CFrame.new(handle.Position + Vector3.new(0, 3, 0)))
+                curHrp.AssemblyLinearVelocity = Vector3.zero
+                curHrp.AssemblyAngularVelocity = Vector3.zero
+                task.wait(0.08)
+
+                if not Config.AutoLoot then break end
+
+                if item:HasTag("Attachable") and flow and flow.Loot and type(flow.Loot.WeldDetach) == "function" then
+                    pcall(flow.Loot.WeldDetach, handle)
+                end
+
+                pcall(function()
+                    FlowFunction:InvokeServer("Loot", "LootEquip", handle)
+                end)
+                if flow and flow.Loot and type(flow.Loot.LootEquip) == "function" then
+                    pcall(flow.Loot.LootEquip, item)
+                end
+
+                for _, prompt in ipairs(item:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        if type(fireproximityprompt) == "function" then
+                            pcall(fireproximityprompt, prompt)
+                        else
+                            pcall(function()
+                                local d = prompt.HoldDuration
+                                prompt.HoldDuration = 0
+                                prompt:InputHoldBegin()
+                                task.wait(0.05)
+                                prompt:InputHoldEnd()
+                                prompt.HoldDuration = d
+                            end)
+                        end
+                    end
+                end
+
+                task.wait(0.04)
+            end
+        end
+
+        restoreState()
+
+        if not Config.AutoLoot then break end
+        for _ = 1, 8 do
+            if not Config.AutoLoot then break end
+            task.wait(0.2)
+        end
+    end
+
+    if stopAutoLoot then
+        pcall(stopAutoLoot)
+        stopAutoLoot = nil
+    end
+    autoLootRunning = false
 end
 
 local weaponConfigs = {}
@@ -2126,122 +2258,88 @@ local function teleportEntity(cf)
     hrp.AssemblyAngularVelocity = Vector3.zero
 end
 
-local function getGasStations()
-    local list = {}
-    local seen = {}
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") and desc.Name == "Road" then
-            local isGas = false
-            if desc.Parent and desc.Parent.Name == "Exterior" then
-                isGas = true
-            elseif desc.Parent and desc.Parent.Name:lower():find("gas") then
-                isGas = true
-            end
-            if isGas then
-                local pos = desc.Position
-                local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
-                if not seen[k] then
-                    seen[k] = true
-                    table.insert(list, {
-                        Position = pos,
-                        CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
-                    })
+local function getBuildingSurface(building)
+    if not building then return nil end
+    local best = nil
+    local bestScore = -math.huge
+    for _, part in ipairs(building:GetDescendants()) do
+        if part:IsA("BasePart") and part.CanCollide and part.Transparency < 0.95 then
+            local name = part.Name:lower()
+            if name == "road" or name == "floor" then
+                local score = part.Size.X * part.Size.Z
+                if name == "road" then
+                    score = score + 1000000000
+                end
+                if score > bestScore then
+                    best = part
+                    bestScore = score
                 end
             end
         end
     end
-    if #list == 0 then
-        for _, desc in ipairs(workspace:GetDescendants()) do
-            if desc:IsA("Model") and desc.Name:lower():find("gasstation") then
-                local ext = desc:FindFirstChild("Exterior", true)
-                local road = ext and ext:FindFirstChild("Road", true) or desc:FindFirstChild("Road", true)
-                if road and road:IsA("BasePart") then
-                    local pos = road.Position
-                    local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
-                    if not seen[k] then
-                        seen[k] = true
-                        table.insert(list, {
-                            Position = pos,
-                            CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
-                        })
-                    end
-                end
-            end
-        end
-    end
-    return list
+    return best
 end
 
-local function getPawnShops()
-    local list = {}
-    local seen = {}
-
-    local function addCandidate(pos, isPrimary)
-        if not pos then return end
-        local k = math.floor(pos.X / 50) .. "_" .. math.floor(pos.Z / 50)
-        if not seen[k] then
-            seen[k] = true
-            table.insert(list, {
-                Position = pos,
-                CFrame = CFrame.new(pos + Vector3.new(0, 4, 0)),
-                IsPrimary = isPrimary
-            })
+local function getBuildingDestination(target)
+    if not target or not target.Parent then return nil end
+    if target:IsA("BasePart") then
+        return target.CFrame + Vector3.new(0, 4, 0)
+    end
+    local surface = getBuildingSurface(target)
+    if not surface then
+        local ok, pivot = pcall(target.GetPivot, target)
+        if ok and pivot then
+            pcall(function()
+                LocalPlayer:RequestStreamAroundAsync(pivot.Position, 5)
+            end)
+            task.wait(0.15)
+            surface = getBuildingSurface(target)
+            if not surface then
+                return CFrame.new(pivot.Position + Vector3.yAxis * 8) * pivot.Rotation
+            end
         end
     end
+    if not surface then return nil end
+    local position = surface.Position + Vector3.yAxis * (surface.Size.Y * 0.5 + 4)
+    local look = Vector3.new(surface.CFrame.LookVector.X, 0, surface.CFrame.LookVector.Z)
+    if look.Magnitude < 0.1 then
+        look = Vector3.new(0, 0, -1)
+    end
+    return CFrame.lookAt(position, position + look, Vector3.yAxis)
+end
 
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        local nameLower = desc.Name:lower()
-
-        if desc:IsA("BasePart") and desc.Name == "Road" then
-            if desc.Parent and (desc.Parent.Name:lower():find("pawn") or desc.Parent.Name:lower():find("trash")) then
-                addCandidate(desc.Position, true)
-            end
+local function findNearestBuilding(filter)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local map = workspace:FindFirstChild("Map")
+    local buildings = (map and map:FindFirstChild("Buildings")) or workspace:FindFirstChild("Buildings")
+    local pool = {}
+    if buildings then
+        for _, b in ipairs(buildings:GetChildren()) do
+            table.insert(pool, b)
         end
-
-        if nameLower:find("pawnshoplot") then
-            local road = desc:FindFirstChild("Road", true) or desc:FindFirstChildWhichIsA("BasePart", true) or (desc:IsA("BasePart") and desc)
-            if road then
-                local p = road:IsA("BasePart") and road.Position or (road:IsA("Model") and road:GetPivot().Position)
-                addCandidate(p, true)
-            end
+    end
+    if #pool == 0 and map then
+        for _, b in ipairs(map:GetChildren()) do
+            table.insert(pool, b)
         end
-
-        if nameLower:find("trashamerica") or nameLower:find("trash_america") then
-            local p = desc.Parent
-            local pLot = (p and p:FindFirstChild("PawnShopLot", true)) or (p and p.Parent and p.Parent:FindFirstChild("PawnShopLot", true))
-            local road = pLot and (pLot:FindFirstChild("Road", true) or pLot:FindFirstChildWhichIsA("BasePart", true))
-            if road and road:IsA("BasePart") then
-                addCandidate(road.Position, true)
-            else
-                local cf = (desc:IsA("Model") and desc:GetPivot()) or (desc:IsA("BasePart") and desc.CFrame)
-                if cf then
-                    local front = (cf * CFrame.new(0, -6, -25)).Position
-                    addCandidate(front, false)
+    end
+    local closest = nil
+    local minDist = math.huge
+    for _, b in ipairs(pool) do
+        if b:IsA("Model") and filter(b) then
+            local ok, pivot = pcall(b.GetPivot, b)
+            if ok and pivot then
+                local dist = (pivot.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = b
                 end
             end
         end
-
-        if nameLower == "pawnshop" or nameLower == "pawn" or (nameLower:find("pawn") and not nameLower:find("spawn")) then
-            if desc:IsA("Model") or desc:IsA("Folder") then
-                local road = desc:FindFirstChild("Road", true) or desc:FindFirstChild("PawnShopLot", true) or desc:FindFirstChildWhichIsA("BasePart", true)
-                if road then
-                    local p = road:IsA("BasePart") and road.Position or (road:IsA("Model") and road:GetPivot().Position)
-                    addCandidate(p, true)
-                end
-            end
-        end
     end
-
-    local primary = {}
-    for _, item in ipairs(list) do
-        if item.IsPrimary then
-            table.insert(primary, item)
-        end
-    end
-    if #primary > 0 then
-        return primary
-    end
-    return list
+    return closest
 end
 
 Tabs.Teleport:AddSection("Locations")
@@ -2282,59 +2380,71 @@ Tabs.Teleport:AddButton({
     end
 })
 
+Tabs.Teleport:AddSection("Gas Station")
+
 Tabs.Teleport:AddButton({
     Title = "Teleport To Gas Station",
     Callback = function()
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-            local stations = getGasStations()
-            if #stations == 0 then
-                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "No Gas Station found in loaded map", Duration = 3 }) end)
+        task.spawn(function()
+            local b = findNearestBuilding(function(inst)
+                local name = inst.Name:lower()
+                return (name:find("gasstation") or name:find("gas station") or name:find("gas")) and not name:find("sign")
+            end)
+            if not b then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Teleport",
+                        Content = "No Gas Station found",
+                        Duration = 3
+                    })
+                end)
                 return
             end
-            local closest = nil
-            local minDist = math.huge
-            for _, st in ipairs(stations) do
-                local dist = (st.Position - hrp.Position).Magnitude
-                if dist < minDist then
-                    minDist = dist
-                    closest = st
-                end
-            end
-            if closest then
-                teleportEntity(closest.CFrame)
-                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "Teleported to Gas Station", Duration = 3 }) end)
+            local cf = getBuildingDestination(b)
+            if cf then
+                teleportEntity(cf)
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Teleport",
+                        Content = "Teleported to Gas Station",
+                        Duration = 3
+                    })
+                end)
             end
         end)
     end
 })
 
+Tabs.Teleport:AddSection("Pawn Shop")
+
 Tabs.Teleport:AddButton({
     Title = "Teleport To Pawn Shop",
     Callback = function()
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-            local shops = getPawnShops()
-            if #shops == 0 then
-                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "No Pawn Shop found in loaded map", Duration = 3 }) end)
+        task.spawn(function()
+            local b = findNearestBuilding(function(inst)
+                local name = inst.Name:lower()
+                return (name:find("pawn") or name:find("trashamerica") or name:find("trash_america")) and not name:find("sign") and not name:find("spawn")
+            end)
+            if not b then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Teleport",
+                        Content = "No Pawn Shop found",
+                        Duration = 3
+                    })
+                end)
                 return
             end
-            local closest = nil
-            local minDist = math.huge
-            for _, sh in ipairs(shops) do
-                local dist = (sh.Position - hrp.Position).Magnitude
-                if dist < minDist then
-                    minDist = dist
-                    closest = sh
-                end
-            end
-            if closest then
-                teleportEntity(closest.CFrame)
-                pcall(function() Fluent:Notify({ Title = "Teleport", Content = "Teleported to Pawn Shop", Duration = 3 }) end)
+            local cf = getBuildingDestination(b)
+            if cf then
+                teleportEntity(cf)
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Teleport",
+                        Content = "Teleported to Pawn Shop",
+                        Duration = 3
+                    })
+                end)
             end
         end)
     end
@@ -2347,12 +2457,27 @@ Tabs.Item:AddButton({
     end
 })
 
-Tabs.Item:AddToggle("AutoPickupItemToggle", {
-    Title = "Auto Pickup Item",
-    Default = Config.AutoPickupItem,
+Tabs.Item:AddToggle("AuraLootToggle", {
+    Title = "Aura Loot",
+    Default = Config.AuraLoot or Config.AutoPickupItem,
     Callback = function(Value)
+        Config.AuraLoot = Value
         Config.AutoPickupItem = Value
         SaveConfig()
+    end
+})
+
+Tabs.Item:AddToggle("AutoLootToggle", {
+    Title = "Auto Loot",
+    Default = Config.AutoLoot,
+    Callback = function(Value)
+        Config.AutoLoot = Value
+        SaveConfig()
+        if Value then
+            task.spawn(runAutoLoot)
+        elseif stopAutoLoot then
+            pcall(stopAutoLoot)
+        end
     end
 })
 
@@ -2513,7 +2638,7 @@ task.spawn(function()
                 end
             end
             
-            if Config.AutoPickupItem then
+            if Config.AuraLoot or Config.AutoPickupItem then
                 local items = getAllItems()
                 for _, item in ipairs(items) do
                     local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
@@ -2828,6 +2953,9 @@ end
 
 if Config.AutoWin then
     task.spawn(runAutoWin)
+end
+if Config.AutoLoot then
+    task.spawn(runAutoLoot)
 end
 
 local punchAnim1 = nil
