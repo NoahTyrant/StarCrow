@@ -38,6 +38,7 @@ local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
 local Config = {
     KillAura = false,
     AutoWin = false,
+    RemoveHeli = false,
     AuraRange = 2000,
     AutoBreakSafes = false,
     WalkSpeedEnabled = false,
@@ -186,6 +187,7 @@ local function registerWeaponConfig(name, stats)
             raycastPerSecond = stats.raycastPerSecond,
             grenadeSpeed = stats.grenadeSpeed,
             rocketSpeed = stats.rocketSpeed,
+            chargeDuration = stats.chargeDuration,
             recoilPattern = stats.recoilPattern and {
                 pushback = stats.recoilPattern.pushback,
                 lift = stats.recoilPattern.lift,
@@ -227,6 +229,9 @@ local function applyWeaponMods(name, stats)
         if stats.rocketSpeed ~= nil then
             stats.rocketSpeed = 300
         end
+        if stats.chargeDuration ~= nil then
+            stats.chargeDuration = 0.001
+        end
     elseif orig.maxRpm ~= nil then
         stats.maxRpm = orig.maxRpm
         stats.mode = orig.mode
@@ -241,6 +246,9 @@ local function applyWeaponMods(name, stats)
         end
         if stats.rocketSpeed ~= nil then
             stats.rocketSpeed = orig.rocketSpeed
+        end
+        if stats.chargeDuration ~= nil then
+            stats.chargeDuration = orig.chargeDuration
         end
     end
     if Config.NoSpread then
@@ -294,7 +302,7 @@ local function scanWeapons()
         if DataModule then
             local Data = require(DataModule)
             if Data and Data.Tools and Data.Tools.GetToolConfig then
-                local toolList = {"Minigun", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "Flamethrower", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
+                local toolList = {"Minigun", "MinigunAsLaser", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "GrenadeLauncherAsPlushyLauncher", "Flamethrower", "SoundCannon", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol"}
                 for _, tName in ipairs(toolList) do
                     pcall(function()
                         local cfg = Data.Tools.GetToolConfig(tName)
@@ -305,13 +313,18 @@ local function scanWeapons()
                     end)
                 end
 
-                for _, pName in ipairs({"Punch", "Punches"}) do
-                    local punchCfg = Data.Tools.GetToolConfig(pName)
-                    if punchCfg then
-                        punchCfg.hitsPerSecond = 9999
-                        punchCfg.damage = Config.PunchDamage or 10
-                        punchCfg.destructibleDamage = Config.PunchDamage or 10
-                    end
+                local meleeList = {"Punch", "Punches", "Bat", "Crowbar", "Knuckle", "Mace", "Machete", "Pan", "Sword", "RiotShield", "Baton", "Axe", "Chainsaw", "Cleaver"}
+                for _, mName in ipairs(meleeList) do
+                    pcall(function()
+                        local mCfg = Data.Tools.GetToolConfig(mName)
+                        if mCfg and type(mCfg) == "table" then
+                            if Config.NoPunchCooldown then
+                                mCfg.hitsPerSecond = 9999
+                            end
+                            mCfg.damage = Config.PunchDamage or 10
+                            mCfg.destructibleDamage = Config.PunchDamage or 10
+                        end
+                    end)
                 end
 
                 if not Data.Tools._StarCrowHooked then
@@ -666,15 +679,34 @@ local function purgeHeli()
             pcall(function() obj:Destroy() end)
         end
     end
+    local vehicles = workspace:FindFirstChild("Vehicles")
+    if vehicles then
+        for _, obj in ipairs(vehicles:GetChildren()) do
+            if obj.Name == "Helicopter" or (obj:IsA("Model") and obj.Name:lower():find("heli")) then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end
 end
 
 workspace.ChildAdded:Connect(function(child)
-    if Config.AutoWin and (child.Name == "Helicopter" or child.Name:lower():find("heli")) then
+    if (Config.AutoWin or Config.RemoveHeli) and (child.Name == "Helicopter" or child.Name:lower():find("heli")) then
         task.defer(function()
             pcall(function() child:Destroy() end)
         end)
     end
 end)
+
+local vehiclesFolder = workspace:FindFirstChild("Vehicles")
+if vehiclesFolder then
+    vehiclesFolder.ChildAdded:Connect(function(child)
+        if (Config.AutoWin or Config.RemoveHeli) and (child.Name == "Helicopter" or child.Name:lower():find("heli")) then
+            task.defer(function()
+                pcall(function() child:Destroy() end)
+            end)
+        end
+    end)
+end
 
 Tabs.Main:AddSection("Auto Win")
 
@@ -692,6 +724,18 @@ Tabs.Main:AddToggle("AutoWinToggle", {
             if char and char:FindFirstChild("HumanoidRootPart") then
                 char.HumanoidRootPart.Anchored = false
             end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("RemoveHeliToggle", {
+    Title = "Remove Helicopter",
+    Default = Config.RemoveHeli,
+    Callback = function(Value)
+        Config.RemoveHeli = Value
+        if Value then
+            purgeHeli()
         end
         SaveConfig()
     end
@@ -729,14 +773,15 @@ Tabs.Main:AddSlider("AuraRangeSlider", {
     end
 })
 
-Tabs.Main:AddSection("Punch")
+Tabs.Main:AddSection("Attack")
 
 Tabs.Main:AddToggle("NoPunchCooldownToggle", {
-    Title = "Punch No Cooldown",
+    Title = "Attack No Cooldown",
     Default = Config.NoPunchCooldown,
     Callback = function(Value)
         Config.NoPunchCooldown = Value
         SaveConfig()
+        scanWeapons()
     end
 })
 
@@ -754,10 +799,13 @@ Tabs.Main:AddSlider("PunchDamageSlider", {
             if DataModule then
                 local Data = require(DataModule)
                 if Data and Data.Tools and Data.Tools.GetToolConfig then
-                    local punchCfg = Data.Tools.GetToolConfig("Punch")
-                    if punchCfg then
-                        punchCfg.damage = Value
-                        punchCfg.destructibleDamage = Value
+                    local meleeList = {"Punch", "Punches", "Bat", "Crowbar", "Knuckle", "Mace", "Machete", "Pan", "Sword", "RiotShield", "Baton", "Axe", "Chainsaw", "Cleaver"}
+                    for _, mName in ipairs(meleeList) do
+                        local mCfg = Data.Tools.GetToolConfig(mName)
+                        if mCfg and type(mCfg) == "table" then
+                            mCfg.damage = Value
+                            mCfg.destructibleDamage = Value
+                        end
                     end
                 end
             end
@@ -1402,8 +1450,10 @@ end
 
 task.spawn(function()
     while task.wait(0.5) do
-        if Config.AutoWin then
+        if Config.AutoWin or Config.RemoveHeli then
             purgeHeli()
+        end
+        if Config.AutoWin then
             local btn = getActiveReplayButton()
             if btn then
                 handleReplay(btn)
@@ -1586,13 +1636,9 @@ RunService.Stepped:Connect(function(_, dt)
     local char = LocalPlayer.Character
     if char then
         if Config.Noclip then
-            _noclipThrottle = _noclipThrottle + dt
-            if _noclipThrottle >= 0.1 then
-                _noclipThrottle = 0
-                for _, part in ipairs(char:GetDescendants()) do
-                    if part:IsA("BasePart") and part.CanCollide then 
-                        part.CanCollide = false 
-                    end
+            for _, part in ipairs(char:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then 
+                    part.CanCollide = false 
                 end
             end
         end
