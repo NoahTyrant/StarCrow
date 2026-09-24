@@ -46,6 +46,8 @@ local Config = {
     InfJump = false,
     ESPPlayer = false,
     ESPMob = false,
+    ESPItem = false,
+    AutoBringItem = false,
     AutoPickupItem = false,
     InfAmmo = false,
     FastFire = false,
@@ -53,7 +55,7 @@ local Config = {
     NoSpread = false,
     SilentAim = false,
     PovMode = "Pov",
-    PovSize = 150,
+    PovSize = 90,
     AimPart = "Head",
     InfFuel = false,
     NoPunchCooldown = false,
@@ -74,6 +76,7 @@ local function LoadConfig()
             for k, v in pairs(decoded) do
                 if Config[k] ~= nil then Config[k] = v end
             end
+            Config.PovSize = 90
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
             end
@@ -86,7 +89,8 @@ LoadConfig()
 local breakableCache = {}
 local function checkBreakable(obj)
     if obj.Name == "Safe" or obj.Name == "CashRegister" or obj.Name == "ATM" then
-        breakableCache[obj] = true
+        local p = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+        breakableCache[obj] = p or obj
     end
 end
 
@@ -98,6 +102,71 @@ workspace.DescendantAdded:Connect(checkBreakable)
 workspace.DescendantRemoving:Connect(function(obj)
     if breakableCache[obj] then breakableCache[obj] = nil end
 end)
+
+local itemColor = Color3.fromRGB(250, 225, 85)
+
+local function getAllItems()
+    local items = {}
+    local seen = {}
+    local lootFolder = workspace:FindFirstChild("Loot")
+    if lootFolder then
+        for _, item in ipairs(lootFolder:GetChildren()) do
+            if item:IsA("Model") or item:IsA("BasePart") then
+                table.insert(items, item)
+                seen[item] = true
+            end
+        end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if not seen[obj] and obj ~= LocalPlayer.Character then
+            if obj:IsA("Model") and obj:FindFirstChild("Handle") and not obj:FindFirstChildOfClass("Humanoid") then
+                table.insert(items, obj)
+                seen[obj] = true
+            end
+        end
+    end
+    return items
+end
+
+local function cleanItemESP()
+    local items = getAllItems()
+    for _, item in ipairs(items) do
+        local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
+        if handle then
+            local esp = handle:FindFirstChild("StarCrowItemESP")
+            if esp then esp:Destroy() end
+        end
+        local chams = item:FindFirstChild("StarCrowItemChams")
+        if chams then chams:Destroy() end
+    end
+end
+
+local function bringAllItems()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local targetCFrame = hrp.CFrame * CFrame.new(0, -1, -3)
+    local items = getAllItems()
+    for _, item in ipairs(items) do
+        pcall(function()
+            local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
+            if handle then
+                if item:IsA("Model") then
+                    item:PivotTo(targetCFrame)
+                else
+                    handle.CFrame = targetCFrame
+                end
+                if handle:IsA("BasePart") then
+                    handle.AssemblyLinearVelocity = Vector3.zero
+                    handle.AssemblyAngularVelocity = Vector3.zero
+                end
+                pcall(function()
+                    FlowFunction:InvokeServer("Loot", "LootEquip", handle)
+                end)
+            end
+        end)
+    end
+end
 
 local weaponConfigs = {}
 local origWeaponStats = {}
@@ -268,6 +337,43 @@ end
 
 scanWeapons()
 
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    newChar.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            scanWeapons()
+        end
+    end)
+end)
+if LocalPlayer.Character then
+    LocalPlayer.Character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            scanWeapons()
+        end
+    end)
+end
+local playerBackpack = LocalPlayer:FindFirstChild("Backpack")
+if playerBackpack then
+    playerBackpack.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            scanWeapons()
+        end
+    end)
+end
+LocalPlayer.ChildAdded:Connect(function(child)
+    if child:IsA("Backpack") then
+        child.ChildAdded:Connect(function(tool)
+            if tool:IsA("Tool") then
+                scanWeapons()
+            end
+        end)
+    end
+end)
+task.spawn(function()
+    while task.wait(5) do
+        scanWeapons()
+    end
+end)
+
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Visible = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
@@ -285,24 +391,11 @@ local function getClosestNPCToCenter()
     local shortestDistance = math.huge
     local centerPos = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
 
-    local npcs = {}
     local npcsFolder = workspace:FindFirstChild("NPCs")
-    if npcsFolder then
-        for _, v in ipairs(npcsFolder:GetChildren()) do
-            table.insert(npcs, v)
-        end
-    end
-    for _, v in ipairs(CollectionService:GetTagged("NPC")) do
-        local model = v:IsA("Model") and v or v:FindFirstAncestorOfClass("Model")
-        if model and not table.find(npcs, model) then
-            table.insert(npcs, model)
-        elseif not model and not table.find(npcs, v) then
-            table.insert(npcs, v)
-        end
-    end
+    if not npcsFolder then return nil end
 
-    for _, npc in ipairs(npcs) do
-        local hum = npc:FindFirstChildOfClass("Humanoid") or npc:FindFirstChild("Humanoid")
+    for _, npc in ipairs(npcsFolder:GetChildren()) do
+        local hum = npc:FindFirstChildOfClass("Humanoid")
         if hum and hum.Health > 0 then
             local targetPart
             if Config.AimPart == "Body" then
@@ -312,7 +405,7 @@ local function getClosestNPCToCenter()
             end
 
             if targetPart then
-                local screenPos, onScreen = cam.WorldToViewportPoint(cam, targetPart.Position)
+                local screenPos = cam:WorldToViewportPoint(targetPart.Position)
                 if screenPos.Z > 0 then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerPos).Magnitude
                     local inFov = (Config.PovMode == "No Pov") or (dist <= Config.PovSize)
@@ -573,10 +666,6 @@ local function purgeHeli()
             pcall(function() obj:Destroy() end)
         end
     end
-    local h = workspace:FindFirstChild("Helicopter", true)
-    if h then
-        pcall(function() h:Destroy() end)
-    end
 end
 
 workspace.ChildAdded:Connect(function(child)
@@ -738,6 +827,7 @@ Tabs.Gun:AddToggle("FastFireToggle", {
     Callback = function(Value)
         Config.FastFire = Value
         SaveConfig()
+        scanWeapons()
     end
 })
 
@@ -747,6 +837,7 @@ Tabs.Gun:AddToggle("NoSpreadToggle", {
     Callback = function(Value)
         Config.NoSpread = Value
         SaveConfig()
+        scanWeapons()
     end
 })
 
@@ -756,6 +847,7 @@ Tabs.Gun:AddToggle("NoRecoilToggle", {
     Callback = function(Value)
         Config.NoRecoil = Value
         SaveConfig()
+        scanWeapons()
     end
 })
 
@@ -1035,6 +1127,22 @@ Tabs.Teleport:AddButton({
     end
 })
 
+Tabs.Item:AddButton({
+    Title = "Bring All Items",
+    Callback = function()
+        bringAllItems()
+    end
+})
+
+Tabs.Item:AddToggle("AutoBringItemToggle", {
+    Title = "Auto Bring Items",
+    Default = Config.AutoBringItem,
+    Callback = function(Value)
+        Config.AutoBringItem = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Item:AddToggle("AutoPickupItemToggle", {
     Title = "Auto Pickup Item",
     Default = Config.AutoPickupItem,
@@ -1050,6 +1158,20 @@ Tabs.ESP:AddToggle("ESPPlayerToggle", {
     Callback = function(Value)
         Config.ESPPlayer = Value
         SaveConfig()
+        if not Value then
+            for _, player in ipairs(Players:GetPlayers()) do
+                local char = player.Character
+                if char then
+                    local head = char:FindFirstChild("Head")
+                    if head then
+                        local esp = head:FindFirstChild("StarCrowPlayerESP")
+                        if esp then esp:Destroy() end
+                    end
+                    local chams = char:FindFirstChild("StarCrowPlayerChams")
+                    if chams then chams:Destroy() end
+                end
+            end
+        end
     end
 })
 
@@ -1059,6 +1181,30 @@ Tabs.ESP:AddToggle("ESPMobToggle", {
     Callback = function(Value)
         Config.ESPMob = Value
         SaveConfig()
+        if not Value then
+            local npcsFolder = workspace:FindFirstChild("NPCs")
+            if npcsFolder then
+                for _, npc in ipairs(npcsFolder:GetChildren()) do
+                    local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+                    if head then
+                        local esp = head:FindFirstChild("StarCrowMobESP")
+                        if esp then esp:Destroy() end
+                    end
+                end
+            end
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPItemToggle", {
+    Title = "ESP Item",
+    Default = Config.ESPItem,
+    Callback = function(Value)
+        Config.ESPItem = Value
+        SaveConfig()
+        if not Value then
+            cleanItemESP()
+        end
     end
 })
 
@@ -1082,13 +1228,15 @@ task.spawn(function()
             if Config.KillAura or Config.AutoWin then
                 local npcsFolder = workspace:FindFirstChild("NPCs")
                 if npcsFolder then
+                    local killCount = 0
                     for _, npc in ipairs(npcsFolder:GetChildren()) do
                         local enemyHum = npc:FindFirstChild("Humanoid")
                         local enemyHrp = npc:FindFirstChild("HumanoidRootPart")
                         if enemyHum and enemyHum.Health > 0 and enemyHrp then
                             if (myHrp.Position - enemyHrp.Position).Magnitude <= Config.AuraRange then
-                                pcall(function() FlowEvent:FireServer("Punches", "ReplicateSound", enemyHrp, "Swoosh") end)
                                 pcall(function() FlowEvent:FireServer("NPCs", "Damage", enemyHum, 99999) end)
+                                killCount = killCount + 1
+                                if killCount >= 20 then break end
                             end
                         end
                     end
@@ -1096,14 +1244,14 @@ task.spawn(function()
             end
 
             if Config.AutoBreakSafes then
-                for obj in pairs(breakableCache) do
-                    if obj.Parent then
-                        local targetPart = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-                        if targetPart then
-                            if (myHrp.Position - targetPart.Position).Magnitude <= Config.AuraRange then
-                                pcall(function() FlowEvent:FireServer("Punches", "ReplicateSound", targetPart, "Swoosh") end)
-                                pcall(function() FlowEvent:FireServer("DamageToOpen", "Damage", obj, 99999, "melee") end)
-                            end
+                local breakCount = 0
+                for obj, targetPart in pairs(breakableCache) do
+                    if obj.Parent and targetPart.Parent then
+                        local partPos = targetPart:IsA("BasePart") and targetPart.Position or (obj:IsA("BasePart") and obj.Position)
+                        if partPos and (myHrp.Position - partPos).Magnitude <= Config.AuraRange then
+                            pcall(function() FlowEvent:FireServer("DamageToOpen", "Damage", obj, 99999, "melee") end)
+                            breakCount = breakCount + 1
+                            if breakCount >= 15 then break end
                         end
                     else
                         breakableCache[obj] = nil
@@ -1112,29 +1260,38 @@ task.spawn(function()
 
                 local cashFolder = workspace:FindFirstChild("Cash")
                 if cashFolder then
+                    local collectCount = 0
                     for _, item in ipairs(cashFolder:GetChildren()) do
                         local targetCash = item:FindFirstChild("Cash", true) or (item.Name == "Cash" and item)
                         if targetCash then
                             local cashPart = targetCash:IsA("BasePart") and targetCash or item:FindFirstChildWhichIsA("BasePart")
                             if not cashPart or (myHrp.Position - cashPart.Position).Magnitude <= math.max(Config.AuraRange, 200) then
                                 pcall(function() FlowEvent:FireServer("Cash", "Collect", targetCash) end)
+                                collectCount = collectCount + 1
+                                if collectCount >= 15 then break end
                             end
                         end
                     end
                 end
             end
             
+            if Config.AutoBringItem then
+                _bringThrottle = (_bringThrottle or 0) + 1
+                if _bringThrottle >= 5 then
+                    _bringThrottle = 0
+                    bringAllItems()
+                end
+            end
+
             if Config.AutoPickupItem then
-                local lootFolder = workspace:FindFirstChild("Loot")
-                if lootFolder then
-                    for _, item in ipairs(lootFolder:GetChildren()) do
-                        local handle = item:FindFirstChild("Handle")
-                        if handle then
-                            if (myHrp.Position - handle.Position).Magnitude <= 50 then
-                                pcall(function()
-                                    FlowFunction:InvokeServer("Loot", "LootEquip", handle)
-                                end)
-                            end
+                local items = getAllItems()
+                for _, item in ipairs(items) do
+                    local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
+                    if handle and handle.Parent then
+                        if (myHrp.Position - handle.Position).Magnitude <= 50 then
+                            pcall(function()
+                                FlowFunction:InvokeServer("Loot", "LootEquip", handle)
+                            end)
                         end
                     end
                 end
@@ -1410,20 +1567,21 @@ local function getPunchTargets(myPos)
             end
         end
     end
-    for obj, _ in pairs(breakableCache) do
-        if obj and obj.Parent then
-            local p = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
-            if p then
-                if (p.Position - myPos).Magnitude <= 20 then
-                    table.insert(breakables, obj)
-                end
+    for obj, p in pairs(breakableCache) do
+        if obj.Parent and p.Parent then
+            local partPos = p:IsA("BasePart") and p.Position or (obj:IsA("BasePart") and obj.Position)
+            if partPos and (partPos - myPos).Magnitude <= 20 then
+                table.insert(breakables, obj)
             end
+        else
+            breakableCache[obj] = nil
         end
     end
     return npcs, breakables
 end
 
 local _noclipThrottle = 0
+local _ammoThrottle = 0
 RunService.Stepped:Connect(function(_, dt)
     local char = LocalPlayer.Character
     if char then
@@ -1454,27 +1612,29 @@ RunService.Stepped:Connect(function(_, dt)
         end
     end
 
-    scanWeapons()
-
     if Config.InfAmmo then
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char then
-                for _, item in ipairs(char:GetChildren()) do
-                    if item:IsA("Tool") then
-                        item:SetAttribute("Ammo", 999)
+        _ammoThrottle = _ammoThrottle + dt
+        if _ammoThrottle >= 0.3 then
+            _ammoThrottle = 0
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then
+                    for _, item in ipairs(char:GetChildren()) do
+                        if item:IsA("Tool") and item:GetAttribute("Ammo") ~= 999 then
+                            item:SetAttribute("Ammo", 999)
+                        end
                     end
                 end
-            end
-            local bp = LocalPlayer:FindFirstChild("Backpack")
-            if bp then
-                for _, item in ipairs(bp:GetChildren()) do
-                    if item:IsA("Tool") then
-                        item:SetAttribute("Ammo", 999)
+                local bp = LocalPlayer:FindFirstChild("Backpack")
+                if bp then
+                    for _, item in ipairs(bp:GetChildren()) do
+                        if item:IsA("Tool") and item:GetAttribute("Ammo") ~= 999 then
+                            item:SetAttribute("Ammo", 999)
+                        end
                     end
                 end
-            end
-        end)
+            end)
+        end
     end
 end)
 
@@ -1538,7 +1698,11 @@ local function onPunchEnded()
     holdingPunch = false
 end
 
+local cachedPunchButton = nil
 local function getPunchButton()
+    if cachedPunchButton and cachedPunchButton.Parent then
+        return cachedPunchButton
+    end
     local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if pgui then
         local hud = pgui:FindFirstChild("HudGui")
@@ -1547,12 +1711,14 @@ local function getPunchButton()
             if tc then
                 local pb = tc:FindFirstChild("Punch")
                 if pb and pb:IsA("GuiObject") then
+                    cachedPunchButton = pb
                     return pb
                 end
             end
         end
         for _, desc in ipairs(pgui:GetDescendants()) do
             if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
+                cachedPunchButton = desc
                 return desc
             end
         end
@@ -1639,89 +1805,102 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 
-RunService.RenderStepped:Connect(function()
+local _espThrottle = 0
+RunService.RenderStepped:Connect(function(dt)
     local cam = workspace.CurrentCamera
     if not cam then return end
 
     if Config.SilentAim then
         currentTarget = getClosestNPCToCenter()
+        if Config.PovMode == "Pov" then
+            FOVCircle.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+            FOVCircle.Radius = Config.PovSize
+            FOVCircle.Visible = true
+        else
+            FOVCircle.Visible = false
+        end
     else
         currentTarget = nil
-    end
-
-    if Config.SilentAim and Config.PovMode == "Pov" then
-        FOVCircle.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-        FOVCircle.Radius = Config.PovSize
-        FOVCircle.Visible = true
-    else
         FOVCircle.Visible = false
     end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local char = player.Character
-            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
-                local hum = char.Humanoid
-                local head = char.Head
-                local esp = head:FindFirstChild("StarCrowPlayerESP")
-                local chams = char:FindFirstChild("StarCrowPlayerChams")
+    if not Config.ESPPlayer and not Config.ESPMob and not Config.ESPItem then return end
 
-                if Config.ESPPlayer and hum.Health > 0 then
-                    if not esp then
-                        esp = Instance.new("BillboardGui")
-                        esp.Name = "StarCrowPlayerESP"
-                        esp.Adornee = head
-                        esp.Size = UDim2.new(0, 200, 0, 40)
-                        esp.StudsOffset = Vector3.new(0, 3, 0)
-                        esp.AlwaysOnTop = true
+    _espThrottle = _espThrottle + (dt or 0.016)
+    if _espThrottle < 0.08 then return end
+    _espThrottle = 0
+
+    if Config.ESPPlayer then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local char = player.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local head = char:FindFirstChild("Head")
+                    if hum and head and hum.Health > 0 then
+                        local esp = head:FindFirstChild("StarCrowPlayerESP")
+                        local chams = char:FindFirstChild("StarCrowPlayerChams")
+
+                        if not esp then
+                            esp = Instance.new("BillboardGui")
+                            esp.Name = "StarCrowPlayerESP"
+                            esp.Adornee = head
+                            esp.Size = UDim2.new(0, 200, 0, 40)
+                            esp.StudsOffset = Vector3.new(0, 3, 0)
+                            esp.AlwaysOnTop = true
+                            
+                            local text = Instance.new("TextLabel")
+                            text.Name = "NameText"
+                            text.Parent = esp
+                            text.Size = UDim2.new(1, 0, 1, 0)
+                            text.BackgroundTransparency = 1
+                            text.Font = Enum.Font.GothamBold
+                            text.TextSize = 13
+                            text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            text.TextStrokeTransparency = 0
+                            text.RichText = true
+                            esp.Parent = head
+                        end
                         
-                        local text = Instance.new("TextLabel")
-                        text.Name = "NameText"
-                        text.Parent = esp
-                        text.Size = UDim2.new(1, 0, 1, 0)
-                        text.BackgroundTransparency = 1
-                        text.Font = Enum.Font.GothamBold
-                        text.TextSize = 13
-                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        text.TextStrokeTransparency = 0
-                        text.RichText = true
-                        esp.Parent = head
-                    end
-                    
-                    local teamColor = (player.Team and player.Team.TeamColor) and player.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255)
-                    local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
-                    local hp = math.floor(hum.Health)
-                    
-                    esp.NameText.Text = string.format('<font color="rgb(%d,%d,%d)">%s</font> <font color="rgb(180,180,180)">[%dm]</font>\n<font color="rgb(0,255,0)">%d HP</font>', teamColor.R*255, teamColor.G*255, teamColor.B*255, player.DisplayName, dist, hp)
+                        local teamColor = (player.Team and player.Team.TeamColor) and player.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+                        local hp = math.floor(hum.Health)
+                        
+                        local nameLabel = esp:FindFirstChild("NameText")
+                        if nameLabel then
+                            nameLabel.Text = string.format('<font color="rgb(%d,%d,%d)">%s</font>\n<font color="rgb(0,255,0)">%d HP</font>', teamColor.R*255, teamColor.G*255, teamColor.B*255, player.DisplayName, hp)
+                        end
 
-                    if not chams then
-                        chams = Instance.new("Highlight")
-                        chams.Name = "StarCrowPlayerChams"
-                        chams.Parent = char
+                        if not chams then
+                            chams = Instance.new("Highlight")
+                            chams.Name = "StarCrowPlayerChams"
+                            chams.FillColor = teamColor
+                            chams.OutlineColor = teamColor
+                            chams.FillTransparency = 0.7
+                            chams.OutlineTransparency = 0
+                            chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            chams.Parent = char
+                        end
+                    else
+                        local esp = head and head:FindFirstChild("StarCrowPlayerESP")
+                        if esp then esp:Destroy() end
+                        local chams = char:FindFirstChild("StarCrowPlayerChams")
+                        if chams then chams:Destroy() end
                     end
-                    chams.FillColor = teamColor
-                    chams.OutlineColor = teamColor
-                    chams.FillTransparency = 0.7
-                    chams.OutlineTransparency = 0
-                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                else
-                    if esp then esp:Destroy() end
-                    if chams then chams:Destroy() end
                 end
             end
         end
     end
 
-    local npcsFolder = workspace:FindFirstChild("NPCs")
-    if npcsFolder then
-        for _, npc in ipairs(npcsFolder:GetChildren()) do
-            local hum = npc:FindFirstChild("Humanoid")
-            local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+    if Config.ESPMob then
+        local npcsFolder = workspace:FindFirstChild("NPCs")
+        if npcsFolder then
+            for _, npc in ipairs(npcsFolder:GetChildren()) do
+                local hum = npc:FindFirstChildOfClass("Humanoid")
+                local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
 
-            if hum and head then
-                local esp = head:FindFirstChild("StarCrowMobESP")
-                
-                if Config.ESPMob and hum.Health > 0 then
+                if hum and head and hum.Health > 0 then
+                    local esp = head:FindFirstChild("StarCrowMobESP")
+                    
                     if not esp then
                         esp = Instance.new("BillboardGui")
                         esp.Name = "StarCrowMobESP"
@@ -1743,12 +1922,69 @@ RunService.RenderStepped:Connect(function()
                         esp.Parent = head
                     end
                     
-                    local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
                     local hp = math.floor(hum.Health)
-                    esp.NameText.Text = string.format('%s <font color="rgb(180,180,180)">[%dm]</font>\n<font color="rgb(0,255,0)">%d HP</font>', npc.Name, dist, hp)
+                    local nameLabel = esp:FindFirstChild("NameText")
+                    if nameLabel then
+                        nameLabel.Text = string.format('%s\n<font color="rgb(0,255,0)">%d HP</font>', npc.Name, hp)
+                    end
                 else
+                    local esp = head and head:FindFirstChild("StarCrowMobESP")
                     if esp then esp:Destroy() end
                 end
+            end
+        end
+    end
+
+    if Config.ESPItem then
+        local items = getAllItems()
+        for _, item in ipairs(items) do
+            local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
+            if handle and handle.Parent then
+                local esp = handle:FindFirstChild("StarCrowItemESP")
+                local chams = item:FindFirstChild("StarCrowItemChams")
+
+                if not esp then
+                    esp = Instance.new("BillboardGui")
+                    esp.Name = "StarCrowItemESP"
+                    esp.Adornee = handle
+                    esp.Size = UDim2.new(0, 160, 0, 26)
+                    esp.StudsOffset = Vector3.new(0, 1.5, 0)
+                    esp.AlwaysOnTop = true
+                    
+                    local text = Instance.new("TextLabel")
+                    text.Name = "NameText"
+                    text.Parent = esp
+                    text.Size = UDim2.new(1, 0, 1, 0)
+                    text.BackgroundTransparency = 1
+                    text.Font = Enum.Font.GothamBold
+                    text.TextSize = 12
+                    text.TextColor3 = itemColor
+                    text.TextStrokeTransparency = 0
+                    text.RichText = true
+                    text.Text = item.Name
+                    esp.Parent = handle
+                end
+
+                local nameLabel = esp:FindFirstChild("NameText")
+                if nameLabel and nameLabel.Text ~= item.Name then
+                    nameLabel.Text = item.Name
+                end
+
+                if not chams then
+                    chams = Instance.new("Highlight")
+                    chams.Name = "StarCrowItemChams"
+                    chams.FillColor = itemColor
+                    chams.OutlineColor = itemColor
+                    chams.FillTransparency = 0.6
+                    chams.OutlineTransparency = 0.1
+                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    chams.Parent = item
+                end
+            else
+                local esp = handle and handle:FindFirstChild("StarCrowItemESP")
+                if esp then esp:Destroy() end
+                local chams = item:FindFirstChild("StarCrowItemChams")
+                if chams then chams:Destroy() end
             end
         end
     end
