@@ -23,6 +23,25 @@ local LocalPlayer = Players.LocalPlayer
 local FlowEvent = ReplicatedStorage:WaitForChild("FlowClient", 9e9):WaitForChild("ClientRunner", 9e9):WaitForChild("Event", 9e9)
 local FlowFunction = ReplicatedStorage:WaitForChild("FlowClient", 9e9):WaitForChild("ClientRunner", 9e9):WaitForChild("Function", 9e9)
 
+local flow
+pcall(function()
+    local fc = ReplicatedStorage:FindFirstChild("FlowClient")
+    if fc then
+        flow = require(fc)
+    end
+end)
+
+local originalVehicleDamage = flow and flow.DamageVehicle and flow.DamageVehicle.Damage
+local blockedVehicleDamage = function() end
+local function blockVehicleDamage(value)
+    if not (flow and flow.DamageVehicle and type(originalVehicleDamage) == "function") then return end
+    if value then
+        flow.DamageVehicle.Damage = blockedVehicleDamage
+    elseif flow.DamageVehicle.Damage == blockedVehicleDamage then
+        flow.DamageVehicle.Damage = originalVehicleDamage
+    end
+end
+
 if getconnections then
     for _, v in pairs(getconnections(LocalPlayer.Idled)) do
         v:Disable()
@@ -50,6 +69,7 @@ local Config = {
     ESPPlayer = false,
     ESPMob = false,
     ESPItem = false,
+    ESPCash = false,
     AutoPickupItem = false,
     InfAmmo = false,
     FastFire = false,
@@ -64,7 +84,17 @@ local Config = {
     NoPunchCooldown = false,
     PunchDamage = 10,
     VehicleFly = false,
-    VehicleFlySpeed = 100
+    VehicleFlySpeed = 100,
+    VehiclePerformance = false,
+    VehicleTopSpeed = 2,
+    VehicleAcceleration = 3,
+    VehicleTorque = 3,
+    VehicleBrakes = 2,
+    VehicleSteering = 1.5,
+    VehicleDownforce = 1.5,
+    VehicleDrift = false,
+    VehicleTireGrip = 0.6,
+    VehicleIndestructible = false
 }
 
 local function SaveConfig()
@@ -92,10 +122,64 @@ end
 LoadConfig()
 
 local breakableCache = {}
+
+local function isBreakableAlive(obj)
+    if not obj or not obj.Parent or not obj:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local health = obj:FindFirstChild("Health") or obj:FindFirstChild("health") or obj:FindFirstChildWhichIsA("NumberValue", true)
+    if health and health:IsA("NumberValue") then
+        if health.Value <= 0 then
+            return false
+        end
+    end
+
+    local attrHealth = obj:GetAttribute("Health") or obj:GetAttribute("health")
+    if type(attrHealth) == "number" and attrHealth <= 0 then
+        return false
+    end
+
+    if obj:GetAttribute("Opened") == true or obj:GetAttribute("Broken") == true then
+        return false
+    end
+
+    return true
+end
+
+local function getBreakableRoot(obj)
+    local current = obj
+    local topBreakable = nil
+    while current and current ~= workspace do
+        local n = current.Name:lower()
+        if CollectionService:HasTag(current, "DamageToOpen")
+            or CollectionService:HasTag(current, "Safe")
+            or n == "safe"
+            or n == "cashregister"
+            or n == "atm"
+            or n:find("safe")
+            or n:find("register")
+            or n:find("atm") then
+            topBreakable = current
+        end
+        current = current.Parent
+    end
+    return topBreakable
+end
+
 local function checkBreakable(obj)
-    if obj.Name == "Safe" or obj.Name == "CashRegister" or obj.Name == "ATM" then
-        local p = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
-        breakableCache[obj] = p or obj
+    local root = getBreakableRoot(obj)
+    if root and not breakableCache[root] and isBreakableAlive(root) then
+        local p = (root:IsA("Model") and (root.PrimaryPart or root:FindFirstChildWhichIsA("BasePart", true))) or (root:IsA("BasePart") and root)
+        if p then
+            breakableCache[root] = p
+        end
+    end
+end
+
+for _, desc in ipairs(workspace:GetDescendants()) do
+    if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" then
+        pcall(function() desc:Destroy() end)
     end
 end
 
@@ -103,9 +187,25 @@ for _, v in ipairs(workspace:GetDescendants()) do
     checkBreakable(v)
 end
 
+for _, tag in ipairs({ "DamageToOpen", "Safe" }) do
+    for _, v in ipairs(CollectionService:GetTagged(tag)) do
+        checkBreakable(v)
+    end
+    CollectionService:GetInstanceAddedSignal(tag):Connect(checkBreakable)
+end
+
 workspace.DescendantAdded:Connect(checkBreakable)
 workspace.DescendantRemoving:Connect(function(obj)
-    if breakableCache[obj] then breakableCache[obj] = nil end
+    if breakableCache[obj] then
+        local p = breakableCache[obj]
+        if p then
+            local esp = p:FindFirstChild("StarCrowCashESP")
+            if esp then esp:Destroy() end
+        end
+        local chams = obj:FindFirstChild("StarCrowCashChams")
+        if chams then chams:Destroy() end
+        breakableCache[obj] = nil
+    end
 end)
 
 local itemColor = Color3.fromRGB(250, 225, 85)
@@ -152,6 +252,27 @@ local function cleanItemESP()
         end
         local chams = item:FindFirstChild("StarCrowItemChams")
         if chams then chams:Destroy() end
+    end
+end
+
+local function getCashObjectLabel(obj)
+    local name = obj.Name:lower()
+    if name:find("atm") then
+        return "ATM"
+    elseif name:find("register") then
+        return "Register"
+    elseif name:find("safe") then
+        return "Safe"
+    else
+        return "Cash Source"
+    end
+end
+
+local function cleanCashESP()
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" then
+            pcall(function() desc:Destroy() end)
+        end
     end
 end
 
@@ -856,7 +977,7 @@ Tabs.Main:AddToggle("KillAuraToggle", {
 })
 
 Tabs.Main:AddToggle("AutoBreakSafesToggle", {
-    Title = "Auto Break Safes, ATM & Register",
+    Title = "Auto Break Cash",
     Default = Config.AutoBreakSafes,
     Callback = function(Value)
         Config.AutoBreakSafes = Value
@@ -915,6 +1036,183 @@ Tabs.Main:AddSlider("PunchDamageSlider", {
         end)
     end
 })
+
+local remoteShopItems = {}
+local selectedShopItem = "None"
+local RemoteShopDropdown
+
+local function refreshRemoteShop()
+    remoteShopItems = {}
+    local byName = {}
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    for _, part in ipairs(CollectionService:GetTagged("BuyableItem")) do
+        local itemName = part:IsA("BasePart") and part:GetAttribute("ItemName")
+        local prompt = part:IsDescendantOf(workspace) and (part:FindFirstChild("BuyPrompt") or part:FindFirstChildOfClass("ProximityPrompt"))
+        if type(itemName) == "string" and itemName ~= "" and prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled then
+            local dist = root and (part.Position - root.Position).Magnitude or 0
+            if not byName[itemName] or dist < byName[itemName].Distance then
+                local price = tonumber((prompt.ActionText:gsub("[^%d]", ""))) or 0
+                byName[itemName] = {
+                    Name = itemName,
+                    Part = part,
+                    Prompt = prompt,
+                    Price = price,
+                    Action = prompt.ActionText,
+                    Distance = dist
+                }
+            end
+        end
+    end
+
+    if not next(byName) then
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and (desc.ActionText:lower():find("buy") or desc.ObjectText:lower():find("buy")) and desc.Enabled then
+                local part = desc.Parent:IsA("BasePart") and desc.Parent or (desc.Parent and desc.Parent:FindFirstChildWhichIsA("BasePart"))
+                if part then
+                    local name = part:GetAttribute("ItemName") or desc.ObjectText
+                    if name and name ~= "" then
+                        local price = tonumber((desc.ActionText:gsub("[^%d]", ""))) or 0
+                        local dist = root and (part.Position - root.Position).Magnitude or 0
+                        if not byName[name] or dist < byName[name].Distance then
+                            byName[name] = {
+                                Name = name,
+                                Part = part,
+                                Prompt = desc,
+                                Price = price,
+                                Action = desc.ActionText,
+                                Distance = dist
+                            }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local list = {}
+    for _, v in pairs(byName) do
+        table.insert(list, v)
+    end
+    table.sort(list, function(a, b) return a.Name < b.Name end)
+
+    local names = { "None" }
+    for _, entry in ipairs(list) do
+        local label = entry.Name .. " ($" .. entry.Price .. ")"
+        table.insert(names, label)
+        remoteShopItems[label] = entry
+    end
+
+    if RemoteShopDropdown then
+        RemoteShopDropdown:SetValues(names)
+        if not remoteShopItems[selectedShopItem] then
+            RemoteShopDropdown:SetValue("None")
+            selectedShopItem = "None"
+        end
+    end
+end
+
+local function buyRemoteShopItem()
+    local entry = remoteShopItems[selectedShopItem]
+    if not entry or not entry.Part or not entry.Part.Parent or not entry.Prompt or not entry.Prompt.Parent then
+        refreshRemoteShop()
+        entry = remoteShopItems[selectedShopItem]
+    end
+    if not entry then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Remote Shop",
+                Content = "Please select an item first",
+                Duration = 3
+            })
+        end)
+        return
+    end
+
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not root or not hum or hum.Health <= 0 then return end
+    if hum.SeatPart then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Remote Shop",
+                Content = "Exit vehicle first",
+                Duration = 3
+            })
+        end)
+        return
+    end
+
+    local startPivot = char:GetPivot()
+    local cam = workspace.CurrentCamera
+    local camCF = cam and cam.CFrame
+
+    task.spawn(function()
+        char:PivotTo(entry.Part.CFrame + Vector3.new(0, 3, 2))
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.2)
+
+        if type(fireproximityprompt) == "function" then
+            pcall(fireproximityprompt, entry.Prompt)
+        else
+            pcall(function()
+                local d = entry.Prompt.HoldDuration
+                entry.Prompt.HoldDuration = 0
+                entry.Prompt:InputHoldBegin()
+                task.wait(0.1)
+                entry.Prompt:InputHoldEnd()
+                entry.Prompt.HoldDuration = d
+            end)
+        end
+        task.wait(0.2)
+
+        char:PivotTo(startPivot)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        if cam and camCF then
+            cam.CFrame = camCF
+        end
+
+        pcall(function()
+            Fluent:Notify({
+                Title = "Remote Shop",
+                Content = "Purchased " .. entry.Name,
+                Duration = 3
+            })
+        end)
+    end)
+end
+
+Tabs.Main:AddSection("Remote Shop")
+
+RemoteShopDropdown = Tabs.Main:AddDropdown("RemoteShopDropdown", {
+    Title = "Select Item",
+    Values = { "None" },
+    Multi = false,
+    Default = "None",
+    Callback = function(Value)
+        selectedShopItem = Value
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Buy Selected Item",
+    Callback = function()
+        buyRemoteShopItem()
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Refresh Shop",
+    Callback = function()
+        refreshRemoteShop()
+    end
+})
+
+task.defer(refreshRemoteShop)
 
 Tabs.Combat:AddSection("Silent Aim")
 
@@ -1099,6 +1397,263 @@ Tabs.Player:AddButton({
     end
 })
 
+local vehicleAttributeNames = {
+    "TopSpeedMPH",
+    "Acceleration",
+    "Torque",
+    "BrakingPower",
+    "TurningAngle",
+    "TurningAngleSpeedFactor",
+    "Downforce"
+}
+local vehicleCorners = { "fl", "fr", "rl", "rr" }
+local vehicleStates = setmetatable({}, { __mode = "k" })
+
+local function getVehicleState(vehicle)
+    if not vehicle or not vehicle:IsA("Model") then return nil end
+    local state = vehicleStates[vehicle]
+    if state and state.Property and state.Property.Parent then return state end
+    local property = vehicle:FindFirstChild("VehicleProperty")
+    if not property then return nil end
+    state = {
+        Property = property,
+        Attributes = {},
+        Wheels = {},
+        PerformanceApplied = false,
+        GripApplied = false
+    }
+    for _, name in ipairs(vehicleAttributeNames) do
+        state.Attributes[name] = property:GetAttribute(name)
+    end
+    local system = vehicle:FindFirstChild("system")
+    for _, cornerName in ipairs(vehicleCorners) do
+        local corner = system and system:FindFirstChild(cornerName)
+        local wheel = corner and corner:FindFirstChild("wheel_" .. cornerName)
+        if wheel and wheel:IsA("BasePart") then
+            table.insert(state.Wheels, {
+                Part = wheel,
+                Properties = wheel.CustomPhysicalProperties
+            })
+        end
+    end
+    vehicleStates[vehicle] = state
+    return state
+end
+
+local function setVehicleMultiplier(property, attributes, name, multiplier)
+    local value = attributes[name]
+    if type(value) == "number" then
+        property:SetAttribute(name, value * multiplier)
+    end
+end
+
+local function applyVehiclePerformance(vehicle)
+    local state = getVehicleState(vehicle)
+    if not state then return end
+    local property = state.Property
+    local attributes = state.Attributes
+    local topSpeed = Config.VehicleTopSpeed or 2
+    local acceleration = Config.VehicleAcceleration or 3
+    local torque = Config.VehicleTorque or 3
+    local brakes = Config.VehicleBrakes or 2
+    local steering = Config.VehicleSteering or 1.5
+    local downforce = Config.VehicleDownforce or 1.5
+
+    setVehicleMultiplier(property, attributes, "TopSpeedMPH", topSpeed)
+    setVehicleMultiplier(property, attributes, "Acceleration", acceleration)
+    setVehicleMultiplier(property, attributes, "Torque", torque)
+    setVehicleMultiplier(property, attributes, "BrakingPower", brakes)
+    setVehicleMultiplier(property, attributes, "TurningAngle", steering)
+    setVehicleMultiplier(property, attributes, "Downforce", downforce)
+
+    if type(attributes.TurningAngleSpeedFactor) == "number" then
+        property:SetAttribute(
+            "TurningAngleSpeedFactor",
+            math.clamp(attributes.TurningAngleSpeedFactor * steering, 0, 1)
+        )
+    end
+    state.PerformanceApplied = true
+end
+
+local function restoreVehiclePerformance(vehicle)
+    local state = vehicleStates[vehicle]
+    if not state or not state.PerformanceApplied or not state.Property.Parent then return end
+    for name, value in pairs(state.Attributes) do
+        state.Property:SetAttribute(name, value)
+    end
+    state.PerformanceApplied = false
+end
+
+local function applyVehicleGrip(vehicle)
+    local state = getVehicleState(vehicle)
+    if not state then return end
+    local grip = Config.VehicleTireGrip or 0.6
+    for _, entry in ipairs(state.Wheels) do
+        local wheel = entry.Part
+        if wheel.Parent then
+            local props = entry.Properties or wheel.CurrentPhysicalProperties
+            wheel.CustomPhysicalProperties = PhysicalProperties.new(
+                props.Density,
+                grip,
+                props.Elasticity,
+                props.FrictionWeight,
+                props.ElasticityWeight
+            )
+        end
+    end
+    state.GripApplied = true
+end
+
+local function restoreVehicleGrip(vehicle)
+    local state = vehicleStates[vehicle]
+    if not state or not state.GripApplied then return end
+    for _, entry in ipairs(state.Wheels) do
+        if entry.Part.Parent then
+            entry.Part.CustomPhysicalProperties = entry.Properties
+        end
+    end
+    state.GripApplied = false
+end
+
+local function flipCurrentVehicle()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local seat = hum and hum.SeatPart
+    local veh = seat and seat:FindFirstAncestorWhichIsA("Model")
+    if not veh then return end
+    local chassis = (veh:FindFirstChild("system") and veh.system:FindFirstChild("chassis")) or veh.PrimaryPart or seat
+    if chassis and seat then
+        local forward = Vector3.new(seat.CFrame.LookVector.X, 0, seat.CFrame.LookVector.Z)
+        if forward.Magnitude < 0.1 then
+            forward = Vector3.new(-chassis.CFrame.RightVector.X, 0, -chassis.CFrame.RightVector.Z)
+        end
+        if forward.Magnitude < 0.1 then
+            forward = Vector3.new(0, 0, -1)
+        end
+        local pos = seat.Position + Vector3.new(0, 3, 0)
+        local target = CFrame.lookAt(pos, pos + forward.Unit, Vector3.yAxis)
+        veh:PivotTo(target * seat.CFrame:Inverse() * veh:GetPivot())
+        chassis.AssemblyLinearVelocity = Vector3.zero
+        chassis.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+local function stopCurrentVehicle()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local seat = hum and hum.SeatPart
+    local veh = seat and seat:FindFirstAncestorWhichIsA("Model")
+    if not veh then return end
+    for _, p in ipairs(veh:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.AssemblyLinearVelocity = Vector3.zero
+            p.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+end
+
+Tabs.Vehicle:AddSection("Performance")
+
+Tabs.Vehicle:AddToggle("VehiclePerformanceToggle", {
+    Title = "Performance Mods",
+    Default = Config.VehiclePerformance,
+    Callback = function(Value)
+        Config.VehiclePerformance = Value
+        SaveConfig()
+        if not Value then
+            for veh in pairs(vehicleStates) do
+                restoreVehiclePerformance(veh)
+            end
+        end
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleTopSpeedSlider", {
+    Title = "Top Speed",
+    Default = Config.VehicleTopSpeed,
+    Min = 1,
+    Max = 5,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleTopSpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleAccelerationSlider", {
+    Title = "Acceleration",
+    Default = Config.VehicleAcceleration,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleAcceleration = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleTorqueSlider", {
+    Title = "Torque",
+    Default = Config.VehicleTorque,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleTorque = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleBrakeSlider", {
+    Title = "Brake",
+    Default = Config.VehicleBrakes,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleBrakes = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleSteeringSlider", {
+    Title = "Steering",
+    Default = Config.VehicleSteering,
+    Min = 0.5,
+    Max = 3,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleSteering = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddToggle("VehicleDriftToggle", {
+    Title = "Drift Mode",
+    Default = Config.VehicleDrift,
+    Callback = function(Value)
+        Config.VehicleDrift = Value
+        SaveConfig()
+        if not Value then
+            for veh in pairs(vehicleStates) do
+                restoreVehicleGrip(veh)
+            end
+        end
+    end
+})
+
+Tabs.Vehicle:AddSlider("VehicleDriftGripSlider", {
+    Title = "Drift Grip",
+    Default = Config.VehicleTireGrip or 0.6,
+    Min = 0.1,
+    Max = 1.5,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.VehicleTireGrip = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Vehicle:AddSection("Flight")
 
 Tabs.Vehicle:AddToggle("VehicleFlyToggle", {
@@ -1133,174 +1688,392 @@ Tabs.Vehicle:AddToggle("InfFuelToggle", {
     end
 })
 
-local cachedTimerLabel = nil
-local function getGameTimer()
-    if cachedTimerLabel and cachedTimerLabel.Parent and cachedTimerLabel.Text and cachedTimerLabel.Text ~= "" then
-        local m, s = cachedTimerLabel.Text:match("(%d+)m%s*(%d+)s")
-        if m and s then return tonumber(m) * 60 + tonumber(s), cachedTimerLabel.Text end
-        local m2, s2 = cachedTimerLabel.Text:match("(%d+):(%d+)")
-        if m2 and s2 then return tonumber(m2) * 60 + tonumber(s2), cachedTimerLabel.Text end
-    end
-    cachedTimerLabel = nil
-    local cmd = workspace:FindFirstChild("Command", true)
-    local customs = workspace:FindFirstChild("CustomsFinal", true)
-    local office = workspace:FindFirstChild("CustomsOffice", true)
-    local roots = {}
-    if cmd then table.insert(roots, cmd) end
-    if office then table.insert(roots, office) end
-    if customs then table.insert(roots, customs) end
 
-    for _, root in ipairs(roots) do
-        for _, desc in ipairs(root:GetDescendants()) do
-            if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
-                local m, s = desc.Text:match("(%d+)m%s*(%d+)s")
-                if m and s then
-                    cachedTimerLabel = desc
-                    return tonumber(m) * 60 + tonumber(s), desc.Text
-                end
-                local m2, s2 = desc.Text:match("(%d+):(%d+)")
-                if m2 and s2 then
-                    cachedTimerLabel = desc
-                    return tonumber(m2) * 60 + tonumber(s2), desc.Text
+local function getEndZ()
+    local flowModule = ReplicatedStorage:FindFirstChild("FlowClient")
+    local gui = flowModule and flowModule:FindFirstChild("Gui")
+    local distanceModule = gui and gui:FindFirstChild("DistanceToBorderClient")
+    if distanceModule then
+        local ok, module = pcall(require, distanceModule)
+        if ok and type(module) == "table" then
+            local callback = module.SetEndPos_event or module.SetEndPos
+            if type(callback) == "function" and debug and type(debug.getupvalues) == "function" then
+                local read, upvalues = pcall(debug.getupvalues, callback)
+                if read and type(upvalues) == "table" then
+                    if type(upvalues[1]) == "number" then
+                        return upvalues[1]
+                    end
+                    for _, val in ipairs(upvalues) do
+                        if type(val) == "number" and math.abs(val) > 1000 then
+                            return val
+                        end
+                    end
                 end
             end
         end
     end
-    return nil, nil
-end
-
-local function findCommandKey()
-    for _, prompt in ipairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") and (prompt.ActionText:lower():find("activate") or prompt.ObjectText:lower():find("activate")) then
-            local part = prompt.Parent
-            if part and part:IsA("BasePart") then
-                return part, prompt
-            end
-        end
-    end
-    local cmd = workspace:FindFirstChild("Command", true)
-    if cmd then
-        local console = cmd:FindFirstChild("Console", true)
-        if console and console:IsA("BasePart") then
-            local prompt = console:FindFirstChildWhichIsA("ProximityPrompt", true) or cmd:FindFirstChildWhichIsA("ProximityPrompt", true)
-            return console, prompt
-        end
-        local part = cmd:FindFirstChildWhichIsA("BasePart", true)
-        local prompt = cmd:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if part then return part, prompt end
-    end
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v.Name == "CommandButton" or v.Name == "Console" then
-            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
-            local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if part then return part, prompt end
-        end
-    end
-    return nil, nil
-end
-
-local function isCommandActive()
-    local part, prompt = findCommandKey()
-    if prompt then
-        if not prompt.Enabled then return true end
-        if prompt:GetAttribute("Active") == true or prompt:GetAttribute("Activated") == true then return true end
-        return false
-    end
-    local gameSecs = getGameTimer()
-    if gameSecs and gameSecs > 0 and gameSecs < 119 then
-        return true
-    end
-    if part then
-        if part:GetAttribute("Active") == true or part:GetAttribute("Activated") == true then return true end
-        local parent = part.Parent
-        if parent and (parent:GetAttribute("Active") == true or parent:GetAttribute("Activated") == true) then return true end
-    end
-    return false
-end
-
-local function activateCommand(force)
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart", 10)
-    if not hrp then return false end
-
-    for attempt = 1, 10 do
-        if not Config.AutoWin and not force then return false end
-
-        local keyPart, prompt = findCommandKey()
-        if prompt and not prompt.Enabled then
-            return true
-        end
-
-        local offsets = {
-            CFrame.new(0, 0, 1.5),
-            CFrame.new(0, 0, -1.5),
-            CFrame.new(0, 1, 0)
-        }
-        local offset = offsets[((attempt - 1) % #offsets) + 1]
-
-        if keyPart then
-            char:PivotTo(keyPart.CFrame * offset)
-        else
-            char:PivotTo(CFrame.new(530.9, 1746.5, 83581.1))
-        end
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.3)
-
-        if not prompt then
-            keyPart, prompt = findCommandKey()
-        end
-
-        if isCommandActive() then
-            return true
-        end
-
-        local holdTime = 2.5
-        if prompt and prompt.HoldDuration and prompt.HoldDuration > 0 then
-            holdTime = prompt.HoldDuration + 0.5
-        end
-
-        if prompt and fireproximityprompt then
-            pcall(function() fireproximityprompt(prompt) end)
-        end
-
-        pcall(function()
-            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            local elapsed = 0
-            while elapsed < holdTime and not isCommandActive() do
-                task.wait(0.15)
-                elapsed = elapsed + 0.15
-                if prompt and fireproximityprompt then
-                    pcall(function() fireproximityprompt(prompt) end)
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        for _, label in ipairs(playerGui:GetDescendants()) do
+            if label:IsA("TextLabel") and label.Text:find("Mexico", 1, true) then
+                local cur = label.Parent
+                while cur and cur ~= playerGui do
+                    local val = tonumber(cur.Name:match("^Border_(-?[%d%.]+)$"))
+                    if val then return val end
+                    cur = cur.Parent
                 end
             end
-            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
-
-        task.wait(0.4)
-
-        if isCommandActive() then
-            return true
         end
-
-        task.wait(0.2)
     end
-
-    return isCommandActive()
-end
-
-local function findOfficeCFrame()
     local customs = workspace:FindFirstChild("CustomsFinal", true)
     if customs then
-        local office = customs:FindFirstChild("CustomsOffice", true)
+        local ok, pivot = pcall(customs.GetPivot, customs)
+        if ok and pivot then
+            return pivot.Position.Z
+        end
+    end
+    return 83581.1
+end
+
+local function getDirection(endZ)
+    local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
+    if not spawn or not spawn.Enabled then return 1 end
+    return (endZ >= spawn.Position.Z) and 1 or -1
+end
+
+local function streamAround(pos)
+    pcall(function()
+        LocalPlayer:RequestStreamAroundAsync(pos, 5)
+    end)
+end
+
+local function getEndAnchor(endZ, direction)
+    local map = workspace:FindFirstChild("Map")
+    local buildings = map and map:FindFirstChild("Buildings")
+    if buildings then
+        for _, b in ipairs(buildings:GetChildren()) do
+            if b:IsA("Model") and b.Name == "CustomsFinal" then
+                local ok, pivot = pcall(b.GetPivot, b)
+                if ok and pivot then
+                    return pivot:PointToWorldSpace(Vector3.new(-44.4001, 4.65, -16.5))
+                end
+            end
+        end
+    end
+    return Vector3.new(530.9, 1746.5, endZ - direction * 35)
+end
+
+local function getEndPrompt()
+    local map = workspace:FindFirstChild("Map")
+    local buildings = map and map:FindFirstChild("Buildings")
+    local customs = (buildings and buildings:FindFirstChild("CustomsFinal")) or workspace:FindFirstChild("CustomsFinal", true)
+    if not customs then return nil end
+    local customsBuilding = customs:FindFirstChild("CustomsBuilding", true)
+    local finalDoor = (customsBuilding and customsBuilding:FindFirstChild("FinalDoor", true)) or customs:FindFirstChild("FinalDoor", true)
+    local command = finalDoor and finalDoor:FindFirstChild("Command", true)
+    local commandButton = command and command:FindFirstChild("CommandButton", true)
+    local holder = commandButton and commandButton:FindFirstChild("Prompt", true)
+    local prompt = holder and (holder:IsA("ProximityPrompt") and holder or holder:FindFirstChildOfClass("ProximityPrompt"))
+    if prompt then return prompt end
+    local ok, candidates = pcall(customs.QueryDescendants, customs, "ProximityPrompt")
+    if ok and candidates then
+        for _, candidate in ipairs(candidates) do
+            if candidate.ActionText == "Activate" and candidate:FindFirstAncestor("FinalDoor") then
+                return candidate
+            end
+        end
+    end
+    for _, p in ipairs(workspace:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and (p.ActionText:lower():find("activate") or p.ObjectText:lower():find("activate")) then
+            return p
+        end
+    end
+    return nil
+end
+
+local function getEndPromptDestination(prompt, direction)
+    local holder = prompt and prompt.Parent
+    local holderCFrame
+    if holder and holder:IsA("Attachment") then
+        holderCFrame = holder.WorldCFrame
+    elseif holder and holder:IsA("BasePart") then
+        holderCFrame = holder.CFrame
+    end
+    if not holderCFrame then return nil end
+    local outward = holderCFrame.LookVector
+    if outward.Z * direction > 0 then
+        outward = -outward
+    end
+    if math.abs(outward.Z) < 0.25 then
+        outward = Vector3.new(0, 0, -direction)
+    end
+    local pos = holderCFrame.Position + outward * 4
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = LocalPlayer.Character and { LocalPlayer.Character } or {}
+    local result = workspace:Raycast(pos + Vector3.yAxis * 20, Vector3.new(0, -60, 0), params)
+    if result then
+        pos = Vector3.new(pos.X, result.Position.Y + 3.25, pos.Z)
+    end
+    return CFrame.lookAt(pos, Vector3.new(holderCFrame.Position.X, pos.Y, holderCFrame.Position.Z), Vector3.yAxis)
+end
+
+local function parkEndVehicle(veh, endZ, direction)
+    local seat = veh:FindFirstChildWhichIsA("VehicleSeat", true)
+    local chassis = (veh:FindFirstChild("system") and veh.system:FindFirstChild("chassis")) or veh.PrimaryPart or (seat and seat.Parent)
+    if not chassis then return end
+    local road = nil
+    local map = workspace:FindFirstChild("Map")
+    if map then
+        for _, part in ipairs(map:GetDescendants()) do
+            if part:IsA("BasePart") and (part.Name:lower() == "road" or part.Name:lower() == "sideroad") and math.abs(part.Position.Z - endZ) < 200 then
+                road = part
+                break
+            end
+        end
+    end
+    local pos
+    if road then
+        pos = Vector3.new(road.Position.X, road.Position.Y + road.Size.Y * 0.5 + 4.5, endZ - direction * 28)
+    else
+        pos = Vector3.new(chassis.Position.X, chassis.Position.Y + 5, endZ - direction * 28)
+    end
+    veh:PivotTo(CFrame.new(pos))
+    for _, p in ipairs(veh:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.AssemblyLinearVelocity = Vector3.zero
+            p.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+end
+
+local function moveCharacter(targetCF)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return false end
+    if hum.SeatPart then
+        hum.Sit = false
+        task.wait(0.1)
+    end
+    char:PivotTo(targetCF)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    return true
+end
+
+local function getGateTimer(prompt)
+    local customs = workspace:FindFirstChild("CustomsFinal", true)
+    local finalDoor = (prompt and prompt:FindFirstAncestor("FinalDoor")) or (customs and customs:FindFirstChild("FinalDoor", true))
+    if not finalDoor then return nil, nil end
+    for _, desc in ipairs(finalDoor:GetDescendants()) do
+        if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
+            local text = desc.Text
+            local m, s = text:match("(%d+)%s*m%s*(%d+)%s*s")
+            if not m then m, s = text:match("(%d+)%s*:%s*(%d+)") end
+            if m and s then
+                return tonumber(m) * 60 + tonumber(s), text
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function getGameTimer()
+    local prompt = getEndPrompt()
+    return getGateTimer(prompt)
+end
+
+local function getSafeGateCFrame()
+    local customs = workspace:FindFirstChild("CustomsFinal", true)
+    if customs then
+        local customsBuilding = customs:FindFirstChild("CustomsBuilding", true) or customs
+        local office = customsBuilding:FindFirstChild("CustomsOffice", true)
         if office then
             local floor = office:FindFirstChild("Floor", true)
             if floor and floor:IsA("BasePart") then
-                return floor.CFrame * CFrame.new(0, 3.5, 0)
+                local pos = floor.CFrame:PointToWorldSpace(Vector3.new(5, floor.Size.Y * 0.5 + 3.25, 8))
+                return CFrame.new(pos)
             end
         end
     end
     return CFrame.new(530.9, 1746.5, 83581.1)
+end
+
+local function despawnHeli()
+    purgeHeli()
+    pcall(function()
+        if flow and flow.PoliceHeli and type(flow.PoliceHeli.Despawn) == "function" then
+            flow.PoliceHeli.Despawn()
+        end
+    end)
+end
+
+local function teleportToEndGate()
+    local endZ = getEndZ()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not character or not humanoid or not root or humanoid.Health <= 0 then
+        return false
+    end
+
+    local start = workspace:FindFirstChildOfClass("SpawnLocation")
+    local direction = (not start or not start.Enabled or endZ >= start.Position.Z) and 1 or -1
+    local vehicle
+    if humanoid.SeatPart then
+        vehicle = humanoid.SeatPart:FindFirstAncestorWhichIsA("Model")
+    end
+
+    local prompt = getEndPrompt()
+    if prompt then
+        local destination = getEndPromptDestination(prompt, direction)
+        if destination then
+            if vehicle then
+                parkEndVehicle(vehicle, endZ, direction)
+                humanoid.Sit = false
+                task.wait(0.1)
+            end
+            moveCharacter(destination)
+            return true, prompt, direction, endZ
+        end
+    end
+
+    local position = getEndAnchor(endZ, direction)
+    streamAround(position)
+    prompt = getEndPrompt()
+    if prompt then
+        local destination = getEndPromptDestination(prompt, direction)
+        if destination then
+            if vehicle then
+                parkEndVehicle(vehicle, endZ, direction)
+                humanoid.Sit = false
+                task.wait(0.1)
+            end
+            moveCharacter(destination)
+            return true, prompt, direction, endZ
+        end
+    end
+
+    local road = nil
+    local map = workspace:FindFirstChild("Map")
+    if map then
+        for _, part in ipairs(map:GetDescendants()) do
+            if part:IsA("BasePart") and (part.Name:lower() == "road" or part.Name:lower() == "sideroad") and math.abs(part.Position.Z - endZ) < 300 then
+                road = part
+                break
+            end
+        end
+    end
+
+    if road then
+        position = Vector3.new(road.Position.X, road.Position.Y + road.Size.Y * 0.5 + 8, endZ - direction * 35)
+    end
+
+    if vehicle then
+        parkEndVehicle(vehicle, endZ, direction)
+        humanoid.Sit = false
+        task.wait(0.1)
+    end
+    moveCharacter(CFrame.lookAt(position, position + Vector3.new(0, 0, direction), Vector3.yAxis))
+
+    local expires = os.clock() + 12
+    repeat
+        prompt = getEndPrompt()
+        if not prompt then
+            local customs = workspace:FindFirstChild("CustomsFinal", true)
+            if customs then
+                local ok, pivot = pcall(customs.GetPivot, customs)
+                if ok and pivot then
+                    streamAround(pivot.Position)
+                    prompt = getEndPrompt()
+                end
+            end
+        end
+        if not prompt then
+            task.wait(0.2)
+        end
+    until prompt or not character.Parent or os.clock() >= expires
+
+    if prompt then
+        local destination = getEndPromptDestination(prompt, direction)
+        if destination then
+            moveCharacter(destination)
+            return true, prompt, direction, endZ
+        end
+    end
+
+    return true, prompt, direction, endZ
+end
+
+local function reachAndActivateGate()
+    local ok, prompt, direction, endZ = teleportToEndGate()
+    if not ok then return false, nil, 1, 83581.1 end
+
+    if not prompt then
+        for _ = 1, 20 do
+            task.wait(0.2)
+            prompt = getEndPrompt()
+            if prompt then break end
+        end
+    end
+
+    if prompt then
+        local destination = getEndPromptDestination(prompt, direction)
+        if destination then
+            moveCharacter(destination)
+            task.wait(0.2)
+        end
+
+        local fired = false
+        if type(fireproximityprompt) == "function" then
+            fired = pcall(fireproximityprompt, prompt)
+        end
+        if not fired then
+            pcall(function()
+                local duration = prompt.HoldDuration
+                prompt.HoldDuration = 0
+                prompt:InputHoldBegin()
+                task.wait(0.1)
+                prompt:InputHoldEnd()
+                prompt.HoldDuration = duration
+            end)
+        end
+        pcall(function()
+            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.2)
+            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+    end
+
+    return true, prompt, direction, endZ
+end
+
+local function activateCommand(force)
+    local ok = reachAndActivateGate()
+    return ok
+end
+
+local function findCommandKey()
+    local prompt = getEndPrompt()
+    if prompt and prompt.Parent and prompt.Parent:IsA("BasePart") then
+        return prompt.Parent, prompt
+    end
+    return nil, prompt
+end
+
+local function isCommandActive()
+    local prompt = getEndPrompt()
+    if prompt and not prompt.Enabled then return true end
+    local secs = getGateTimer(prompt)
+    if secs and secs < 119 then return true end
+    return false
+end
+
+
+local function findOfficeCFrame()
+    return getSafeGateCFrame()
 end
 
 local function findEndCFrame()
@@ -1481,28 +2254,12 @@ Tabs.Teleport:AddButton({
     Title = "Teleport To Gate",
     Callback = function()
         task.spawn(function()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-
-            local keyPart, prompt = findCommandKey()
-            local gateCF = keyPart and keyPart.CFrame or findOfficeCFrame()
-            teleportEntity(gateCF * CFrame.new(0, 0, 3))
-            task.wait(0.2)
-
-            local curChar = LocalPlayer.Character
-            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
-            if curHum and curHum.Sit then
-                curHum.Sit = false
-                task.wait(0.2)
-            end
-
-            local success = activateCommand(true)
-            if success then
+            local ok = reachAndActivateGate()
+            if ok then
                 pcall(function()
                     Fluent:Notify({
                         Title = "Gate",
-                        Content = "Gate activated successfully",
+                        Content = "Teleported and activated Gate",
                         Duration = 3
                     })
                 end)
@@ -1649,6 +2406,18 @@ Tabs.ESP:AddToggle("ESPItemToggle", {
     end
 })
 
+Tabs.ESP:AddToggle("ESPCashToggle", {
+    Title = "ESP Cash",
+    Default = Config.ESPCash,
+    Callback = function(Value)
+        Config.ESPCash = Value
+        SaveConfig()
+        if not Value then
+            cleanCashESP()
+        end
+    end
+})
+
 Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     Title = "Minimize UI Keybind",
     Mode = "Toggle",
@@ -1687,7 +2456,7 @@ task.spawn(function()
             if Config.AutoBreakSafes then
                 local breakCount = 0
                 for obj, targetPart in pairs(breakableCache) do
-                    if obj.Parent and targetPart.Parent then
+                    if obj.Parent and targetPart.Parent and isBreakableAlive(obj) then
                         local partPos = targetPart:IsA("BasePart") and targetPart.Position or (obj:IsA("BasePart") and obj.Position)
                         if partPos and (myHrp.Position - partPos).Magnitude <= Config.AuraRange then
                             pcall(function() FlowEvent:FireServer("DamageToOpen", "Damage", obj, 99999, "melee") end)
@@ -1695,6 +2464,19 @@ task.spawn(function()
                             if breakCount >= 15 then break end
                         end
                     else
+                        if targetPart then
+                            local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                            if esp then esp:Destroy() end
+                        end
+                        if obj then
+                            for _, desc in ipairs(obj:GetDescendants()) do
+                                if desc.Name == "StarCrowCashESP" then
+                                    pcall(function() desc:Destroy() end)
+                                end
+                            end
+                            local chams = obj:FindFirstChild("StarCrowCashChams")
+                            if chams then chams:Destroy() end
+                        end
                         breakableCache[obj] = nil
                     end
                 end
@@ -1711,6 +2493,15 @@ task.spawn(function()
                                 collectCount = collectCount + 1
                                 if collectCount >= 15 then break end
                             end
+                        end
+                    end
+                end
+
+                for _, item in ipairs(CollectionService:GetTagged("Cash")) do
+                    if item:IsDescendantOf(workspace) then
+                        local cashPart = item:IsA("BasePart") and item or (item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart", true)))
+                        if not cashPart or (myHrp.Position - cashPart.Position).Magnitude <= math.max(Config.AuraRange, 200) then
+                            pcall(function() FlowEvent:FireServer("Cash", "Collect", item) end)
                         end
                     end
                 end
@@ -1879,28 +2670,39 @@ runAutoWin = function()
         end
         hrp.Anchored = false
 
-        activateCommand()
+        despawnHeli()
+        local ok, prompt, direction, endZ = reachAndActivateGate()
         if not Config.AutoWin then break end
 
-        char:PivotTo(findOfficeCFrame())
+        if not ok then
+            task.wait(1)
+            continue
+        end
+
+        local safeCF = getSafeGateCFrame()
+        moveCharacter(safeCF)
         task.wait(0.2)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.Anchored = false
 
-        local waitTime = 118
+        local waitTime = 125
+        local startWait = os.time()
         while waitTime > 0 and Config.AutoWin do
-            local gameSecs, gameText = getGameTimer()
+            despawnHeli()
+            local gameSecs, gameText = getGateTimer(prompt)
             if gameSecs then
-                waitTime = gameSecs
                 showTimer(string.format("AutoWin: %s", gameText))
-                if gameSecs <= 0 then break end
+                if gameSecs <= 1 then break end
             else
-                showTimer(string.format("AutoWin: %ds", waitTime))
+                local elapsed = os.time() - startWait
+                local rem = math.max(0, 120 - elapsed)
+                showTimer(string.format("AutoWin: %ds", rem))
+                if rem <= 0 then break end
             end
 
-            task.wait(1)
-            waitTime = waitTime - 1
+            task.wait(0.5)
+            waitTime = waitTime - 0.5
 
             if getActiveReplayButton() then break end
 
@@ -1915,7 +2717,7 @@ runAutoWin = function()
         if not Config.AutoWin then break end
 
         if getActiveReplayButton() then
-            task.wait(3)
+            task.wait(2)
             continue
         end
 
@@ -2200,13 +3002,37 @@ RunService.Stepped:Connect(function(_, dt)
         if hum and hum.SeatPart then
             local seat = hum.SeatPart
             local veh = seat:FindFirstAncestorWhichIsA("Model")
-            if veh and Config.InfFuel then
-                local gas = veh:FindFirstChild("gasLevel")
-                if gas and gas:IsA("ValueBase") then
-                    pcall(function() gas.Value = 99999 end)
+            if veh then
+                if Config.VehiclePerformance then
+                    applyVehiclePerformance(veh)
+                else
+                    restoreVehiclePerformance(veh)
                 end
+
+                if Config.VehicleDrift then
+                    applyVehicleGrip(veh)
+                else
+                    restoreVehicleGrip(veh)
+                end
+
+                if Config.InfFuel then
+                    local gas = veh:FindFirstChild("gasLevel")
+                    if gas and gas:IsA("ValueBase") then
+                        pcall(function() gas.Value = 99999 end)
+                    end
+                end
+
+                if Config.VehicleIndestructible then
+                    local health = veh:FindFirstChild("vehicleHealth")
+                    local property = veh:FindFirstChild("VehicleProperty")
+                    local maxHealth = property and property:GetAttribute("MaxHealth")
+                    if health and type(maxHealth) == "number" then
+                        health.Value = maxHealth
+                    end
+                end
+
+                handleVehicleFly(seat, veh, dt)
             end
-            handleVehicleFly(seat, veh, dt)
         else
             cleanupVehicleFly()
         end
@@ -2460,7 +3286,7 @@ RunService.RenderStepped:Connect(function(dt)
         FOVCircle.Visible = false
     end
 
-    if not Config.ESPPlayer and not Config.ESPMob and not Config.ESPItem then return end
+    if not Config.ESPPlayer and not Config.ESPMob and not Config.ESPItem and not Config.ESPCash then return end
 
     _espThrottle = _espThrottle + (dt or 0.016)
     if _espThrottle < 0.08 then return end
@@ -2621,6 +3447,84 @@ RunService.RenderStepped:Connect(function(dt)
                 if esp then esp:Destroy() end
                 local chams = item:FindFirstChild("StarCrowItemChams")
                 if chams then chams:Destroy() end
+            end
+        end
+    end
+
+    if Config.ESPCash then
+        for obj, targetPart in pairs(breakableCache) do
+            if obj.Parent and targetPart and targetPart.Parent and isBreakableAlive(obj) then
+                local labelText = getCashObjectLabel(obj)
+
+                local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                local chams = obj:FindFirstChild("StarCrowCashChams")
+
+                local offsetY = 2
+                if obj:IsA("Model") then
+                    local _, size = obj:GetBoundingBox()
+                    offsetY = size.Y * 0.5 + 1.2
+                elseif targetPart:IsA("BasePart") then
+                    offsetY = targetPart.Size.Y * 0.5 + 1.2
+                end
+
+                if not esp then
+                    for _, desc in ipairs(obj:GetDescendants()) do
+                        if desc.Name == "StarCrowCashESP" then
+                            pcall(function() desc:Destroy() end)
+                        end
+                    end
+
+                    esp = Instance.new("BillboardGui")
+                    esp.Name = "StarCrowCashESP"
+                    esp.Adornee = targetPart
+                    esp.Size = UDim2.new(0, 140, 0, 24)
+                    esp.StudsOffset = Vector3.new(0, offsetY, 0)
+                    esp.AlwaysOnTop = true
+
+                    local text = Instance.new("TextLabel")
+                    text.Name = "NameText"
+                    text.Parent = esp
+                    text.Size = UDim2.new(1, 0, 1, 0)
+                    text.BackgroundTransparency = 1
+                    text.Font = Enum.Font.GothamBold
+                    text.TextSize = 13
+                    text.TextColor3 = Color3.fromRGB(85, 255, 127)
+                    text.TextStrokeTransparency = 0
+                    text.RichText = true
+                    text.Text = labelText
+                    esp.Parent = targetPart
+                end
+
+                local nameLabel = esp:FindFirstChild("NameText")
+                if nameLabel and nameLabel.Text ~= labelText then
+                    nameLabel.Text = labelText
+                end
+
+                if not chams then
+                    chams = Instance.new("Highlight")
+                    chams.Name = "StarCrowCashChams"
+                    chams.FillColor = Color3.fromRGB(85, 255, 127)
+                    chams.OutlineColor = Color3.fromRGB(85, 255, 127)
+                    chams.FillTransparency = 0.65
+                    chams.OutlineTransparency = 0.2
+                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    chams.Parent = obj
+                end
+            else
+                if targetPart then
+                    local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                    if esp then esp:Destroy() end
+                end
+                if obj then
+                    for _, desc in ipairs(obj:GetDescendants()) do
+                        if desc.Name == "StarCrowCashESP" then
+                            pcall(function() desc:Destroy() end)
+                        end
+                    end
+                    local chams = obj:FindFirstChild("StarCrowCashChams")
+                    if chams then chams:Destroy() end
+                end
+                breakableCache[obj] = nil
             end
         end
     end
