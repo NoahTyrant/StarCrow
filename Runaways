@@ -58,10 +58,14 @@ local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
 
 local Config = {
     KillAura = false,
+    KillAuraRange = 50,
     AutoWin = false,
     RemoveHeli = false,
-    AuraRange = 2000,
+    AuraRange = 50,
     AutoBreakSafes = false,
+    BreakRange = 50,
+    AuraCollectCash = false,
+    AutoCollectCash = false,
     WalkSpeedEnabled = false,
     WalkSpeed = 30,
     Noclip = false,
@@ -487,6 +491,174 @@ local function runAutoLoot()
         stopAutoLoot = nil
     end
     autoLootRunning = false
+end
+
+local autoCollectCashRunning = false
+local stopAutoCollectCash = nil
+
+local function getCashDrops()
+    local drops = {}
+    local seen = {}
+    for _, cash in ipairs(CollectionService:GetTagged("Cash")) do
+        if cash:IsDescendantOf(workspace) and not seen[cash] then
+            local holder = cash.Parent
+            local sensor = (holder and holder:FindFirstChild("TouchSensor", true))
+                or cash:FindFirstChild("TouchSensor", true)
+                or (holder and holder:FindFirstChildWhichIsA("BasePart", true))
+                or (cash:IsA("BasePart") and cash)
+                or cash:FindFirstChildWhichIsA("BasePart", true)
+            if sensor and sensor:IsA("BasePart") then
+                seen[cash] = true
+                table.insert(drops, {
+                    Cash = cash,
+                    Sensor = sensor,
+                    Holder = holder or cash
+                })
+            end
+        end
+    end
+    local cashFolder = workspace:FindFirstChild("Cash")
+    if cashFolder then
+        for _, item in ipairs(cashFolder:GetChildren()) do
+            if item:IsDescendantOf(workspace) and not seen[item] then
+                local sensor = item:FindFirstChild("TouchSensor", true)
+                    or (item:IsA("BasePart") and item)
+                    or item:FindFirstChildWhichIsA("BasePart", true)
+                local cashObj = item:FindFirstChild("Cash", true) or item
+                if sensor and sensor:IsA("BasePart") then
+                    seen[item] = true
+                    table.insert(drops, {
+                        Cash = cashObj,
+                        Sensor = sensor,
+                        Holder = item
+                    })
+                end
+            end
+        end
+    end
+    return drops
+end
+
+local function runAutoCollectCash()
+    if autoCollectCashRunning then return end
+    autoCollectCashRunning = true
+
+    while Config.AutoCollectCash do
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not char or not hrp or not hum or hum.Health <= 0 then
+            task.wait(1)
+            continue
+        end
+
+        if hum.SeatPart then
+            hum.Sit = false
+            task.wait(0.2)
+        end
+
+        local startPivot = char:GetPivot()
+        local cam = workspace.CurrentCamera
+        local camCF = cam and cam.CFrame
+        local camType = cam and cam.CameraType
+        local camSubject = cam and cam.CameraSubject
+
+        if cam and camCF then
+            pcall(function()
+                cam.CameraType = Enum.CameraType.Scriptable
+                cam.CFrame = camCF
+            end)
+        end
+
+        local function restoreState()
+            local curChar = LocalPlayer.Character
+            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+            if curChar and curHrp and curHum and curHum.Health > 0 then
+                pcall(function()
+                    curChar:PivotTo(startPivot)
+                    curHrp.AssemblyLinearVelocity = Vector3.zero
+                    curHrp.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
+            local curCam = workspace.CurrentCamera or cam
+            if curCam then
+                pcall(function()
+                    if curHum and curHum.Parent then
+                        curCam.CameraSubject = curHum
+                    elseif curHrp and curHrp.Parent then
+                        curCam.CameraSubject = curHrp
+                    elseif camSubject and camSubject.Parent then
+                        curCam.CameraSubject = camSubject
+                    end
+                    curCam.CameraType = camType or Enum.CameraType.Custom
+                    if camCF then
+                        curCam.CFrame = camCF
+                    end
+                end)
+            end
+        end
+
+        stopAutoCollectCash = restoreState
+
+        local drops = getCashDrops()
+        for _, entry in ipairs(drops) do
+            if not Config.AutoCollectCash then break end
+            local curChar = LocalPlayer.Character
+            local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+            local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+            if not curChar or not curHrp or not curHum or curHum.Health <= 0 then break end
+
+            local sensor = entry.Sensor
+            local cash = entry.Cash
+            if sensor and sensor.Parent and cash and cash:IsDescendantOf(workspace) then
+                curChar:PivotTo(CFrame.new(sensor.Position))
+                curHrp.AssemblyLinearVelocity = Vector3.zero
+                curHrp.AssemblyAngularVelocity = Vector3.zero
+                task.wait(0.15)
+
+                if not Config.AutoCollectCash then break end
+
+                if flow and flow.Cash and type(flow.Cash.Collect) == "function" then
+                    pcall(flow.Cash.Collect, cash)
+                end
+                pcall(function() FlowEvent:FireServer("Cash", "Collect", cash) end)
+
+                for _, prompt in ipairs(entry.Holder:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        if type(fireproximityprompt) == "function" then
+                            pcall(fireproximityprompt, prompt)
+                        else
+                            pcall(function()
+                                local d = prompt.HoldDuration
+                                prompt.HoldDuration = 0
+                                prompt:InputHoldBegin()
+                                task.wait(0.05)
+                                prompt:InputHoldEnd()
+                                prompt.HoldDuration = d
+                            end)
+                        end
+                    end
+                end
+
+                task.wait(0.1)
+            end
+        end
+
+        restoreState()
+
+        if not Config.AutoCollectCash then break end
+        for _ = 1, 8 do
+            if not Config.AutoCollectCash then break end
+            task.wait(0.2)
+        end
+    end
+
+    if stopAutoCollectCash then
+        pcall(stopAutoCollectCash)
+        stopAutoCollectCash = nil
+    end
+    autoCollectCashRunning = false
 end
 
 local weaponConfigs = {}
@@ -1097,16 +1269,7 @@ Tabs.Main:AddToggle("RemoveHeliToggle", {
     end
 })
 
-Tabs.Main:AddSection("Aura")
-
-Tabs.Main:AddToggle("KillAuraToggle", {
-    Title = "Kill Aura",
-    Default = Config.KillAura,
-    Callback = function(Value)
-        Config.KillAura = Value
-        SaveConfig()
-    end
-})
+Tabs.Main:AddSection("Break Cash")
 
 Tabs.Main:AddToggle("AutoBreakSafesToggle", {
     Title = "Auto Break Cash Source",
@@ -1117,15 +1280,40 @@ Tabs.Main:AddToggle("AutoBreakSafesToggle", {
     end
 })
 
-Tabs.Main:AddSlider("AuraRangeSlider", {
-    Title = "Aura Range",
-    Default = Config.AuraRange,
+Tabs.Main:AddSlider("BreakRangeSlider", {
+    Title = "Break Range",
+    Default = Config.BreakRange or 50,
     Min = 1,
     Max = 2000,
     Rounding = 0,
     Callback = function(Value)
-        Config.AuraRange = Value
+        Config.BreakRange = Value
         SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Collect Cash")
+
+Tabs.Main:AddToggle("AuraCollectCashToggle", {
+    Title = "Aura Collect Cash",
+    Default = Config.AuraCollectCash,
+    Callback = function(Value)
+        Config.AuraCollectCash = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoCollectCashToggle", {
+    Title = "Auto Collect Cash",
+    Default = Config.AutoCollectCash,
+    Callback = function(Value)
+        Config.AutoCollectCash = Value
+        SaveConfig()
+        if Value then
+            task.spawn(runAutoCollectCash)
+        elseif stopAutoCollectCash then
+            pcall(stopAutoCollectCash)
+        end
     end
 })
 
@@ -1345,6 +1533,29 @@ Tabs.Main:AddButton({
 })
 
 task.defer(refreshRemoteShop)
+
+Tabs.Combat:AddSection("Kill Aura")
+
+Tabs.Combat:AddToggle("KillAuraToggle", {
+    Title = "Kill Aura",
+    Default = Config.KillAura,
+    Callback = function(Value)
+        Config.KillAura = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSlider("KillAuraRangeSlider", {
+    Title = "Kill Aura Range",
+    Default = Config.KillAuraRange or 50,
+    Min = 1,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.KillAuraRange = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Combat:AddSection("Silent Aim")
 
@@ -2570,11 +2781,12 @@ task.spawn(function()
                 local npcsFolder = workspace:FindFirstChild("NPCs")
                 if npcsFolder then
                     local killCount = 0
+                    local kRange = (Config.AutoWin and 2000) or (Config.KillAuraRange or 50)
                     for _, npc in ipairs(npcsFolder:GetChildren()) do
                         local enemyHum = npc:FindFirstChild("Humanoid")
                         local enemyHrp = npc:FindFirstChild("HumanoidRootPart")
                         if enemyHum and enemyHum.Health > 0 and enemyHrp then
-                            if (myHrp.Position - enemyHrp.Position).Magnitude <= Config.AuraRange then
+                            if (myHrp.Position - enemyHrp.Position).Magnitude <= kRange then
                                 pcall(function() FlowEvent:FireServer("NPCs", "Damage", enemyHum, 99999) end)
                                 killCount = killCount + 1
                                 if killCount >= 20 then break end
@@ -2586,10 +2798,11 @@ task.spawn(function()
 
             if Config.AutoBreakSafes then
                 local breakCount = 0
+                local bRange = Config.BreakRange or 50
                 for obj, targetPart in pairs(breakableCache) do
                     if obj.Parent and targetPart.Parent and isBreakableAlive(obj) then
                         local partPos = targetPart:IsA("BasePart") and targetPart.Position or (obj:IsA("BasePart") and obj.Position)
-                        if partPos and (myHrp.Position - partPos).Magnitude <= Config.AuraRange then
+                        if partPos and (myHrp.Position - partPos).Magnitude <= bRange then
                             pcall(function() FlowEvent:FireServer("DamageToOpen", "Damage", obj, 99999, "melee") end)
                             breakCount = breakCount + 1
                             if breakCount >= 15 then break end
@@ -2611,28 +2824,19 @@ task.spawn(function()
                         breakableCache[obj] = nil
                     end
                 end
+            end
 
-                local cashFolder = workspace:FindFirstChild("Cash")
-                if cashFolder then
-                    local collectCount = 0
-                    for _, item in ipairs(cashFolder:GetChildren()) do
-                        local targetCash = item:FindFirstChild("Cash", true) or (item.Name == "Cash" and item)
-                        if targetCash then
-                            local cashPart = targetCash:IsA("BasePart") and targetCash or item:FindFirstChildWhichIsA("BasePart")
-                            if not cashPart or (myHrp.Position - cashPart.Position).Magnitude <= math.max(Config.AuraRange, 200) then
-                                pcall(function() FlowEvent:FireServer("Cash", "Collect", targetCash) end)
-                                collectCount = collectCount + 1
-                                if collectCount >= 15 then break end
+            if Config.AuraCollectCash then
+                local drops = getCashDrops()
+                for _, entry in ipairs(drops) do
+                    local sensor = entry.Sensor
+                    local cash = entry.Cash
+                    if sensor and sensor.Parent and cash and cash:IsDescendantOf(workspace) then
+                        if (sensor.Position - myHrp.Position).Magnitude <= 8 then
+                            if flow and flow.Cash and type(flow.Cash.Collect) == "function" then
+                                pcall(flow.Cash.Collect, cash)
                             end
-                        end
-                    end
-                end
-
-                for _, item in ipairs(CollectionService:GetTagged("Cash")) do
-                    if item:IsDescendantOf(workspace) then
-                        local cashPart = item:IsA("BasePart") and item or (item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart", true)))
-                        if not cashPart or (myHrp.Position - cashPart.Position).Magnitude <= math.max(Config.AuraRange, 200) then
-                            pcall(function() FlowEvent:FireServer("Cash", "Collect", item) end)
+                            pcall(function() FlowEvent:FireServer("Cash", "Collect", cash) end)
                         end
                     end
                 end
