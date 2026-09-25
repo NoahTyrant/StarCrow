@@ -66,6 +66,14 @@ local Config = {
     BreakRange = 50,
     AuraCollectCash = false,
     AutoCollectCash = false,
+    AutoHeal = false,
+    AutoHealHealth = 50,
+    AutoHealItems = {
+        ["Bandage"] = true,
+        ["MedicBag"] = true,
+        ["MedicPack"] = true,
+        ["Foods & Drinks"] = true
+    },
     WalkSpeedEnabled = false,
     WalkSpeed = 30,
     Noclip = false,
@@ -1655,6 +1663,53 @@ Tabs.Combat:AddToggle("InfBombsToggle", {
     end
 })
 
+Tabs.Player:AddSection("Health")
+
+Tabs.Player:AddToggle("AutoHealToggle", {
+    Title = "Auto Heal",
+    Default = Config.AutoHeal,
+    Callback = function(Value)
+        Config.AutoHeal = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("AutoHealHealthSlider", {
+    Title = "Auto Heal %",
+    Default = Config.AutoHealHealth or 50,
+    Min = 1,
+    Max = 99,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AutoHealHealth = Value
+        SaveConfig()
+    end
+})
+
+local defaultConsumables = {}
+if type(Config.AutoHealItems) == "table" then
+    for k, v in pairs(Config.AutoHealItems) do
+        if v == true then
+            table.insert(defaultConsumables, k)
+        elseif type(k) == "number" and type(v) == "string" then
+            table.insert(defaultConsumables, v)
+        end
+    end
+else
+    defaultConsumables = {"Bandage", "MedicBag", "MedicPack", "Foods & Drinks"}
+end
+
+Tabs.Player:AddDropdown("AutoHealItemsDropdown", {
+    Title = "Select",
+    Values = {"Bandage", "MedicBag", "MedicPack", "Foods & Drinks"},
+    Multi = true,
+    Default = defaultConsumables,
+    Callback = function(Value)
+        Config.AutoHealItems = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Player:AddSection("Movement")
 
 Tabs.Player:AddToggle("SpeedToggle", {
@@ -2771,11 +2826,195 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     end
 })
 
+local lastHealTime = 0
+
+local nonConsumableKeywords = {
+    "pistol", "shotgun", "rifle", "sniper", "revolver", "smg", "machete", "knife", "katana",
+    "bat", "axe", "crowbar", "pipe", "lockpick", "gascan", "jerrycan", "flashlight", "ammo",
+    "c4", "bomb", "grenade", "throwable", "key", "rope", "wrench", "hammer"
+}
+
+local consumableKeywords = {
+    "medic", "bandage", "pack", "bag", "aid", "pill", "painkiller", "medkit", "syring", "heal",
+    "burger", "klc", "crisp", "chip", "donut", "doughnut", "pizza", "hotdog", "taco", "sandwich",
+    "cookie", "candy", "chocolate", "apple", "banana", "snack", "food", "meat", "steak", "chicken",
+    "fry", "fries", "noodle", "canned", "bean", "beans", "jerky", "bread", "popcorn", "soup",
+    "cheese", "pie", "cake", "bar", "sub", "wrap", "roll", "meal", "bacon", "water", "cola",
+    "soda", "bloxy", "drink", "juice", "coffee", "tea", "milk", "energy", "beverage", "bottle",
+    "can", "crisps", "chips", "hot dog", "french fry", "drumstick", "rib"
+}
+
+local function getConsumableCategory(tool)
+    if not tool or not tool:IsA("Tool") then return nil end
+
+    local name = tool.Name:lower()
+    local baseTool = tool:GetAttribute("BaseTool")
+    local baseName = type(baseTool) == "string" and baseTool:lower() or ""
+    local full = name .. " " .. baseName
+
+    if full:find("bandage") then
+        return "Bandage"
+    end
+
+    if full:find("medicbag") or (full:find("medic") and full:find("bag")) then
+        return "MedicBag"
+    end
+
+    if full:find("medicpack") or (full:find("medic") and full:find("pack")) or full:find("medkit") or full:find("firstaid") or full:find("aid") or full:find("pill") or full:find("painkiller") or full:find("syring") or full:find("heal") or full:find("medic") then
+        return "MedicPack"
+    end
+
+    if tool:HasTag("Food") or tool:GetAttribute("Food") == true or tool:GetAttribute("Category") == "Food" then
+        return "Foods & Drinks"
+    end
+
+    for _, kw in ipairs(consumableKeywords) do
+        if full:find(kw) then
+            return "Foods & Drinks"
+        end
+    end
+
+    if tool:HasTag("Consumable") or tool:HasTag("Medical") or tool:GetAttribute("Consumable") == true or tool:GetAttribute("Category") == "Consumable" then
+        return "Foods & Drinks"
+    end
+
+    return nil
+end
+
+local function isCategoryEnabled(cat)
+    if not cat then return false end
+    if not Config.AutoHealItems then return true end
+    if type(Config.AutoHealItems) ~= "table" then return true end
+
+    if Config.AutoHealItems[cat] == true then
+        return true
+    end
+
+    for k, v in pairs(Config.AutoHealItems) do
+        if v == true and tostring(k):lower() == cat:lower() then
+            return true
+        elseif type(k) == "number" and tostring(v):lower() == cat:lower() then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isConsumableTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+
+    local name = tool.Name:lower()
+    local baseTool = tool:GetAttribute("BaseTool")
+    local baseName = type(baseTool) == "string" and baseTool:lower() or ""
+
+    if tool:HasTag("Melee") or tool:HasTag("Backpack") or tool:HasTag("Undroppable") then
+        return false
+    end
+
+    if tool:FindFirstChild("Ammo") or tool:FindFirstChild("GunScript") or tool:FindFirstChild("GunClient") or tool:FindFirstChild("Mag") then
+        return false
+    end
+
+    if name:find("%d+/%d+") or baseName:find("%d+/%d+") then
+        return false
+    end
+
+    for _, kw in ipairs(nonConsumableKeywords) do
+        if name:find(kw) or baseName:find(kw) then
+            return false
+        end
+    end
+
+    local cat = getConsumableCategory(tool)
+    if cat and isCategoryEnabled(cat) then
+        return true
+    end
+
+    return false
+end
+
+local function findConsumable(char, hum)
+    if not char then return nil end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+
+    local held = char:FindFirstChildOfClass("Tool")
+    if held and isConsumableTool(held) then
+        return held
+    end
+
+    local order = {"MedicPack", "MedicBag", "Bandage", "Foods & Drinks"}
+    for _, targetCat in ipairs(order) do
+        if isCategoryEnabled(targetCat) then
+            for _, tool in ipairs(char:GetChildren()) do
+                if tool:IsA("Tool") and getConsumableCategory(tool) == targetCat and isConsumableTool(tool) then
+                    return tool
+                end
+            end
+            if bp then
+                for _, tool in ipairs(bp:GetChildren()) do
+                    if tool:IsA("Tool") and getConsumableCategory(tool) == targetCat and isConsumableTool(tool) then
+                        if hum then
+                            hum:EquipTool(tool)
+                            local t0 = os.clock()
+                            repeat
+                                task.wait(0.03)
+                            until tool.Parent == char or os.clock() - t0 >= 0.3
+                        end
+                        return tool
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
 task.spawn(function()
     while task.wait(0.1) do
         local char = LocalPlayer.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
             local myHrp = char.HumanoidRootPart
+
+            if Config.AutoHeal then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local maxHp = hum.MaxHealth > 0 and hum.MaxHealth or 100
+                    local hpPercent = (hum.Health / maxHp) * 100
+                    local threshold = Config.AutoHealHealth or 50
+                    if hpPercent < threshold and (os.clock() - lastHealTime >= 0.5) then
+                        local item = findConsumable(char, hum)
+                        if item then
+                            if item.Parent ~= char and hum then
+                                hum:EquipTool(item)
+                                local t0 = os.clock()
+                                repeat
+                                    task.wait(0.03)
+                                until item.Parent == char or os.clock() - t0 >= 0.3
+                            end
+                            if item.Parent == char then
+                                lastHealTime = os.clock()
+                                pcall(function() item:Activate() end)
+                                pcall(function()
+                                    FlowEvent:FireServer("Consumables", "Consume", item)
+                                end)
+                                pcall(function()
+                                    FlowEvent:FireServer("Consumables", "Eat", item)
+                                end)
+                                if flow and flow.Consumables then
+                                    if type(flow.Consumables.Consume) == "function" then
+                                        pcall(flow.Consumables.Consume, item)
+                                    end
+                                    if type(flow.Consumables.Eat) == "function" then
+                                        pcall(flow.Consumables.Eat, item)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
             
             if Config.KillAura or Config.AutoWin then
                 local npcsFolder = workspace:FindFirstChild("NPCs")
