@@ -194,7 +194,7 @@ local function checkBreakable(obj)
 end
 
 for _, desc in ipairs(workspace:GetDescendants()) do
-    if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" then
+    if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" or desc.Name == "StarCrowBountyTargetESP" or desc.Name == "StarCrowBountyTargetChams" or desc.Name == "StarCrowPosterESP" or desc.Name == "StarCrowPosterChams" or desc.Name == "StarCrowBountyMarker" then
         pcall(function() desc:Destroy() end)
     end
 end
@@ -290,6 +290,111 @@ local function cleanCashESP()
             pcall(function() desc:Destroy() end)
         end
     end
+end
+
+local bountyData = {
+    targetPart = nil,
+    targetPos = nil,
+    targetChar = nil,
+    targetAmount = nil,
+    lastResolve = 0
+}
+
+local function getBountyTarget()
+    local function extractFromPart(part)
+        if not part or not part:IsA("BasePart") then return nil end
+        local trp = part:FindFirstChild("TargetRootPart")
+        if trp and trp.Value and typeof(trp.Value) == "Instance" then
+            local val = trp.Value
+            local char = val:IsA("Model") and val or val.Parent
+            if char and char.Parent and char:IsDescendantOf(workspace) then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart or (val:IsA("BasePart") and val) or char:FindFirstChildWhichIsA("BasePart")
+                    if root and root:IsDescendantOf(workspace) then
+                        return root, root.Position, char, part:GetAttribute("BountyAmount")
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function checkItem(item)
+        if not item or not item:IsA("Tool") then return nil end
+        local part = item:FindFirstChild("WantedPosterPart") or item:FindFirstChildWhichIsA("BasePart")
+        local p, pos, c, a = extractFromPart(part)
+        if p and c then return p, pos, c, a end
+        for _, child in ipairs(item:GetChildren()) do
+            if child:IsA("BasePart") and child ~= part then
+                local cp, cpos, cc, ca = extractFromPart(child)
+                if cp and cc then return cp, cpos, cc, ca end
+            end
+        end
+        return nil
+    end
+
+    local char = LocalPlayer.Character
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            local p, pos, c, a = checkItem(item)
+            if p and c then return p, pos, c, a end
+        end
+    end
+
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            local p, pos, c, a = checkItem(item)
+            if p and c then return p, pos, c, a end
+        end
+    end
+
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui.Name == "WantedPoster" and gui.Adornee and gui.Adornee:IsA("BasePart") then
+                local p, pos, c, a = extractFromPart(gui.Adornee)
+                if p and c then return p, pos, c, a end
+            end
+        end
+    end
+
+    return nil, nil, nil, nil
+end
+
+local function resolveBountyTarget(force)
+    local now = os.clock()
+    if not force and (now - bountyData.lastResolve < 0.25) then
+        local targetChar = bountyData.targetChar
+        local root = bountyData.targetPart
+        local hum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+        if not targetChar or not targetChar.Parent or not targetChar:IsDescendantOf(workspace) or (hum and hum.Health <= 0) or (root and not root:IsDescendantOf(workspace)) then
+            bountyData.targetPart = nil
+            bountyData.targetPos = nil
+            bountyData.targetChar = nil
+            bountyData.targetAmount = nil
+            return nil, nil, nil, nil
+        end
+        if root then
+            bountyData.targetPos = root.Position
+        end
+        return bountyData.targetPart, bountyData.targetPos, bountyData.targetChar, bountyData.targetAmount
+    end
+    bountyData.lastResolve = now
+    local targetPart, targetPos, targetChar, amount = getBountyTarget()
+    if not targetChar or not targetPart then
+        bountyData.targetPart = nil
+        bountyData.targetPos = nil
+        bountyData.targetChar = nil
+        bountyData.targetAmount = nil
+        return nil, nil, nil, nil
+    end
+    bountyData.targetPart = targetPart
+    bountyData.targetPos = targetPos
+    bountyData.targetChar = targetChar
+    bountyData.targetAmount = amount
+    return targetPart, targetPos, targetChar, amount
 end
 
 local isBringingItems = false
@@ -1004,118 +1109,121 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 end)
 
 local LogoGui = Instance.new("ScreenGui")
-LogoGui.Name = "StarCrowLogoGui"
-LogoGui.ResetOnSpawn = false
-LogoGui.DisplayOrder = 10000
-pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
-if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-
 local LogoFrame = Instance.new("Frame")
-LogoFrame.Size = UDim2.new(0, 46, 0, 46)
-LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
-LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
-LogoFrame.BorderSizePixel = 0
-LogoFrame.Parent = LogoGui
-Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
-
-local logoStroke = Instance.new("UIStroke", LogoFrame)
-logoStroke.Thickness = 1.8
-logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-local logoGrad = Instance.new("UIGradient", logoStroke)
-logoGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
-})
-task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
-
-local LogoImg = Instance.new("ImageLabel")
-LogoImg.Size = UDim2.new(1, -6, 1, -6)
-LogoImg.Position = UDim2.new(0, 3, 0, 3)
-LogoImg.BackgroundTransparency = 1
-LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
-LogoImg.ScaleType = Enum.ScaleType.Fit
-LogoImg.Parent = LogoFrame
-
 local LogoBtn = Instance.new("TextButton")
-LogoBtn.Size = UDim2.new(1, 0, 1, 0)
-LogoBtn.BackgroundTransparency = 1
-LogoBtn.Text = ""
-LogoBtn.ZIndex = 5
-LogoBtn.Parent = LogoFrame
-
-local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-LogoBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-        dragInput = nil
-    end
-end)
-
 local TimerFrame = Instance.new("Frame")
-TimerFrame.Name = "TimerFrame"
-TimerFrame.Size = UDim2.new(0, 150, 0, 32)
-TimerFrame.Position = UDim2.new(0.5, -75, 0, 45)
-TimerFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
-TimerFrame.BackgroundTransparency = 0.15
-TimerFrame.BorderSizePixel = 0
-TimerFrame.Visible = false
-TimerFrame.Parent = LogoGui
-
-local timerCorner = Instance.new("UICorner", TimerFrame)
-timerCorner.CornerRadius = UDim.new(0, 8)
-
-local timerStroke = Instance.new("UIStroke", TimerFrame)
-timerStroke.Thickness = 1.5
-timerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-local timerGrad = Instance.new("UIGradient", timerStroke)
-timerGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
-})
-task.spawn(function()
-    TweenService:Create(timerGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
-end)
-
 local TimerLabel = Instance.new("TextLabel")
-TimerLabel.Size = UDim2.new(1, 0, 1, 0)
-TimerLabel.BackgroundTransparency = 1
-TimerLabel.Font = Enum.Font.GothamBold
-TimerLabel.Text = "AutoWin: 120s"
-TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TimerLabel.TextSize = 13
-TimerLabel.Parent = TimerFrame
 
-local tDragging, tDragInput, tDragStart, tStartPos = false, nil, nil, nil
-TimerFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        tDragging, tDragInput, tDragStart, tStartPos = true, input, input.Position, TimerFrame.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if tDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - tDragStart
-        TimerFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        tDragging = false
-        tDragInput = nil
-    end
-end)
+do
+    LogoGui.Name = "StarCrowLogoGui"
+    LogoGui.ResetOnSpawn = false
+    LogoGui.DisplayOrder = 10000
+    pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+    if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+    LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+    LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    LogoFrame.BorderSizePixel = 0
+    LogoFrame.Parent = LogoGui
+    Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+    local logoStroke = Instance.new("UIStroke", LogoFrame)
+    logoStroke.Thickness = 1.8
+    logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local logoGrad = Instance.new("UIGradient", logoStroke)
+    logoGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+    })
+    task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+    local LogoImg = Instance.new("ImageLabel")
+    LogoImg.Size = UDim2.new(1, -6, 1, -6)
+    LogoImg.Position = UDim2.new(0, 3, 0, 3)
+    LogoImg.BackgroundTransparency = 1
+    LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+    LogoImg.ScaleType = Enum.ScaleType.Fit
+    LogoImg.Parent = LogoFrame
+
+    LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+    LogoBtn.BackgroundTransparency = 1
+    LogoBtn.Text = ""
+    LogoBtn.ZIndex = 5
+    LogoBtn.Parent = LogoFrame
+
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            dragInput = nil
+        end
+    end)
+
+    TimerFrame.Name = "TimerFrame"
+    TimerFrame.Size = UDim2.new(0, 150, 0, 32)
+    TimerFrame.Position = UDim2.new(0.5, -75, 0, 45)
+    TimerFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    TimerFrame.BackgroundTransparency = 0.15
+    TimerFrame.BorderSizePixel = 0
+    TimerFrame.Visible = false
+    TimerFrame.Parent = LogoGui
+
+    local timerCorner = Instance.new("UICorner", TimerFrame)
+    timerCorner.CornerRadius = UDim.new(0, 8)
+
+    local timerStroke = Instance.new("UIStroke", TimerFrame)
+    timerStroke.Thickness = 1.5
+    timerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local timerGrad = Instance.new("UIGradient", timerStroke)
+    timerGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+    })
+    task.spawn(function()
+        TweenService:Create(timerGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
+    end)
+
+    TimerLabel.Size = UDim2.new(1, 0, 1, 0)
+    TimerLabel.BackgroundTransparency = 1
+    TimerLabel.Font = Enum.Font.GothamBold
+    TimerLabel.Text = "AutoWin: 120s"
+    TimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TimerLabel.TextSize = 13
+    TimerLabel.Parent = TimerFrame
+
+    local tDragging, tDragInput, tDragStart, tStartPos = false, nil, nil, nil
+    TimerFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragging, tDragInput, tDragStart, tStartPos = true, input, input.Position, TimerFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if tDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - tDragStart
+            TimerFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragging = false
+            tDragInput = nil
+        end
+    end)
+end
 
 local function showTimer(text)
     TimerLabel.Text = text
@@ -2741,15 +2849,17 @@ local function formatBuildingName(name)
     return (cleaned:gsub("(%l)(%u)", "%1 %2"):gsub("^%s*(.-)%s*$", "%1"))
 end
 
-local GasStationDropdown
-local PawnShopDropdown
-local selectedGasStation = "None"
-local selectedPawnShop = "None"
-local gasStationMap = {}
-local pawnShopMap = {}
-local gasStationSig = ""
-local pawnShopSig = ""
-local isRefreshingTeleports = false
+local teleData = {
+    selectedGas = "None",
+    selectedPawn = "None",
+    gasMap = {},
+    pawnMap = {},
+    gasSig = "",
+    pawnSig = "",
+    isRefreshing = false,
+    GasDropdown = nil,
+    PawnDropdown = nil
+}
 
 local function refreshTeleportLists(force)
     local map = workspace:FindFirstChild("Map")
@@ -2840,37 +2950,37 @@ local function refreshTeleportLists(force)
     local newGasSig = table.concat(gasValues, "\0")
     local newPawnSig = table.concat(pawnValues, "\0")
 
-    isRefreshingTeleports = true
+    teleData.isRefreshing = true
 
-    if GasStationDropdown then
-        gasStationMap = newGasMap
-        if force or gasStationSig ~= newGasSig then
-            gasStationSig = newGasSig
-            GasStationDropdown:SetValues(gasValues)
-            if newGasMap[selectedGasStation] then
-                GasStationDropdown:SetValue(selectedGasStation)
+    if teleData.GasDropdown then
+        teleData.gasMap = newGasMap
+        if force or teleData.gasSig ~= newGasSig then
+            teleData.gasSig = newGasSig
+            teleData.GasDropdown:SetValues(gasValues)
+            if newGasMap[teleData.selectedGas] then
+                teleData.GasDropdown:SetValue(teleData.selectedGas)
             else
-                GasStationDropdown:SetValue("None")
-                selectedGasStation = "None"
+                teleData.GasDropdown:SetValue("None")
+                teleData.selectedGas = "None"
             end
         end
     end
 
-    if PawnShopDropdown then
-        pawnShopMap = newPawnMap
-        if force or pawnShopSig ~= newPawnSig then
-            pawnShopSig = newPawnSig
-            PawnShopDropdown:SetValues(pawnValues)
-            if newPawnMap[selectedPawnShop] then
-                PawnShopDropdown:SetValue(selectedPawnShop)
+    if teleData.PawnDropdown then
+        teleData.pawnMap = newPawnMap
+        if force or teleData.pawnSig ~= newPawnSig then
+            teleData.pawnSig = newPawnSig
+            teleData.PawnDropdown:SetValues(pawnValues)
+            if newPawnMap[teleData.selectedPawn] then
+                teleData.PawnDropdown:SetValue(teleData.selectedPawn)
             else
-                PawnShopDropdown:SetValue("None")
-                selectedPawnShop = "None"
+                teleData.PawnDropdown:SetValue("None")
+                teleData.selectedPawn = "None"
             end
         end
     end
 
-    isRefreshingTeleports = false
+    teleData.isRefreshing = false
 
     task.spawn(function()
         task.wait(0.1)
@@ -3040,20 +3150,20 @@ Tabs.Teleport:AddButton({
 
 Tabs.Teleport:AddSection("Gas Station")
 
-GasStationDropdown = Tabs.Teleport:AddDropdown("GasStationDropdown", {
+teleData.GasDropdown = Tabs.Teleport:AddDropdown("GasStationDropdown", {
     Title = "Select",
     Values = { "None" },
     Multi = false,
     Default = "None",
     Callback = function(Value)
-        selectedGasStation = Value
+        teleData.selectedGas = Value
     end
 })
 
 Tabs.Teleport:AddButton({
     Title = "Teleport To Selected Gas Station",
     Callback = function()
-        if not selectedGasStation or selectedGasStation == "None" or not gasStationMap[selectedGasStation] then
+        if not teleData.selectedGas or teleData.selectedGas == "None" or not teleData.gasMap[teleData.selectedGas] then
             pcall(function()
                 Fluent:Notify({
                     Title = "Teleport",
@@ -3063,26 +3173,26 @@ Tabs.Teleport:AddButton({
             end)
             return
         end
-        teleportToTarget(gasStationMap[selectedGasStation], selectedGasStation)
+        teleportToTarget(teleData.gasMap[teleData.selectedGas], teleData.selectedGas)
     end
 })
 
 Tabs.Teleport:AddSection("Pawn Shop")
 
-PawnShopDropdown = Tabs.Teleport:AddDropdown("PawnShopDropdown", {
+teleData.PawnDropdown = Tabs.Teleport:AddDropdown("PawnShopDropdown", {
     Title = "Select",
     Values = { "None" },
     Multi = false,
     Default = "None",
     Callback = function(Value)
-        selectedPawnShop = Value
+        teleData.selectedPawn = Value
     end
 })
 
 Tabs.Teleport:AddButton({
     Title = "Teleport To Selected Pawn Shop",
     Callback = function()
-        if not selectedPawnShop or selectedPawnShop == "None" or not pawnShopMap[selectedPawnShop] then
+        if not teleData.selectedPawn or teleData.selectedPawn == "None" or not teleData.pawnMap[teleData.selectedPawn] then
             pcall(function()
                 Fluent:Notify({
                     Title = "Teleport",
@@ -3092,7 +3202,36 @@ Tabs.Teleport:AddButton({
             end)
             return
         end
-        teleportToTarget(pawnShopMap[selectedPawnShop], selectedPawnShop)
+        teleportToTarget(teleData.pawnMap[teleData.selectedPawn], teleData.selectedPawn)
+    end
+})
+
+Tabs.Teleport:AddSection("Bounty")
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Bounty Target",
+    Callback = function()
+        local targetPart, targetPos = resolveBountyTarget(true)
+        if targetPos then
+            local moved = teleportMove(CFrame.new(targetPos + Vector3.new(0, 3.5, 0)))
+            if moved then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Bounty",
+                        Content = "Teleported to Bounty Target",
+                        Duration = 3
+                    })
+                end)
+            end
+        else
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Bounty",
+                    Content = "Bounty Target has not spawned yet!",
+                    Duration = 3
+                })
+            end)
+        end
     end
 })
 
@@ -4150,14 +4289,18 @@ pcall(function()
     end
 end)
 
-local holdingPunch = false
-local punchThreadRunning = false
+local punchState = {
+    holding = false,
+    running = false,
+    cachedBtn = nil,
+    activeTouch = nil
+}
 
 local function startPunchLoop()
-    if punchThreadRunning then return end
-    punchThreadRunning = true
+    if punchState.running then return end
+    punchState.running = true
     task.spawn(function()
-        while holdingPunch and Config.NoPunchCooldown do
+        while punchState.holding and Config.NoPunchCooldown do
             local char = LocalPlayer.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -4181,25 +4324,24 @@ local function startPunchLoop()
             end
             task.wait(0.02)
         end
-        punchThreadRunning = false
+        punchState.running = false
     end)
 end
 
 local function onPunchBegan()
-    holdingPunch = true
+    punchState.holding = true
     if Config.NoPunchCooldown then
         startPunchLoop()
     end
 end
 
 local function onPunchEnded()
-    holdingPunch = false
+    punchState.holding = false
 end
 
-local cachedPunchButton = nil
 local function getPunchButton()
-    if cachedPunchButton and cachedPunchButton.Parent then
-        return cachedPunchButton
+    if punchState.cachedBtn and punchState.cachedBtn.Parent then
+        return punchState.cachedBtn
     end
     local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if pgui then
@@ -4209,22 +4351,20 @@ local function getPunchButton()
             if tc then
                 local pb = tc:FindFirstChild("Punch")
                 if pb and pb:IsA("GuiObject") then
-                    cachedPunchButton = pb
+                    punchState.cachedBtn = pb
                     return pb
                 end
             end
         end
         for _, desc in ipairs(pgui:GetDescendants()) do
             if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
-                cachedPunchButton = desc
+                punchState.cachedBtn = desc
                 return desc
             end
         end
     end
     return nil
 end
-
-local activePunchTouch = nil
 
 UserInputService.TouchStarted:Connect(function(touch)
     local btn = getPunchButton()
@@ -4233,15 +4373,15 @@ UserInputService.TouchStarted:Connect(function(touch)
         local as = btn.AbsoluteSize
         local p = touch.Position
         if p.X >= ap.X and p.X <= ap.X + as.X and p.Y >= ap.Y and p.Y <= ap.Y + as.Y then
-            activePunchTouch = touch
+            punchState.activeTouch = touch
             onPunchBegan()
         end
     end
 end)
 
 UserInputService.TouchEnded:Connect(function(touch)
-    if activePunchTouch and touch == activePunchTouch then
-        activePunchTouch = nil
+    if punchState.activeTouch and touch == punchState.activeTouch then
+        punchState.activeTouch = nil
         onPunchEnded()
     end
 end)
@@ -4278,14 +4418,16 @@ end
 
 scanAndBindPunchGui()
 
-local pguiObj = LocalPlayer:WaitForChild("PlayerGui", 9e9)
-if pguiObj then
-    pguiObj.DescendantAdded:Connect(function(desc)
-        if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
-            bindPunchGui(desc)
-        end
-    end)
-end
+task.spawn(function()
+    local pguiObj = LocalPlayer:WaitForChild("PlayerGui", 9e9)
+    if pguiObj then
+        pguiObj.DescendantAdded:Connect(function(desc)
+            if desc.Name == "Punch" and desc:IsA("GuiObject") and desc.Parent and desc.Parent.Name == "TouchControl" then
+                bindPunchGui(desc)
+            end
+        end)
+    end
+end)
 
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
