@@ -2575,7 +2575,7 @@ local function getBuildingDestination(target)
     return CFrame.lookAt(position, position + look, Vector3.yAxis)
 end
 
-local function findNearestBuilding(filter)
+local function findTargetBuilding(filter, mode)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
@@ -2592,21 +2592,100 @@ local function findNearestBuilding(filter)
             table.insert(pool, b)
         end
     end
-    local closest = nil
-    local minDist = math.huge
+    local endZ = 83581.1
+    if type(getEndZ) == "function" then
+        local ok, ez = pcall(getEndZ)
+        if ok and ez then endZ = ez end
+    end
+    local direction = 1
+    if type(getDirection) == "function" then
+        local ok, dir = pcall(getDirection, endZ)
+        if ok and dir and dir ~= 0 then direction = dir end
+    end
+    local best = nil
+    local bestScore = math.huge
     for _, b in ipairs(pool) do
         if b:IsA("Model") and filter(b) then
             local ok, pivot = pcall(b.GetPivot, b)
             if ok and pivot then
                 local dist = (pivot.Position - hrp.Position).Magnitude
-                if dist < minDist then
-                    minDist = dist
-                    closest = b
+                if mode == "nearest" then
+                    if dist < bestScore then
+                        bestScore = dist
+                        best = b
+                    end
+                elseif mode == "next" then
+                    local deltaZ = (pivot.Position.Z - hrp.Position.Z) * direction
+                    if deltaZ > 100 and deltaZ < bestScore then
+                        bestScore = deltaZ
+                        best = b
+                    end
+                elseif mode == "previous" then
+                    local distBehind = (hrp.Position.Z - pivot.Position.Z) * direction
+                    if distBehind > 100 and distBehind < bestScore then
+                        bestScore = distBehind
+                        best = b
+                    end
                 end
             end
         end
     end
-    return closest
+    return best
+end
+
+local function findNearestBuilding(filter)
+    return findTargetBuilding(filter, "nearest")
+end
+
+local function isGasStation(inst)
+    local name = inst.Name:lower()
+    return (name:find("gasstation") or name:find("gas station") or name:find("gas")) and not name:find("sign")
+end
+
+local function isPawnShop(inst)
+    local name = inst.Name:lower()
+    return (name:find("pawn") or name:find("trashamerica") or name:find("trash_america")) and not name:find("sign") and not name:find("spawn")
+end
+
+local function teleportToBuilding(filter, mode, label)
+    task.spawn(function()
+        local b = findTargetBuilding(filter, mode)
+        if not b then
+            local missingMsg = "No " .. label .. " found"
+            if mode == "next" then
+                missingMsg = "No next " .. label .. " found"
+            elseif mode == "previous" then
+                missingMsg = "No previous " .. label .. " found"
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = missingMsg,
+                    Duration = 3
+                })
+            end)
+            return
+        end
+        local cf = getBuildingDestination(b)
+        if cf then
+            teleportEntity(cf)
+            local successMsg = "Teleported to " .. label
+            if mode == "nearest" then
+                successMsg = "Teleported to Nearby " .. label
+            elseif mode == "next" then
+                successMsg = "Teleported to Next " .. label
+            elseif mode == "previous" then
+                successMsg = "Teleported to Previous " .. label
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = successMsg,
+                    Duration = 3
+                })
+            end)
+        end
+    end)
 end
 
 Tabs.Teleport:AddSection("Locations")
@@ -2650,70 +2729,46 @@ Tabs.Teleport:AddButton({
 Tabs.Teleport:AddSection("Gas Station")
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To Gas Station",
+    Title = "Teleport To Nearby Gas Station",
     Callback = function()
-        task.spawn(function()
-            local b = findNearestBuilding(function(inst)
-                local name = inst.Name:lower()
-                return (name:find("gasstation") or name:find("gas station") or name:find("gas")) and not name:find("sign")
-            end)
-            if not b then
-                pcall(function()
-                    Fluent:Notify({
-                        Title = "Teleport",
-                        Content = "No Gas Station found",
-                        Duration = 3
-                    })
-                end)
-                return
-            end
-            local cf = getBuildingDestination(b)
-            if cf then
-                teleportEntity(cf)
-                pcall(function()
-                    Fluent:Notify({
-                        Title = "Teleport",
-                        Content = "Teleported to Gas Station",
-                        Duration = 3
-                    })
-                end)
-            end
-        end)
+        teleportToBuilding(isGasStation, "nearest", "Gas Station")
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Next Gas Station",
+    Callback = function()
+        teleportToBuilding(isGasStation, "next", "Gas Station")
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Previous Gas Station",
+    Callback = function()
+        teleportToBuilding(isGasStation, "previous", "Gas Station")
     end
 })
 
 Tabs.Teleport:AddSection("Pawn Shop")
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To Pawn Shop",
+    Title = "Teleport To Nearby Pawn Shop",
     Callback = function()
-        task.spawn(function()
-            local b = findNearestBuilding(function(inst)
-                local name = inst.Name:lower()
-                return (name:find("pawn") or name:find("trashamerica") or name:find("trash_america")) and not name:find("sign") and not name:find("spawn")
-            end)
-            if not b then
-                pcall(function()
-                    Fluent:Notify({
-                        Title = "Teleport",
-                        Content = "No Pawn Shop found",
-                        Duration = 3
-                    })
-                end)
-                return
-            end
-            local cf = getBuildingDestination(b)
-            if cf then
-                teleportEntity(cf)
-                pcall(function()
-                    Fluent:Notify({
-                        Title = "Teleport",
-                        Content = "Teleported to Pawn Shop",
-                        Duration = 3
-                    })
-                end)
-            end
-        end)
+        teleportToBuilding(isPawnShop, "nearest", "Pawn Shop")
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Next Pawn Shop",
+    Callback = function()
+        teleportToBuilding(isPawnShop, "next", "Pawn Shop")
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Previous Pawn Shop",
+    Callback = function()
+        teleportToBuilding(isPawnShop, "previous", "Pawn Shop")
     end
 })
 
