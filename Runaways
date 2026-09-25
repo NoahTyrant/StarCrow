@@ -18,6 +18,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local vim = VirtualInputManager
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local LocalPlayer = Players.LocalPlayer
 local FlowEvent = ReplicatedStorage:WaitForChild("FlowClient", 9e9):WaitForChild("ClientRunner", 9e9):WaitForChild("Event", 9e9)
@@ -108,7 +109,8 @@ local Config = {
     VehicleDownforce = 1.5,
     VehicleDrift = false,
     VehicleTireGrip = 0.6,
-    VehicleIndestructible = false
+    VehicleIndestructible = false,
+    InstantInteract = false
 }
 
 local function SaveConfig()
@@ -1734,7 +1736,62 @@ Tabs.Player:AddSlider("SpeedSlider", {
     end
 })
 
+local promptDurations = setmetatable({}, { __mode = "k" })
+
+local function updatePrompt(prompt)
+    if not prompt:IsA("ProximityPrompt") then return end
+    if Config.InstantInteract then
+        if promptDurations[prompt] == nil then
+            promptDurations[prompt] = prompt.HoldDuration
+        end
+        prompt.HoldDuration = 0
+    elseif promptDurations[prompt] ~= nil then
+        prompt.HoldDuration = promptDurations[prompt]
+        promptDurations[prompt] = nil
+    end
+end
+
+local function setAllPromptsInstant(enabled)
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            updatePrompt(obj)
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("ProximityPrompt") and Config.InstantInteract then
+        updatePrompt(obj)
+    end
+end)
+
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
+    if Config.InstantInteract then
+        if type(fireproximityprompt) == "function" then
+            pcall(fireproximityprompt, prompt)
+        else
+            pcall(function()
+                prompt.HoldDuration = 0
+            end)
+        end
+    end
+end)
+
+if Config.InstantInteract then
+    setAllPromptsInstant(true)
+end
+
 Tabs.Player:AddSection("Character")
+
+Tabs.Player:AddToggle("InstantInteractToggle", {
+    Title = "Instant Interact",
+    Default = Config.InstantInteract,
+    Callback = function(Value)
+        Config.InstantInteract = Value
+        SaveConfig()
+        setAllPromptsInstant(Value)
+    end
+})
 
 Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
