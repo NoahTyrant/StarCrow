@@ -2555,31 +2555,96 @@ local function findEndCFrame()
     return CFrame.new(343.7, 2205.7, 83637.0)
 end
 
-local function teleportEntity(cf)
+local function getCurrentVehicle()
     local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local seat = hum and hum.SeatPart
+    if not seat or not seat:IsA("VehicleSeat") or seat.Occupant ~= hum then
+        return nil
+    end
+    local veh = seat:FindFirstAncestorOfClass("Model")
+    return veh
+end
 
-    if hum and hum.SeatPart then
-        local seat = hum.SeatPart
-        local veh = seat:FindFirstAncestorWhichIsA("Model")
+local function getVehicleChassis(veh)
+    if not veh then return nil end
+    local sys = veh:FindFirstChild("system")
+    return (sys and sys:FindFirstChild("chassis"))
+        or veh.PrimaryPart
+        or veh:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function teleportMove(destination)
+    if typeof(destination) ~= "CFrame" then return false end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or not hrp or hum.Health <= 0 then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Teleport",
+                Content = "Character is unavailable",
+                Duration = 3
+            })
+        end)
+        return false
+    end
+
+    local veh = getCurrentVehicle()
+    local subject = veh or char
+    local mover = (veh and getVehicleChassis(veh)) or hrp
+    if not mover or not subject.Parent then return false end
+
+    local cam = workspace.CurrentCamera
+    local camCF = cam and cam.CFrame
+    local camSub = cam and cam.CameraSubject
+    local camType = cam and cam.CameraType
+
+    if cam then
+        pcall(function()
+            cam.CameraType = Enum.CameraType.Scriptable
+            cam.CFrame = camCF
+        end)
+    end
+
+    local ok = pcall(function()
+        if subject == char and hum.SeatPart then
+            hum.Sit = false
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            RunService.Heartbeat:Wait()
+        end
+
+        subject:PivotTo(destination * mover.CFrame:Inverse() * subject:GetPivot())
+        mover.AssemblyLinearVelocity = Vector3.zero
+        mover.AssemblyAngularVelocity = Vector3.zero
         if veh then
-            veh:PivotTo(cf)
             for _, p in ipairs(veh:GetDescendants()) do
                 if p:IsA("BasePart") then
                     p.AssemblyLinearVelocity = Vector3.zero
                     p.AssemblyAngularVelocity = Vector3.zero
                 end
             end
-            return
         end
+        RunService.Heartbeat:Wait()
+    end)
+
+    if cam and cam.Parent then
+        pcall(function()
+            cam.CameraSubject = camSub
+            cam.CameraType = camType
+            cam.CFrame = camCF
+        end)
     end
 
-    char:PivotTo(cf)
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
+    return ok
+end
+
+local teleportEntity = teleportMove
+
+local function streamPosition(pos)
+    pcall(function()
+        LocalPlayer:RequestStreamAroundAsync(pos, 5)
+    end)
 end
 
 local function getBuildingSurface(building)
@@ -2610,134 +2675,324 @@ local function getBuildingDestination(target)
         return target.CFrame + Vector3.new(0, 4, 0)
     end
     local surface = getBuildingSurface(target)
+    local anchor = nil
     if not surface then
         local ok, pivot = pcall(target.GetPivot, target)
         if ok and pivot then
-            pcall(function()
-                LocalPlayer:RequestStreamAroundAsync(pivot.Position, 5)
-            end)
-            task.wait(0.15)
-            surface = getBuildingSurface(target)
-            if not surface then
-                return CFrame.new(pivot.Position + Vector3.yAxis * 8) * pivot.Rotation
-            end
+            anchor = pivot
+            streamPosition(pivot.Position)
         end
+        local expires = os.clock() + 2
+        repeat
+            task.wait(0.1)
+            surface = getBuildingSurface(target)
+        until surface or not target.Parent or os.clock() >= expires
     end
-    if not surface then return nil end
+    if not surface then
+        if anchor and target.Parent then
+            return CFrame.new(anchor.Position + Vector3.yAxis * 8) * anchor.Rotation
+        end
+        local ok, piv = pcall(target.GetPivot, target)
+        if ok and piv then
+            return CFrame.new(piv.Position + Vector3.yAxis * 8) * piv.Rotation
+        end
+        return nil
+    end
     local position = surface.Position + Vector3.yAxis * (surface.Size.Y * 0.5 + 4)
     local look = Vector3.new(surface.CFrame.LookVector.X, 0, surface.CFrame.LookVector.Z)
     if look.Magnitude < 0.1 then
         look = Vector3.new(0, 0, -1)
     end
-    return CFrame.lookAt(position, position + look, Vector3.yAxis)
+    return CFrame.lookAt(position, position + look.Unit, Vector3.yAxis)
 end
 
-local function findTargetBuilding(filter, mode)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
+local function isGasStation(inst)
+    if not inst or not inst:IsA("Model") then return false end
+    local name = inst.Name:lower()
+    if name:find("sign", 1, true) then return false end
+    return (name:find("gasstation", 1, true) or name:find("gas station", 1, true) or name:find("gas", 1, true))
+        or inst:FindFirstChild("GasPump", true) ~= nil
+        or CollectionService:HasTag(inst, "GasPump")
+end
+
+local function isPawnShop(inst)
+    if not inst or not inst:IsA("Model") then return false end
+    local name = inst.Name:lower()
+    if name:find("sign", 1, true) or name:find("spawn", 1, true) then return false end
+    return (name:find("pawn", 1, true) or name:find("trashamerica", 1, true) or name:find("trash_america", 1, true))
+        or CollectionService:HasTag(inst, "PawnCounter")
+        or inst:FindFirstChild("CallBell", true) ~= nil
+end
+
+local buildingUniqueIds = setmetatable({}, { __mode = "k" })
+local nextBuildingUniqueId = 0
+local function getBuildingUniqueId(inst)
+    local id = buildingUniqueIds[inst]
+    if not id then
+        nextBuildingUniqueId = nextBuildingUniqueId + 1
+        id = nextBuildingUniqueId
+        buildingUniqueIds[inst] = id
+    end
+    return id
+end
+
+local function formatBuildingName(name)
+    local cleaned = name:gsub("_", " ")
+    return (cleaned:gsub("(%l)(%u)", "%1 %2"):gsub("^%s*(.-)%s*$", "%1"))
+end
+
+local GasStationDropdown
+local PawnShopDropdown
+local selectedGasStation = "None"
+local selectedPawnShop = "None"
+local gasStationMap = {}
+local pawnShopMap = {}
+local gasStationSig = ""
+local pawnShopSig = ""
+local isRefreshingTeleports = false
+
+local function refreshTeleportLists(force)
     local map = workspace:FindFirstChild("Map")
     local buildings = (map and map:FindFirstChild("Buildings")) or workspace:FindFirstChild("Buildings")
-    local pool = {}
-    if buildings then
-        for _, b in ipairs(buildings:GetChildren()) do
-            table.insert(pool, b)
-        end
-    end
-    if #pool == 0 and map then
-        for _, b in ipairs(map:GetChildren()) do
-            table.insert(pool, b)
-        end
-    end
-    local endZ = 83581.1
-    if type(getEndZ) == "function" then
-        local ok, ez = pcall(getEndZ)
-        if ok and ez then endZ = ez end
-    end
-    local direction = 1
-    if type(getDirection) == "function" then
-        local ok, dir = pcall(getDirection, endZ)
-        if ok and dir and dir ~= 0 then direction = dir end
-    end
-    local best = nil
-    local bestScore = math.huge
-    for _, b in ipairs(pool) do
-        if b:IsA("Model") and filter(b) then
-            local ok, pivot = pcall(b.GetPivot, b)
-            if ok and pivot then
-                local dist = (pivot.Position - hrp.Position).Magnitude
-                if mode == "nearest" then
-                    if dist < bestScore then
-                        bestScore = dist
-                        best = b
-                    end
-                elseif mode == "next" then
-                    local deltaZ = (pivot.Position.Z - hrp.Position.Z) * direction
-                    if deltaZ > 100 and deltaZ < bestScore then
-                        bestScore = deltaZ
-                        best = b
-                    end
-                elseif mode == "previous" then
-                    local distBehind = (hrp.Position.Z - pivot.Position.Z) * direction
-                    if distBehind > 100 and distBehind < bestScore then
-                        bestScore = distBehind
-                        best = b
-                    end
+    if not buildings then return end
+
+    local gasEntries = {}
+    local pawnEntries = {}
+
+    for _, b in ipairs(buildings:GetChildren()) do
+        if b:IsA("Model") then
+            local name = b.Name:lower()
+            if not name:find("sign", 1, true) then
+                local bId = b:GetAttribute("BuildingId") or b.Name:match("%d+")
+                local numId = tonumber(bId)
+                local genId = getBuildingUniqueId(b)
+                local order = numId or (1000000000 + genId)
+                local baseName = formatBuildingName(b.Name:gsub("%d+$", ""):gsub("_%d+$", ""))
+
+                local label
+                if numId then
+                    label = baseName .. " #" .. tostring(numId)
+                else
+                    label = baseName .. " (Landmark #" .. tostring(genId) .. ")"
+                end
+
+                if isGasStation(b) then
+                    table.insert(gasEntries, {
+                        Instance = b,
+                        Label = label,
+                        Order = order
+                    })
+                elseif isPawnShop(b) then
+                    table.insert(pawnEntries, {
+                        Instance = b,
+                        Label = label,
+                        Order = order
+                    })
                 end
             end
         end
     end
-    return best
-end
 
-local function findNearestBuilding(filter)
-    return findTargetBuilding(filter, "nearest")
-end
+    table.sort(gasEntries, function(a, b)
+        if a.Order == b.Order then
+            return a.Label < b.Label
+        end
+        return a.Order < b.Order
+    end)
 
-local function isGasStation(inst)
-    local name = inst.Name:lower()
-    return (name:find("gasstation") or name:find("gas station") or name:find("gas")) and not name:find("sign")
-end
+    table.sort(pawnEntries, function(a, b)
+        if a.Order == b.Order then
+            return a.Label < b.Label
+        end
+        return a.Order < b.Order
+    end)
 
-local function isPawnShop(inst)
-    local name = inst.Name:lower()
-    return (name:find("pawn") or name:find("trashamerica") or name:find("trash_america")) and not name:find("sign") and not name:find("spawn")
-end
+    local newGasMap = {}
+    local gasValues = { "None" }
+    local seenGas = {}
+    for _, entry in ipairs(gasEntries) do
+        local l = entry.Label
+        if seenGas[l] then
+            seenGas[l] = seenGas[l] + 1
+            l = l .. " (" .. seenGas[l] .. ")"
+        else
+            seenGas[l] = 1
+        end
+        table.insert(gasValues, l)
+        newGasMap[l] = entry.Instance
+    end
 
-local function teleportToBuilding(filter, mode, label)
-    task.spawn(function()
-        local b = findTargetBuilding(filter, mode)
-        if not b then
-            local missingMsg = "No " .. label .. " found"
-            if mode == "next" then
-                missingMsg = "No next " .. label .. " found"
-            elseif mode == "previous" then
-                missingMsg = "No previous " .. label .. " found"
+    local newPawnMap = {}
+    local pawnValues = { "None" }
+    local seenPawn = {}
+    for _, entry in ipairs(pawnEntries) do
+        local l = entry.Label
+        if seenPawn[l] then
+            seenPawn[l] = seenPawn[l] + 1
+            l = l .. " (" .. seenPawn[l] .. ")"
+        else
+            seenPawn[l] = 1
+        end
+        table.insert(pawnValues, l)
+        newPawnMap[l] = entry.Instance
+    end
+
+    local newGasSig = table.concat(gasValues, "\0")
+    local newPawnSig = table.concat(pawnValues, "\0")
+
+    isRefreshingTeleports = true
+
+    if GasStationDropdown then
+        gasStationMap = newGasMap
+        if force or gasStationSig ~= newGasSig then
+            gasStationSig = newGasSig
+            GasStationDropdown:SetValues(gasValues)
+            if newGasMap[selectedGasStation] then
+                GasStationDropdown:SetValue(selectedGasStation)
+            else
+                GasStationDropdown:SetValue("None")
+                selectedGasStation = "None"
             end
+        end
+    end
+
+    if PawnShopDropdown then
+        pawnShopMap = newPawnMap
+        if force or pawnShopSig ~= newPawnSig then
+            pawnShopSig = newPawnSig
+            PawnShopDropdown:SetValues(pawnValues)
+            if newPawnMap[selectedPawnShop] then
+                PawnShopDropdown:SetValue(selectedPawnShop)
+            else
+                PawnShopDropdown:SetValue("None")
+                selectedPawnShop = "None"
+            end
+        end
+    end
+
+    isRefreshingTeleports = false
+
+    task.spawn(function()
+        task.wait(0.1)
+        local coreGui = game:GetService("CoreGui")
+        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local guis = { Fluent and Fluent.GUI, coreGui, playerGui }
+        for _, root in ipairs(guis) do
+            if root then
+                for _, desc in ipairs(root:GetDescendants()) do
+                    if desc:IsA("ScrollingFrame") then
+                        desc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+                        desc.ScrollingEnabled = true
+                        desc.ScrollBarImageTransparency = 0.2
+                        desc.ScrollBarThickness = 6
+                        local l = desc:FindFirstChildOfClass("UIListLayout")
+                        if l and l.AbsoluteContentSize.Y > 0 then
+                            desc.CanvasSize = UDim2.new(0, 0, 0, l.AbsoluteContentSize.Y + 25)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function setupDropdownScrollFix()
+    local function applyScrollerFix(scroller)
+        if not scroller or not scroller:IsA("ScrollingFrame") then return end
+        scroller.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        scroller.ScrollingEnabled = true
+        scroller.ScrollBarImageTransparency = 0.2
+        scroller.ScrollBarThickness = 6
+        local layout = scroller:FindFirstChildOfClass("UIListLayout")
+        if layout then
+            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+                if layout.AbsoluteContentSize.Y > 0 then
+                    scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 25)
+                end
+            end)
+            if layout.AbsoluteContentSize.Y > 0 then
+                scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 25)
+            end
+        end
+    end
+
+    local function scanRoot(root)
+        if not root then return end
+        for _, desc in ipairs(root:GetDescendants()) do
+            if desc:IsA("ScrollingFrame") then
+                applyScrollerFix(desc)
+            end
+        end
+        root.DescendantAdded:Connect(function(desc)
+            if desc:IsA("ScrollingFrame") then
+                task.wait(0.05)
+                applyScrollerFix(desc)
+            elseif desc:IsA("UIListLayout") and desc.Parent and desc.Parent:IsA("ScrollingFrame") then
+                task.wait(0.05)
+                applyScrollerFix(desc.Parent)
+            end
+        end)
+    end
+
+    task.spawn(function()
+        for _ = 1, 30 do
+            if Fluent and Fluent.GUI then
+                scanRoot(Fluent.GUI)
+                break
+            end
+            task.wait(0.2)
+        end
+        pcall(function()
+            local coreGui = game:GetService("CoreGui")
+            local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            for _, r in ipairs({ coreGui, playerGui }) do
+                if r then
+                    for _, ch in ipairs(r:GetChildren()) do
+                        if ch:IsA("ScreenGui") then
+                            scanRoot(ch)
+                        end
+                    end
+                    r.ChildAdded:Connect(function(ch)
+                        if ch:IsA("ScreenGui") then
+                            task.wait(0.1)
+                            scanRoot(ch)
+                        end
+                    end)
+                end
+            end
+        end)
+    end)
+end
+
+setupDropdownScrollFix()
+
+local function teleportToTarget(target, label)
+    if not target or not target.Parent then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Teleport",
+                Content = "Target is unavailable",
+                Duration = 3
+            })
+        end)
+        return
+    end
+    task.spawn(function()
+        local dest = getBuildingDestination(target)
+        if dest then
+            teleportMove(dest)
             pcall(function()
                 Fluent:Notify({
                     Title = "Teleport",
-                    Content = missingMsg,
+                    Content = "Teleported to " .. tostring(label or target.Name),
                     Duration = 3
                 })
             end)
-            return
-        end
-        local cf = getBuildingDestination(b)
-        if cf then
-            teleportEntity(cf)
-            local successMsg = "Teleported to " .. label
-            if mode == "nearest" then
-                successMsg = "Teleported to Nearby " .. label
-            elseif mode == "next" then
-                successMsg = "Teleported to Next " .. label
-            elseif mode == "previous" then
-                successMsg = "Teleported to Previous " .. label
-            end
+        else
             pcall(function()
                 Fluent:Notify({
                     Title = "Teleport",
-                    Content = successMsg,
+                    Content = "Failed to calculate destination",
                     Duration = 3
                 })
             end)
@@ -2785,49 +3040,81 @@ Tabs.Teleport:AddButton({
 
 Tabs.Teleport:AddSection("Gas Station")
 
-Tabs.Teleport:AddButton({
-    Title = "Teleport To Nearby Gas Station",
-    Callback = function()
-        teleportToBuilding(isGasStation, "nearest", "Gas Station")
+GasStationDropdown = Tabs.Teleport:AddDropdown("GasStationDropdown", {
+    Title = "Select",
+    Values = { "None" },
+    Multi = false,
+    Default = "None",
+    Callback = function(Value)
+        selectedGasStation = Value
     end
 })
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To Next Gas Station",
+    Title = "Teleport To Selected Gas Station",
     Callback = function()
-        teleportToBuilding(isGasStation, "next", "Gas Station")
-    end
-})
-
-Tabs.Teleport:AddButton({
-    Title = "Teleport To Previous Gas Station",
-    Callback = function()
-        teleportToBuilding(isGasStation, "previous", "Gas Station")
+        if not selectedGasStation or selectedGasStation == "None" or not gasStationMap[selectedGasStation] then
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = "Please select a Gas Station first",
+                    Duration = 3
+                })
+            end)
+            return
+        end
+        teleportToTarget(gasStationMap[selectedGasStation], selectedGasStation)
     end
 })
 
 Tabs.Teleport:AddSection("Pawn Shop")
 
-Tabs.Teleport:AddButton({
-    Title = "Teleport To Nearby Pawn Shop",
-    Callback = function()
-        teleportToBuilding(isPawnShop, "nearest", "Pawn Shop")
+PawnShopDropdown = Tabs.Teleport:AddDropdown("PawnShopDropdown", {
+    Title = "Select",
+    Values = { "None" },
+    Multi = false,
+    Default = "None",
+    Callback = function(Value)
+        selectedPawnShop = Value
     end
 })
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To Next Pawn Shop",
+    Title = "Teleport To Selected Pawn Shop",
     Callback = function()
-        teleportToBuilding(isPawnShop, "next", "Pawn Shop")
+        if not selectedPawnShop or selectedPawnShop == "None" or not pawnShopMap[selectedPawnShop] then
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = "Please select a Pawn Shop first",
+                    Duration = 3
+                })
+            end)
+            return
+        end
+        teleportToTarget(pawnShopMap[selectedPawnShop], selectedPawnShop)
     end
 })
 
-Tabs.Teleport:AddButton({
-    Title = "Teleport To Previous Pawn Shop",
-    Callback = function()
-        teleportToBuilding(isPawnShop, "previous", "Pawn Shop")
+task.spawn(function()
+    task.wait(1)
+    refreshTeleportLists(true)
+    local map = workspace:FindFirstChild("Map")
+    local buildings = (map and map:FindFirstChild("Buildings")) or workspace:FindFirstChild("Buildings")
+    if buildings then
+        buildings.ChildAdded:Connect(function()
+            task.wait(0.5)
+            refreshTeleportLists()
+        end)
+        buildings.ChildRemoved:Connect(function()
+            task.wait(0.5)
+            refreshTeleportLists()
+        end)
     end
-})
+    while task.wait(3) do
+        refreshTeleportLists()
+    end
+end)
 
 Tabs.Item:AddButton({
     Title = "Bring All Items",
