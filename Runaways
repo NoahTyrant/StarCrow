@@ -779,7 +779,7 @@ local function applyWeaponMods(name, stats)
     end
 end
 
-local THROWABLE_NAMES = {"C4", "Molotov", "PinguinPlushyAsMolotov"}
+local THROWABLE_NAMES = {"C4", "Molotov"}
 
 local function hookThrowableDeleter()
     pcall(function()
@@ -834,7 +834,7 @@ local function scanWeapons()
         if DataModule then
             local Data = require(DataModule)
             if Data and Data.Tools and Data.Tools.GetToolConfig then
-                local toolList = {"Minigun", "MinigunAsLaser", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "GrenadeLauncherAsPlushyLauncher", "Flamethrower", "SoundCannon", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol", "C4", "Molotov", "Grenade", "BananaAsGrenade", "PinguinPlushyAsMolotov"}
+                local toolList = {"Minigun", "MinigunAsLaser", "RPG7", "RPG", "RocketLauncher", "GrenadeLauncher", "GrenadeLauncherAsPlushyLauncher", "Flamethrower", "SoundCannon", "Pistol", "Revolver", "Sniper", "AK", "M4", "MAC", "SawedOff", "Shotgun", "NailGun", "BananaAsPistol", "C4", "Molotov", "Grenade", "BananaAsGrenade"}
                 for _, tName in ipairs(toolList) do
                     pcall(function()
                         local cfg = Data.Tools.GetToolConfig(tName)
@@ -1554,7 +1554,7 @@ Tabs.Combat:AddToggle("KillAuraToggle", {
 })
 
 Tabs.Combat:AddSlider("KillAuraRangeSlider", {
-    Title = "Kill Aura Range",
+    Title = "Aura Range",
     Default = Config.KillAuraRange or 50,
     Min = 1,
     Max = 2000,
@@ -1655,6 +1655,7 @@ Tabs.Combat:AddSection("Bomb & Throwable")
 
 Tabs.Combat:AddToggle("InfBombsToggle", {
     Title = "Infinite Bombs",
+    Description = "Note: Only supports C4 and Molotov",
     Default = Config.InfBombs,
     Callback = function(Value)
         Config.InfBombs = Value
