@@ -102,6 +102,7 @@ local Config = {
     InfFuel = false,
     AutoRefuel = false,
     InfBombs = false,
+    FastThrowBomb = false,
     NoPunchCooldown = false,
     PunchDamage = 10,
     VehicleFly = false,
@@ -1005,6 +1006,7 @@ local function registerWeaponConfig(name, stats)
             mode = stats.mode,
             inaccuracy = stats.inaccuracy,
             delay = stats.delay,
+            cooldown = stats.cooldown,
             ammoPerSecond = stats.ammoPerSecond,
             raycastPerSecond = stats.raycastPerSecond,
             grenadeSpeed = stats.grenadeSpeed,
@@ -1012,6 +1014,8 @@ local function registerWeaponConfig(name, stats)
             chargeDuration = stats.chargeDuration,
             throwSpeed = stats.throwSpeed,
             throwAngle = stats.throwAngle,
+            windupDuration = stats.windupDuration,
+            prepareDuration = stats.prepareDuration,
             recoilPattern = stats.recoilPattern and {
                 pushback = stats.recoilPattern.pushback,
                 lift = stats.recoilPattern.lift,
@@ -1022,86 +1026,145 @@ local function registerWeaponConfig(name, stats)
     end
 end
 
+local function isBombWeapon(name, stats)
+    local n = tostring(name):lower()
+    if n:find("launcher") or n:find("gun") or n:find("cannon") or n:find("shotgun") or n:find("pistol") or n:find("revolver") or n:find("sniper") or n:find("rifle") or n:find("laser") then
+        return false
+    end
+    if n == "c4" or n == "molotov" or n == "grenade" or n == "bananaasgrenade" or n:find("bomb") or n:find("c4") or n:find("molotov") or n:find("dynamite") or n:find("throwable") or (n:find("grenade") and not n:find("launcher")) then
+        return true
+    end
+    if stats and type(stats) == "table" then
+        if stats.throwSpeed ~= nil or stats.throwAngle ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 local function applyWeaponMods(name, stats)
     if type(stats) ~= "table" then return end
     local orig = origWeaponStats[name] or stats
-    if Config.InfAmmo then
-        stats.magCapacity = 99999
-        stats.infiniteAmmo = true
-        if stats.ammoPerSecond ~= nil then
-            stats.ammoPerSecond = 0
+    local isBomb = isBombWeapon(name, stats)
+
+    if not isBomb then
+        if Config.InfAmmo then
+            stats.magCapacity = 99999
+            stats.infiniteAmmo = true
+            if stats.ammoPerSecond ~= nil then
+                stats.ammoPerSecond = 0
+            end
+        elseif orig.magCapacity ~= nil then
+            stats.magCapacity = orig.magCapacity
+            stats.infiniteAmmo = orig.infiniteAmmo
+            if stats.ammoPerSecond ~= nil then
+                stats.ammoPerSecond = orig.ammoPerSecond
+            end
         end
-    elseif orig.magCapacity ~= nil then
-        stats.magCapacity = orig.magCapacity
-        stats.infiniteAmmo = orig.infiniteAmmo
-        if stats.ammoPerSecond ~= nil then
-            stats.ammoPerSecond = orig.ammoPerSecond
+
+        if Config.FastFire then
+            stats.maxRpm = 1200
+            stats.mode = "auto"
+            if stats.delay ~= nil then
+                stats.delay = 0.001
+            end
+            if stats.raycastPerSecond ~= nil then
+                stats.raycastPerSecond = 100
+            end
+            if stats.grenadeSpeed ~= nil then
+                stats.grenadeSpeed = 300
+            end
+            if stats.rocketSpeed ~= nil then
+                stats.rocketSpeed = 300
+            end
+        elseif orig.maxRpm ~= nil then
+            stats.maxRpm = orig.maxRpm
+            stats.mode = orig.mode
+            if stats.delay ~= nil then
+                stats.delay = orig.delay
+            end
+            if stats.raycastPerSecond ~= nil then
+                stats.raycastPerSecond = orig.raycastPerSecond
+            end
+            if stats.grenadeSpeed ~= nil then
+                stats.grenadeSpeed = orig.grenadeSpeed
+            end
+            if stats.rocketSpeed ~= nil then
+                stats.rocketSpeed = orig.rocketSpeed
+            end
         end
-    end
-    if Config.FastFire then
-        stats.maxRpm = 1200
-        stats.mode = "auto"
-        if stats.delay ~= nil then
-            stats.delay = 0.001
+
+        if Config.NoSpread then
+            stats.inaccuracy = 0
+        elseif orig.inaccuracy ~= nil then
+            stats.inaccuracy = orig.inaccuracy
         end
-        if stats.raycastPerSecond ~= nil then
-            stats.raycastPerSecond = 100
+
+        if type(stats.recoilPattern) == "table" then
+            if Config.NoRecoil then
+                stats.recoilPattern.pushback = 0
+                stats.recoilPattern.lift = 0
+                stats.recoilPattern.shake = 0
+                stats.recoilPattern.cameraLift = 0
+            elseif orig.recoilPattern then
+                stats.recoilPattern.pushback = orig.recoilPattern.pushback
+                stats.recoilPattern.lift = orig.recoilPattern.lift
+                stats.recoilPattern.shake = orig.recoilPattern.shake
+                stats.recoilPattern.cameraLift = orig.recoilPattern.cameraLift
+            end
         end
-        if stats.grenadeSpeed ~= nil then
-            stats.grenadeSpeed = 300
-        end
-        if stats.rocketSpeed ~= nil then
-            stats.rocketSpeed = 300
-        end
-        if stats.chargeDuration ~= nil then
-            stats.chargeDuration = 0.001
-        end
-        if stats.throwSpeed ~= nil then
-            stats.throwSpeed = 300
-        end
-    elseif orig.maxRpm ~= nil then
-        stats.maxRpm = orig.maxRpm
-        stats.mode = orig.mode
-        if stats.delay ~= nil then
-            stats.delay = orig.delay
-        end
-        if stats.raycastPerSecond ~= nil then
-            stats.raycastPerSecond = orig.raycastPerSecond
-        end
-        if stats.grenadeSpeed ~= nil then
-            stats.grenadeSpeed = orig.grenadeSpeed
-        end
-        if stats.rocketSpeed ~= nil then
-            stats.rocketSpeed = orig.rocketSpeed
-        end
-        if stats.chargeDuration ~= nil then
-            stats.chargeDuration = orig.chargeDuration
-        end
-        if stats.throwSpeed ~= nil then
-            stats.throwSpeed = orig.throwSpeed
-        end
-    end
-    if Config.NoSpread then
-        stats.inaccuracy = 0
-    elseif orig.inaccuracy ~= nil then
-        stats.inaccuracy = orig.inaccuracy
-    end
-    if type(stats.recoilPattern) == "table" then
-        if Config.NoRecoil then
-            stats.recoilPattern.pushback = 0
-            stats.recoilPattern.lift = 0
-            stats.recoilPattern.shake = 0
-            stats.recoilPattern.cameraLift = 0
-        elseif orig.recoilPattern then
-            stats.recoilPattern.pushback = orig.recoilPattern.pushback
-            stats.recoilPattern.lift = orig.recoilPattern.lift
-            stats.recoilPattern.shake = orig.recoilPattern.shake
-            stats.recoilPattern.cameraLift = orig.recoilPattern.cameraLift
+    else
+        if Config.FastThrowBomb then
+            stats.mode = "auto"
+            stats.maxRpm = 1200
+            if stats.delay ~= nil then
+                stats.delay = 0.001
+            end
+            if stats.cooldown ~= nil then
+                stats.cooldown = 0.001
+            end
+            if stats.chargeDuration ~= nil then
+                stats.chargeDuration = 0.001
+            end
+            if stats.throwSpeed ~= nil then
+                stats.throwSpeed = 300
+            end
+            if stats.windupDuration ~= nil then
+                stats.windupDuration = 0.001
+            end
+            if stats.prepareDuration ~= nil then
+                stats.prepareDuration = 0.001
+            end
+        else
+            if orig.mode ~= nil then
+                stats.mode = orig.mode
+            end
+            if orig.maxRpm ~= nil then
+                stats.maxRpm = orig.maxRpm
+            end
+            if orig.delay ~= nil then
+                stats.delay = orig.delay
+            end
+            if orig.cooldown ~= nil then
+                stats.cooldown = orig.cooldown
+            end
+            if orig.chargeDuration ~= nil then
+                stats.chargeDuration = orig.chargeDuration
+            end
+            if orig.throwSpeed ~= nil then
+                stats.throwSpeed = orig.throwSpeed
+            end
+            if orig.windupDuration ~= nil then
+                stats.windupDuration = orig.windupDuration
+            end
+            if orig.prepareDuration ~= nil then
+                stats.prepareDuration = orig.prepareDuration
+            end
         end
     end
 end
 
-local THROWABLE_NAMES = {"C4", "Molotov"}
+local THROWABLE_NAMES = {"C4", "Molotov", "Grenade", "BananaAsGrenade"}
 
 local function hookThrowableDeleter()
     pcall(function()
@@ -1998,6 +2061,16 @@ Tabs.Combat:AddToggle("InfBombsToggle", {
         Config.InfBombs = Value
         SaveConfig()
         hookThrowableDeleter()
+    end
+})
+
+Tabs.Combat:AddToggle("FastThrowBombToggle", {
+    Title = "Fast Throw Bomb",
+    Default = Config.FastThrowBomb,
+    Callback = function(Value)
+        Config.FastThrowBomb = Value
+        SaveConfig()
+        scanWeapons()
     end
 })
 
@@ -4867,7 +4940,7 @@ RunService.Stepped:Connect(function(_, dt)
         end
     end
 
-    if Config.InfBombs then
+    if Config.InfBombs or Config.FastThrowBomb then
         local char = LocalPlayer.Character
         local bp = LocalPlayer:FindFirstChild("Backpack")
         if char then
