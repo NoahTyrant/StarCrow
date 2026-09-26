@@ -1,0 +1,95 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local CollectionService = game:GetService("CollectionService")
+local LocalPlayer = Players.LocalPlayer
+local mouse = LocalPlayer:GetMouse()
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "PartInspectorGui"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999999
+pcall(function() gui.Parent = game:GetService("CoreGui") end)
+if not gui.Parent then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(0, 340, 0, 120)
+label.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+label.BackgroundTransparency = 0.15
+label.TextColor3 = Color3.fromRGB(255, 255, 255)
+label.TextSize = 13
+label.Font = Enum.Font.GothamBold
+label.TextXAlignment = Enum.TextXAlignment.Left
+label.TextYAlignment = Enum.TextYAlignment.Top
+label.RichText = true
+label.BorderSizePixel = 0
+label.Visible = false
+label.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 6)
+corner.Parent = label
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 1.5
+stroke.Color = Color3.fromRGB(0, 200, 255)
+stroke.Parent = label
+
+local padding = Instance.new("UIPadding")
+padding.PaddingTop = UDim.new(0, 8)
+padding.PaddingBottom = UDim.new(0, 8)
+padding.PaddingLeft = UDim.new(0, 10)
+padding.PaddingRight = UDim.new(0, 10)
+padding.Parent = label
+
+local hl = Instance.new("Highlight")
+hl.FillColor = Color3.fromRGB(0, 255, 255)
+hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+hl.FillTransparency = 0.6
+
+mouse.Move:Connect(function()
+    local target = mouse.Target
+    if target then
+        hl.Adornee = target
+        hl.Parent = target
+
+        local pos = target.Position
+        local parent = target.Parent
+        local model = target:FindFirstAncestorOfClass("Model")
+        local tags = CollectionService:GetTags(target)
+        local tagStr = #tags > 0 and table.concat(tags, ", ") or "None"
+        local prompt = target:FindFirstChildWhichIsA("ProximityPrompt", true) or (parent and parent:FindFirstChildWhichIsA("ProximityPrompt", true))
+        local promptInfo = prompt and prompt.ActionText or "None"
+
+        label.Text = string.format(
+            "<font color=\"rgb(0,255,255)\">Name:</font> %s (%s)\n<font color=\"rgb(255,200,0)\">Parent:</font> %s\n<font color=\"rgb(150,255,150)\">Model:</font> %s\n<font color=\"rgb(255,100,255)\">Tags:</font> %s\n<font color=\"rgb(255,150,50)\">Prompt:</font> %s\n<font color=\"rgb(200,200,200)\">Pos:</font> %.1f, %.1f, %.1f",
+            target.Name ~= "" and target.Name or "(No Name)",
+            target.ClassName,
+            parent and parent.Name or "None",
+            model and model.Name or "None",
+            tagStr,
+            promptInfo,
+            pos.X, pos.Y, pos.Z
+        )
+
+        local mousePos = UserInputService:GetMouseLocation()
+        label.Position = UDim2.new(0, mousePos.X + 15, 0, mousePos.Y + 15)
+        label.Visible = true
+    else
+        hl.Adornee = nil
+        hl.Parent = nil
+        label.Visible = false
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.V or (input.UserInputType == Enum.UserInputType.MouseButton1 and UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)) then
+        local target = mouse.Target
+        if target then
+            local path = target:GetFullName()
+            if setclipboard then
+                setclipboard(path)
+            end
+        end
+    end
+end)
