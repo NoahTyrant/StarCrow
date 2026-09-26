@@ -119,9 +119,9 @@ local Config = {
     VehicleIndestructible = false,
     InstantInteract = false,
     LoopBringItems = false,
-    BringDistance = 200,
-    AutoLootDistance = 200,
-    AutoCashDistance = 200
+    BringDistance = 1000,
+    AutoLootDistance = 1000,
+    AutoCashDistance = 1000
 }
 
 local function SaveConfig()
@@ -142,14 +142,14 @@ local function LoadConfig()
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
             end
-            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 1000 then
-                Config.BringDistance = 200
+            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 3000 then
+                Config.BringDistance = 1000
             end
-            if not Config.AutoLootDistance or Config.AutoLootDistance < 50 or Config.AutoLootDistance > 1000 then
-                Config.AutoLootDistance = 200
+            if not Config.AutoLootDistance or Config.AutoLootDistance < 50 or Config.AutoLootDistance > 3000 then
+                Config.AutoLootDistance = 1000
             end
-            if not Config.AutoCashDistance or Config.AutoCashDistance < 50 or Config.AutoCashDistance > 1000 then
-                Config.AutoCashDistance = 200
+            if not Config.AutoCashDistance or Config.AutoCashDistance < 50 or Config.AutoCashDistance > 3000 then
+                Config.AutoCashDistance = 1000
             end
         end
     end)
@@ -557,7 +557,7 @@ local function bringAllItems(loopMode)
             return CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z))
         end
         while isBringingItems and not stopBringItems do
-            local maxDist = Config.BringDistance or 200
+            local maxDist = Config.BringDistance or 1000
             local items = getAllItems()
             table.sort(items, function(a, b)
                 local posA = (a:IsA("Model") and a:GetPivot().Position) or (a:IsA("BasePart") and a.Position) or Vector3.zero
@@ -761,7 +761,7 @@ local function runAutoLoot()
             if not curChar or not curHrp or not curHum or curHum.Health <= 0 then break end
 
             local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
-            local maxDist = Config.AutoLootDistance or 200
+            local maxDist = Config.AutoLootDistance or 1000
             if handle and handle.Parent and (handle.Position - startPivot.Position).Magnitude <= maxDist then
                 curChar:PivotTo(CFrame.new(handle.Position + Vector3.new(0, 3, 0)))
                 curHrp.AssemblyLinearVelocity = Vector3.zero
@@ -941,7 +941,7 @@ local function runAutoCollectCash()
 
             local sensor = entry.Sensor
             local cash = entry.Cash
-            local maxDist = Config.AutoCashDistance or 200
+            local maxDist = Config.AutoCashDistance or 1000
             if sensor and sensor.Parent and cash and cash:IsDescendantOf(workspace) and (sensor.Position - startPivot.Position).Magnitude <= maxDist then
                 curChar:PivotTo(CFrame.new(sensor.Position))
                 curHrp.AssemblyLinearVelocity = Vector3.zero
@@ -1715,9 +1715,9 @@ Tabs.Main:AddToggle("AutoCollectCashToggle", {
 
 Tabs.Main:AddSlider("AutoCashDistanceSlider", {
     Title = "Distance",
-    Default = Config.AutoCashDistance or 200,
+    Default = Config.AutoCashDistance or 1000,
     Min = 50,
-    Max = 1000,
+    Max = 3000,
     Rounding = 0,
     Callback = function(Value)
         Config.AutoCashDistance = Value
@@ -3906,9 +3906,9 @@ bringToggleElement = Tabs.Item:AddToggle("BringItemsToggle", {
 
 Tabs.Item:AddSlider("BringDistanceSlider", {
     Title = "Bring Distance",
-    Default = Config.BringDistance or 200,
+    Default = Config.BringDistance or 1000,
     Min = 50,
-    Max = 1000,
+    Max = 3000,
     Rounding = 0,
     Callback = function(Value)
         Config.BringDistance = Value
@@ -3942,9 +3942,9 @@ Tabs.Item:AddToggle("AutoLootToggle", {
 
 Tabs.Item:AddSlider("AutoLootDistanceSlider", {
     Title = "Loot Distance",
-    Default = Config.AutoLootDistance or 200,
+    Default = Config.AutoLootDistance or 1000,
     Min = 50,
-    Max = 1000,
+    Max = 3000,
     Rounding = 0,
     Callback = function(Value)
         Config.AutoLootDistance = Value
