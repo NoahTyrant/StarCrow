@@ -83,6 +83,9 @@ local Config = {
     ESPMob = false,
     ESPItem = false,
     ESPCash = false,
+    ESPATM = false,
+    ESPRegister = false,
+    ESPSafe = false,
     AuraLoot = false,
     AutoLoot = false,
     AutoPickupItem = false,
@@ -94,7 +97,10 @@ local Config = {
     PovMode = "Pov",
     PovSize = 90,
     AimPart = "Head",
+    FOVOverride = false,
+    FOV = 70,
     InfFuel = false,
+    AutoRefuel = false,
     InfBombs = false,
     NoPunchCooldown = false,
     PunchDamage = 10,
@@ -110,7 +116,11 @@ local Config = {
     VehicleDrift = false,
     VehicleTireGrip = 0.6,
     VehicleIndestructible = false,
-    InstantInteract = false
+    InstantInteract = false,
+    LoopBringItems = false,
+    BringDistance = 200,
+    AutoLootDistance = 200,
+    AutoCashDistance = 200
 }
 
 local function SaveConfig()
@@ -130,6 +140,15 @@ local function LoadConfig()
             Config.PovSize = 90
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
+            end
+            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 1000 then
+                Config.BringDistance = 200
+            end
+            if not Config.AutoLootDistance or Config.AutoLootDistance < 50 or Config.AutoLootDistance > 1000 then
+                Config.AutoLootDistance = 200
+            end
+            if not Config.AutoCashDistance or Config.AutoCashDistance < 50 or Config.AutoCashDistance > 1000 then
+                Config.AutoCashDistance = 200
             end
         end
     end)
@@ -226,6 +245,34 @@ end)
 
 local itemColor = Color3.fromRGB(250, 225, 85)
 
+local function isActualLoot(item)
+    if not item or not item.Parent then return false end
+    if CollectionService:HasTag(item, "BuyableLoot") or CollectionService:HasTag(item, "BuyableItem") or CollectionService:HasTag(item, "ForbiddenLoot") or CollectionService:HasTag(item, "GasPump") or CollectionService:HasTag(item, "Vehicle") then
+        return false
+    end
+    if item:FindFirstAncestorWhichIsA("Player") or item:FindFirstAncestorOfClass("Humanoid") then
+        return false
+    end
+    if item:FindFirstAncestor("GasPump") or item:FindFirstAncestor("RefuelSystem") or item:FindFirstAncestor("GasPumps") or item:FindFirstAncestor("Vehicles") then
+        return false
+    end
+    local name = item.Name:lower()
+    if name:find("pump") or name:find("nozzle") or name:find("hose") or name:find("refuel") or name:find("gas") or name:find("fuel") or name:find("vehicle") or name:find("car") then
+        return false
+    end
+    local lootFolder = workspace:FindFirstChild("Loot")
+    local inLootFolder = lootFolder and (item.Parent == lootFolder or item:IsDescendantOf(lootFolder))
+    local isDraggable = CollectionService:HasTag(item, "Draggable")
+    local isEquippable = CollectionService:HasTag(item, "Equippable")
+    if inLootFolder then
+        return true
+    end
+    if isDraggable and isEquippable then
+        return true
+    end
+    return false
+end
+
 local function getAllItems()
     local items = {}
     local seen = {}
@@ -233,11 +280,13 @@ local function getAllItems()
     if lootFolder then
         for _, item in ipairs(lootFolder:GetChildren()) do
             if item:IsA("Model") or item:IsA("BasePart") then
-                table.insert(items, item)
-                seen[item] = true
+                if not seen[item] and isActualLoot(item) then
+                    table.insert(items, item)
+                    seen[item] = true
+                end
             elseif item:IsA("Folder") then
                 for _, sub in ipairs(item:GetChildren()) do
-                    if (sub:IsA("Model") or sub:IsA("BasePart")) and not seen[sub] then
+                    if not seen[sub] and isActualLoot(sub) then
                         table.insert(items, sub)
                         seen[sub] = true
                     end
@@ -245,14 +294,16 @@ local function getAllItems()
             end
         end
     end
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if not seen[obj] and obj ~= LocalPlayer.Character then
-            if obj:IsA("Model") and not obj:FindFirstChildOfClass("Humanoid") then
-                if obj:FindFirstChild("Handle") or obj.Name:lower():find("trash") or obj.Name:lower():find("bag") or obj.Name:lower():find("loot") then
-                    table.insert(items, obj)
-                    seen[obj] = true
-                end
-            end
+    for _, item in ipairs(CollectionService:GetTagged("Draggable")) do
+        if not seen[item] and isActualLoot(item) then
+            table.insert(items, item)
+            seen[item] = true
+        end
+    end
+    for _, item in ipairs(CollectionService:GetTagged("Equippable")) do
+        if not seen[item] and isActualLoot(item) then
+            table.insert(items, item)
+            seen[item] = true
         end
     end
     return items
@@ -284,10 +335,35 @@ local function getCashObjectLabel(obj)
     end
 end
 
-local function cleanCashESP()
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" then
-            pcall(function() desc:Destroy() end)
+local function isCashObjectESPEnabled(obj)
+    local label = getCashObjectLabel(obj)
+    if label == "ATM" then
+        return Config.ESPATM
+    elseif label == "Register" then
+        return Config.ESPRegister
+    elseif label == "Safe" then
+        return Config.ESPSafe
+    else
+        return Config.ESPCash
+    end
+end
+
+local function cleanCashESP(filter)
+    for obj, targetPart in pairs(breakableCache) do
+        if not filter or getCashObjectLabel(obj) == filter then
+            if targetPart then
+                local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                if esp then pcall(function() esp:Destroy() end) end
+            end
+            if obj then
+                for _, desc in ipairs(obj:GetDescendants()) do
+                    if desc.Name == "StarCrowCashESP" then
+                        pcall(function() desc:Destroy() end)
+                    end
+                end
+                local chams = obj:FindFirstChild("StarCrowCashChams")
+                if chams then pcall(function() chams:Destroy() end) end
+            end
         end
     end
 end
@@ -398,81 +474,208 @@ local function resolveBountyTarget(force)
 end
 
 local isBringingItems = false
-local function bringAllItems()
+local stopBringItems = false
+local bringCameraContext = nil
+local bringToggleElement = nil
+local broughtHistory = {}
+local function restoreBringCamera()
+    if bringCameraContext then
+        local ctx = bringCameraContext
+        bringCameraContext = nil
+        local cam = workspace.CurrentCamera or ctx.Camera
+        if cam and cam.Parent then
+            pcall(function()
+                if ctx.CameraSubject and ctx.CameraSubject.Parent then
+                    cam.CameraSubject = ctx.CameraSubject
+                elseif LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+                    cam.CameraSubject = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                end
+                if ctx.CameraType then
+                    cam.CameraType = ctx.CameraType
+                else
+                    cam.CameraType = Enum.CameraType.Custom
+                end
+                if ctx.CameraCFrame then
+                    cam.CFrame = ctx.CameraCFrame
+                end
+            end)
+        end
+    end
+end
+
+local function haltBringItems()
+    isBringingItems = false
+    stopBringItems = true
+    Config.LoopBringItems = false
+    restoreBringCamera()
+    if bringToggleElement and bringToggleElement.Value then
+        pcall(function() bringToggleElement:SetValue(false) end)
+    end
+end
+
+local function bringAllItems(loopMode)
     if isBringingItems then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local items = getAllItems()
-    if #items == 0 then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 or hum.SeatPart then return end
     isBringingItems = true
+    stopBringItems = false
+    Config.LoopBringItems = loopMode or false
+    local cam = workspace.CurrentCamera
+    if cam and not bringCameraContext then
+        bringCameraContext = {
+            Camera = cam,
+            CameraType = cam.CameraType,
+            CameraCFrame = cam.CFrame,
+            CameraSubject = cam.CameraSubject
+        }
+        pcall(function()
+            cam.CameraType = Enum.CameraType.Scriptable
+            cam.CFrame = bringCameraContext.CameraCFrame
+        end)
+    end
     task.spawn(function()
         local origCFrame = hrp.CFrame
-        for _, item in ipairs(items) do
-            if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
-            local curHrp = LocalPlayer.Character.HumanoidRootPart
-            pcall(function()
-                local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
-                if handle and handle.Parent then
-                    curHrp.CFrame = CFrame.new(handle.Position + Vector3.new(0, 3, 0))
-                    curHrp.AssemblyLinearVelocity = Vector3.zero
-                    if item:IsA("BasePart") then
-                        item.CanCollide = false
-                        item.Anchored = false
-                        item.AssemblyLinearVelocity = Vector3.zero
-                        item.AssemblyAngularVelocity = Vector3.zero
-                    end
-                    for _, p in ipairs(item:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.CanCollide = false
-                            p.Anchored = false
-                            p.AssemblyLinearVelocity = Vector3.zero
-                            p.AssemblyAngularVelocity = Vector3.zero
-                        elseif p:IsA("BodyMover") or p:IsA("Constraint") then
-                            if not p:IsA("WeldConstraint") then
-                                pcall(function() p:Destroy() end)
-                            end
-                        end
-                        if p:IsA("WeldConstraint") or p:IsA("Weld") or p:IsA("Motor6D") then
-                            pcall(function()
-                                local p0 = p.Part0
-                                local p1 = p.Part1
-                                if (p0 and not p0:IsDescendantOf(item)) or (p1 and not p1:IsDescendantOf(item)) then
-                                    p:Destroy()
-                                end
-                            end)
-                        end
-                    end
-                    task.wait(0.035)
-                    curHrp.CFrame = origCFrame
-                    curHrp.AssemblyLinearVelocity = Vector3.zero
-                    local dropPos = origCFrame * CFrame.new(math.random(-15, 15) * 0.1, 1.2, -2.5 + math.random(-10, 10) * 0.1)
-                    if item:IsA("Model") then
-                        item:PivotTo(dropPos)
-                    else
-                        handle.CFrame = dropPos
-                    end
-                    if item:IsA("BasePart") then
-                        item.AssemblyLinearVelocity = Vector3.zero
-                        item.AssemblyAngularVelocity = Vector3.zero
-                        item.CanCollide = true
-                    end
-                    for _, p in ipairs(item:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.AssemblyLinearVelocity = Vector3.zero
-                            p.AssemblyAngularVelocity = Vector3.zero
-                        end
-                    end
-                    if handle:IsA("BasePart") then
-                        handle.CanCollide = true
+        local broughtCount = 0
+        local function getPickupPart(item)
+            if not item or not item.Parent then return nil end
+            if not isActualLoot(item) then return nil end
+            if item:IsA("Model") then
+                return item.PrimaryPart or item:FindFirstChild("Handle") or item:FindFirstChildWhichIsA("BasePart")
+            elseif item:IsA("BasePart") then
+                return item
+            end
+            return nil
+        end
+        local function getPickupCFrame(root, part)
+            local offset = root.Position - part.Position
+            local direction = Vector3.new(offset.X, 0, offset.Z)
+            direction = direction.Magnitude > 0.1 and direction.Unit or Vector3.new(0, 0, 1)
+            local position = part.Position + direction * 3 + Vector3.new(0, 2.5, 0)
+            return CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z))
+        end
+        while isBringingItems and not stopBringItems do
+            local maxDist = Config.BringDistance or 200
+            local items = getAllItems()
+            table.sort(items, function(a, b)
+                local posA = (a:IsA("Model") and a:GetPivot().Position) or (a:IsA("BasePart") and a.Position) or Vector3.zero
+                local posB = (b:IsA("Model") and b:GetPivot().Position) or (b:IsA("BasePart") and b.Position) or Vector3.zero
+                return (posA - origCFrame.Position).Magnitude < (posB - origCFrame.Position).Magnitude
+            end)
+            for _, item in ipairs(items) do
+                if not isBringingItems or stopBringItems then break end
+                if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
+                if broughtHistory[item] or item:GetAttribute("StarCrowBrought") then continue end
+                local curHrp = LocalPlayer.Character.HumanoidRootPart
+                local part = getPickupPart(item)
+                if not part and item:IsA("Model") then
+                    local pivot = item:GetPivot()
+                    local pdist = (pivot.Position - origCFrame.Position).Magnitude
+                    if pdist > 25 and pdist <= maxDist then
+                        pcall(function()
+                            LocalPlayer:RequestStreamAroundAsync(pivot.Position, 3)
+                        end)
+                        task.wait(0.05)
+                        part = getPickupPart(item)
                     end
                 end
-            end)
-            task.wait(0.02)
+                if part and part.Parent then
+                    local dist = (part.Position - origCFrame.Position).Magnitude
+                    if dist <= 25 then
+                        broughtHistory[item] = true
+                        pcall(function() item:SetAttribute("StarCrowBrought", true) end)
+                    elseif dist <= maxDist then
+                        pcall(function()
+                            local pickup = getPickupCFrame(curHrp, part)
+                            pcall(function()
+                                LocalPlayer:RequestStreamAroundAsync(pickup.Position, 3)
+                            end)
+                            LocalPlayer.Character:PivotTo(pickup)
+                            curHrp.AssemblyLinearVelocity = Vector3.zero
+                            curHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.22)
+                            if not isBringingItems or stopBringItems or not part.Parent then return end
+                            if item:HasTag("Attachable") and flow and flow.Loot and type(flow.Loot.WeldDetach) == "function" then
+                                pcall(flow.Loot.WeldDetach, part)
+                                local weld = part:FindFirstChild("AttachableWeld")
+                                if weld then pcall(function() weld:Destroy() end) end
+                                task.wait(0.04)
+                            end
+                            if not isBringingItems or stopBringItems or not part.Parent then return end
+                            local requestOk, granted = false, false
+                            if flow and flow.Loot and type(flow.Loot.OwnNetworkRequestAsync) == "function" then
+                                requestOk, granted = pcall(flow.Loot.OwnNetworkRequestAsync, part, true)
+                                if not requestOk then
+                                    local weld = part:FindFirstChild("AttachableWeld")
+                                    if weld then pcall(function() weld:Destroy() end) end
+                                    requestOk, granted = pcall(flow.Loot.OwnNetworkRequestAsync, part, true)
+                                end
+                            end
+                            local ready = false
+                            local expires = os.clock() + 0.5
+                            repeat
+                                RunService.Heartbeat:Wait()
+                                ready = part.Parent and not part.Anchored
+                                if ready and type(isnetworkowner) == "function" then
+                                    local ownerOk, owns = pcall(isnetworkowner, part)
+                                    ready = ownerOk and owns
+                                end
+                            until ready or not isBringingItems or stopBringItems or os.clock() >= expires
+                            if not isBringingItems or stopBringItems or not part.Parent then return end
+                            local col = (broughtCount % 4)
+                            local rw = math.floor(broughtCount / 4)
+                            local dropPos = origCFrame * CFrame.new((col - 1.5) * 3.5, 1.5, -4 - rw * 3.5)
+                            if item:IsA("Model") then
+                                item:PivotTo(dropPos)
+                            else
+                                part.CFrame = dropPos
+                            end
+                            part.AssemblyLinearVelocity = Vector3.zero
+                            part.AssemblyAngularVelocity = Vector3.zero
+                            part.Anchored = false
+                            part.CanCollide = true
+                            for _, p in ipairs(item:GetDescendants()) do
+                                if p:IsA("BasePart") then
+                                    p.AssemblyLinearVelocity = Vector3.zero
+                                    p.AssemblyAngularVelocity = Vector3.zero
+                                    p.Anchored = false
+                                end
+                            end
+                            broughtCount = broughtCount + 1
+                            broughtHistory[item] = true
+                            pcall(function() item:SetAttribute("StarCrowBrought", true) end)
+                            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                                LocalPlayer.Character:PivotTo(origCFrame)
+                                LocalPlayer.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+                                LocalPlayer.Character.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            RunService.Heartbeat:Wait()
+                            RunService.Heartbeat:Wait()
+                            if flow and flow.Loot and type(flow.Loot.OwnNetworkRequest) == "function" then
+                                pcall(flow.Loot.OwnNetworkRequest, part, nil)
+                            end
+                            task.wait(0.06)
+                        end)
+                    end
+                end
+            end
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                LocalPlayer.Character:PivotTo(origCFrame)
+                LocalPlayer.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+                LocalPlayer.Character.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+            end
+            if not loopMode and not Config.LoopBringItems then break end
+            task.wait(0.5)
         end
         if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.CFrame = origCFrame
+            LocalPlayer.Character:PivotTo(origCFrame)
             LocalPlayer.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+            LocalPlayer.Character.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+        end
+        restoreBringCamera()
+        if bringToggleElement and bringToggleElement.Value then
+            pcall(function() bringToggleElement:SetValue(false) end)
         end
         isBringingItems = false
     end)
@@ -544,6 +747,11 @@ local function runAutoLoot()
         stopAutoLoot = restoreState
 
         local items = getAllItems()
+        table.sort(items, function(a, b)
+            local posA = (a:IsA("Model") and a:GetPivot().Position) or (a:IsA("BasePart") and a.Position) or Vector3.zero
+            local posB = (b:IsA("Model") and b:GetPivot().Position) or (b:IsA("BasePart") and b.Position) or Vector3.zero
+            return (posA - startPivot.Position).Magnitude < (posB - startPivot.Position).Magnitude
+        end)
         for _, item in ipairs(items) do
             if not Config.AutoLoot then break end
             local curChar = LocalPlayer.Character
@@ -552,7 +760,8 @@ local function runAutoLoot()
             if not curChar or not curHrp or not curHum or curHum.Health <= 0 then break end
 
             local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
-            if handle and handle.Parent then
+            local maxDist = Config.AutoLootDistance or 200
+            if handle and handle.Parent and (handle.Position - startPivot.Position).Magnitude <= maxDist then
                 curChar:PivotTo(CFrame.new(handle.Position + Vector3.new(0, 3, 0)))
                 curHrp.AssemblyLinearVelocity = Vector3.zero
                 curHrp.AssemblyAngularVelocity = Vector3.zero
@@ -717,6 +926,11 @@ local function runAutoCollectCash()
         stopAutoCollectCash = restoreState
 
         local drops = getCashDrops()
+        table.sort(drops, function(a, b)
+            local posA = (a.Sensor and a.Sensor.Position) or Vector3.zero
+            local posB = (b.Sensor and b.Sensor.Position) or Vector3.zero
+            return (posA - startPivot.Position).Magnitude < (posB - startPivot.Position).Magnitude
+        end)
         for _, entry in ipairs(drops) do
             if not Config.AutoCollectCash then break end
             local curChar = LocalPlayer.Character
@@ -726,7 +940,8 @@ local function runAutoCollectCash()
 
             local sensor = entry.Sensor
             local cash = entry.Cash
-            if sensor and sensor.Parent and cash and cash:IsDescendantOf(workspace) then
+            local maxDist = Config.AutoCashDistance or 200
+            if sensor and sensor.Parent and cash and cash:IsDescendantOf(workspace) and (sensor.Position - startPivot.Position).Magnitude <= maxDist then
                 curChar:PivotTo(CFrame.new(sensor.Position))
                 curHrp.AssemblyLinearVelocity = Vector3.zero
                 curHrp.AssemblyAngularVelocity = Vector3.zero
@@ -1435,6 +1650,18 @@ Tabs.Main:AddToggle("AutoCollectCashToggle", {
     end
 })
 
+Tabs.Main:AddSlider("AutoCashDistanceSlider", {
+    Title = "Distance",
+    Default = Config.AutoCashDistance or 200,
+    Min = 50,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AutoCashDistance = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Main:AddSection("Attack")
 
 Tabs.Main:AddToggle("NoPunchCooldownToggle", {
@@ -1919,7 +2146,63 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     end
 })
 
+local originalCameraFOV
+local function restoreFOV()
+    pcall(function()
+        RunService:UnbindFromRenderStep("StarCrowPlayerFOV")
+    end)
+    local cam = workspace.CurrentCamera
+    if cam and originalCameraFOV then
+        cam.FieldOfView = originalCameraFOV
+    end
+    originalCameraFOV = nil
+end
+
+local function applyFOV()
+    pcall(function()
+        RunService:UnbindFromRenderStep("StarCrowPlayerFOV")
+    end)
+    if Config.FOVOverride then
+        RunService:BindToRenderStep("StarCrowPlayerFOV", Enum.RenderPriority.Camera.Value + 2, function()
+            if not Config.FOVOverride then return end
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            if not originalCameraFOV then
+                originalCameraFOV = cam.FieldOfView
+            end
+            cam.FieldOfView = Config.FOV or 70
+        end)
+    else
+        restoreFOV()
+    end
+end
+
 Tabs.Player:AddSection("Camera")
+
+Tabs.Player:AddToggle("FOVOverrideToggle", {
+    Title = "FOV Override",
+    Default = Config.FOVOverride,
+    Callback = function(Value)
+        Config.FOVOverride = Value
+        SaveConfig()
+        applyFOV()
+    end
+})
+
+Tabs.Player:AddSlider("FOVSlider", {
+    Title = "Field of View",
+    Default = Config.FOV or 70,
+    Min = 30,
+    Max = 120,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.FOV = Value
+        SaveConfig()
+        if Config.FOVOverride then
+            applyFOV()
+        end
+    end
+})
 
 Tabs.Player:AddButton({
     Title = "Unlock Third Person",
@@ -2084,7 +2367,12 @@ local function flipCurrentVehicle()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local seat = hum and hum.SeatPart
     local veh = seat and seat:FindFirstAncestorWhichIsA("Model")
-    if not veh then return end
+    if not veh then
+        pcall(function()
+            Fluent:Notify({ Title = "Vehicle", Content = "Enter the driver's seat first!", Duration = 3 })
+        end)
+        return
+    end
     local chassis = (veh:FindFirstChild("system") and veh.system:FindFirstChild("chassis")) or veh.PrimaryPart or seat
     if chassis and seat then
         local forward = Vector3.new(seat.CFrame.LookVector.X, 0, seat.CFrame.LookVector.Z)
@@ -2102,17 +2390,311 @@ local function flipCurrentVehicle()
     end
 end
 
+local vehicleStopToken
 local function stopCurrentVehicle()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local seat = hum and hum.SeatPart
     local veh = seat and seat:FindFirstAncestorWhichIsA("Model")
-    if not veh then return end
-    for _, p in ipairs(veh:GetDescendants()) do
-        if p:IsA("BasePart") then
-            p.AssemblyLinearVelocity = Vector3.zero
-            p.AssemblyAngularVelocity = Vector3.zero
+    if not veh then
+        pcall(function()
+            Fluent:Notify({ Title = "Vehicle", Content = "Enter the driver's seat first!", Duration = 3 })
+        end)
+        return
+    end
+    local chassis = (veh:FindFirstChild("system") and veh.system:FindFirstChild("chassis")) or veh.PrimaryPart or seat
+    local token = {}
+    vehicleStopToken = token
+    local motors = {}
+    for _, constraint in ipairs(veh:GetDescendants()) do
+        if constraint:IsA("HingeConstraint") and constraint.ActuatorType == Enum.ActuatorType.Motor then
+            motors[#motors + 1] = constraint
         end
+    end
+    task.spawn(function()
+        local expires = os.clock() + 1.5
+        while vehicleStopToken == token and veh.Parent and chassis.Parent and os.clock() < expires do
+            chassis.AssemblyLinearVelocity = Vector3.zero
+            chassis.AssemblyAngularVelocity = Vector3.zero
+            for _, m in ipairs(motors) do
+                if m.Parent then m.AngularVelocity = 0 end
+            end
+            RunService.PreSimulation:Wait()
+        end
+        if vehicleStopToken == token then vehicleStopToken = nil end
+    end)
+end
+
+local setAutoRefuel
+do
+    local refuelState = {
+        Token = nil,
+        Context = nil
+    }
+
+    local function stopRefuel()
+        local context = refuelState.Context
+        refuelState.Context = nil
+        if not context then return end
+        local dragged = flow and flow.LocalStates and flow.LocalStates.GetValue("draggedObject") and flow.LocalStates.GetValue("draggedObject"):get()
+        if flow and flow.GasPump and type(flow.GasPump.Pour) == "function" and context.System then
+            pcall(flow.GasPump.Pour, context.System, false)
+        end
+        if flow and flow.Draggables and type(flow.Draggables.Drop) == "function" and dragged == context.Gun then
+            pcall(function()
+                local gun = context.Gun
+                local assembly = gun and (gun.PrimaryPart or gun:FindFirstChildWhichIsA("BasePart"))
+                local gunPlacement = gun and gun:FindFirstChild("BasePlacement")
+                local base = gun and gun:FindFirstChild("BasePlacement")
+                local pumpPlacement = base and base:FindFirstChild("BasePlacementPump")
+                if assembly and gunPlacement and pumpPlacement then
+                    assembly.CFrame = pumpPlacement.WorldCFrame * gunPlacement.WorldCFrame:Inverse() * assembly.CFrame
+                    assembly.AssemblyLinearVelocity = Vector3.zero
+                    assembly.AssemblyAngularVelocity = Vector3.zero
+                end
+            end)
+            pcall(flow.Draggables.Drop)
+        end
+    end
+
+    local function getRefuelVehicle()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local seat = hum and hum.SeatPart
+        if seat and seat:IsA("VehicleSeat") and seat.Occupant == hum then
+            local v = seat:FindFirstAncestorOfClass("Model")
+            if v and v:FindFirstChild("VehicleProperty") and v:FindFirstChild("system") then
+                return v
+            end
+        end
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        local nearest, nearestDist = nil, 60
+        for _, v in ipairs(CollectionService:GetTagged("Vehicle")) do
+            if v:IsA("Model") and v:IsDescendantOf(workspace) and v:FindFirstChild("gasLevel") and v:FindFirstChild("VehicleProperty") then
+                local system = v:FindFirstChild("system")
+                local gasSystem = system and system:FindFirstChild("gas")
+                local collider = gasSystem and gasSystem:FindFirstChild("collider")
+                local pos = collider and collider.Position or v:GetPivot().Position
+                local d = (pos - root.Position).Magnitude
+                if d < nearestDist then
+                    nearest = v
+                    nearestDist = d
+                end
+            end
+        end
+        return nearest
+    end
+
+    local function getRefuelSystem(vehicle)
+        local system = vehicle and vehicle:FindFirstChild("system")
+        local gasSystem = system and system:FindFirstChild("gas")
+        local collider = gasSystem and gasSystem:FindFirstChild("collider")
+        local char = LocalPlayer.Character
+        local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
+        if not collider or not collider:IsA("BasePart") or not playerRoot then return end
+
+        local nearest, nearestGun
+        local nearestDist = 4
+        local nearestCenter = math.huge
+        local nearestGunDist = math.huge
+
+        for _, refuelSystem in ipairs(CollectionService:GetTagged("GasPump")) do
+            local detector = refuelSystem:FindFirstChild("DetectCarCollider")
+            local gun = refuelSystem:FindFirstChild("GasGun")
+            local gunRoot = gun and gun:FindFirstChild("GetTargetCol")
+            if refuelSystem:IsA("Model") and refuelSystem:IsDescendantOf(workspace) and detector and detector:IsA("BasePart") and gun and gunRoot then
+                local localPos = detector.CFrame:PointToObjectSpace(collider.Position)
+                local halfSize = detector.Size * 0.5
+                local d = Vector3.new(
+                    math.max(math.abs(localPos.X) - halfSize.X, 0),
+                    math.max(math.abs(localPos.Y) - halfSize.Y, 0),
+                    math.max(math.abs(localPos.Z) - halfSize.Z, 0)
+                ).Magnitude
+                local cDist = (detector.Position - collider.Position).Magnitude
+                local gDist = (gunRoot.Position - playerRoot.Position).Magnitude
+                if gDist <= 25 and (d < nearestDist - 0.001 or (math.abs(d - nearestDist) <= 0.001 and (gDist < nearestGunDist - 0.001 or (math.abs(gDist - nearestGunDist) <= 0.001 and cDist < nearestCenter)))) then
+                    nearest = refuelSystem
+                    nearestGun = gun
+                    nearestDist = d
+                    nearestCenter = cDist
+                    nearestGunDist = gDist
+                end
+            end
+        end
+        return nearest, nearestGun, collider
+    end
+
+    local function positionRefuelGun(context, collider)
+        local gun = context and context.Gun
+        local heldPart = context and context.HeldPart
+        local control = context and context.ControlAttachment
+        local char = LocalPlayer.Character
+        local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
+        if not gun or not gun.Parent or not heldPart or not heldPart.Parent or not control or not control.Parent or not collider or not collider.Parent or not playerRoot then
+            return false
+        end
+        local dragged = flow and flow.LocalStates and flow.LocalStates.GetValue("draggedObject") and flow.LocalStates.GetValue("draggedObject"):get()
+        if dragged ~= gun then return false end
+        local direction = playerRoot.Position - collider.Position
+        if direction.Magnitude < 0.1 then
+            direction = collider.CFrame.RightVector
+        else
+            direction = direction.Unit
+        end
+        control.WorldPosition = control.WorldPosition:Lerp(collider.Position + direction * 2, 0.35)
+        heldPart.AssemblyLinearVelocity = Vector3.zero
+        heldPart.AssemblyAngularVelocity = Vector3.zero
+        return true
+    end
+
+    local function payRefuel(refuelSystem)
+        local pay = refuelSystem and refuelSystem:FindFirstChild("PayGas")
+        local click = pay and pay:FindFirstChildWhichIsA("ClickDetector", true)
+        if click then
+            pcall(fireclickdetector, click, 0, "MouseClick")
+        end
+    end
+
+    local function startRefuel(token, vehicle, refuelSystem, gun, collider)
+        if not (flow and flow.GasPump and type(flow.GasPump.Pour) == "function") then
+            return false, "Auto refuel is unavailable"
+        end
+        local heldPart = gun and gun:FindFirstChild("GetTargetCol")
+        local char = LocalPlayer.Character
+        local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
+        if not heldPart or not playerRoot then return false, "Gas pump is unavailable" end
+        if (heldPart.Position - playerRoot.Position).Magnitude > 25 then
+            return false, "Stand closer to the gas pump"
+        end
+        local dragged = flow and flow.LocalStates and flow.LocalStates.GetValue("draggedObject") and flow.LocalStates.GetValue("draggedObject"):get()
+        if dragged and dragged ~= gun then
+            return false, "Drop held item first"
+        end
+        if dragged ~= gun then
+            local pickup
+            if filtergc then
+                local searchOk, candidates = pcall(filtergc, "function", { Name = "pickup" }, false)
+                if searchOk then
+                    for _, candidate in ipairs(candidates) do
+                        local infoOk, source = pcall(debug.info, candidate, "s")
+                        if infoOk and source:find("Draggables") then
+                            pickup = candidate
+                            break
+                        end
+                    end
+                end
+            end
+            if not pickup and flow.Draggables and type(flow.Draggables.pickup) == "function" then
+                pickup = flow.Draggables.pickup
+            end
+            if pickup then
+                pcall(pickup, heldPart)
+            end
+        end
+        local gas = vehicle:FindFirstChild("gasLevel")
+        local context = {
+            Vehicle = vehicle,
+            System = refuelSystem,
+            Gun = gun,
+            HeldPart = heldPart,
+            LastFuel = gas and gas.Value,
+            LastChange = os.clock()
+        }
+        refuelState.Context = context
+        task.wait(0.15)
+        if refuelState.Token ~= token then
+            stopRefuel()
+            return false
+        end
+        local grab = heldPart:FindFirstChild("GrabAttachment")
+        local cameraPart
+        pcall(function() cameraPart = flow.CameraPart and flow.CameraPart.GetCameraPart() end)
+        local control
+        if cameraPart then
+            for _, attachment in ipairs(cameraPart:GetChildren()) do
+                local align = attachment:IsA("Attachment") and attachment:FindFirstChildOfClass("AlignPosition")
+                if align and align.Attachment0 == grab then
+                    control = attachment
+                    break
+                end
+            end
+        end
+        if not control then
+            control = grab
+        end
+        context.ControlAttachment = control
+        positionRefuelGun(context, collider)
+        payRefuel(refuelSystem)
+        pcall(flow.GasPump.Pour, refuelSystem, false)
+        task.wait(0.05)
+        pcall(flow.GasPump.Pour, refuelSystem, true)
+        return true
+    end
+
+    function setAutoRefuel(value)
+        refuelState.Token = nil
+        stopRefuel()
+        if not value then return end
+        local token = {}
+        refuelState.Token = token
+        task.spawn(function()
+            local warned = false
+            while refuelState.Token == token and Config.AutoRefuel do
+                local vehicle = getRefuelVehicle()
+                local gas = vehicle and vehicle:FindFirstChild("gasLevel")
+                local property = vehicle and vehicle:FindFirstChild("VehicleProperty")
+                local capacity = property and property:GetAttribute("GasCapacity")
+                if gas and type(capacity) == "number" and gas.Value < capacity - 0.01 then
+                    local refuelSystem, gun, collider = getRefuelSystem(vehicle)
+                    local context = refuelState.Context
+                    if not refuelSystem then
+                        stopRefuel()
+                        if not warned then
+                            Fluent:Notify({ Title = "Refuel", Content = "Park a vehicle next to a gas pump.", Duration = 4 })
+                            warned = true
+                        end
+                    elseif not context or context.Vehicle ~= vehicle or context.System ~= refuelSystem then
+                        stopRefuel()
+                        local ok, started, msg = pcall(startRefuel, token, vehicle, refuelSystem, gun, collider)
+                        if not ok then stopRefuel() started = false msg = "Auto refuel failed." end
+                        if not started and msg and not warned then
+                            Fluent:Notify({ Title = "Refuel", Content = msg, Duration = 4 })
+                            warned = true
+                        elseif started then
+                            warned = false
+                        end
+                    elseif positionRefuelGun(context, collider) then
+                        if gas.Value > (context.LastFuel or gas.Value) then
+                            context.LastFuel = gas.Value
+                            context.LastChange = os.clock()
+                            warned = false
+                        elseif os.clock() - context.LastChange >= 2 then
+                            payRefuel(refuelSystem)
+                            pcall(flow.GasPump.Pour, refuelSystem, false)
+                            task.wait(0.1)
+                            pcall(flow.GasPump.Pour, refuelSystem, true)
+                            context.LastChange = os.clock()
+                        end
+                    else
+                        stopRefuel()
+                    end
+                else
+                    stopRefuel()
+                    if vehicle and gas and type(capacity) == "number" and gas.Value >= capacity - 0.01 then
+                        if not warned then
+                            Fluent:Notify({ Title = "Refuel", Content = "Vehicle fuel is full!", Duration = 3 })
+                            warned = true
+                        end
+                    end
+                end
+                task.wait(0.15)
+            end
+            if refuelState.Token == token then
+                refuelState.Token = nil
+                stopRefuel()
+            end
+        end)
     end
 end
 
@@ -2249,6 +2831,57 @@ Tabs.Vehicle:AddToggle("InfFuelToggle", {
     Callback = function(Value)
         Config.InfFuel = Value
         SaveConfig()
+    end
+})
+
+Tabs.Vehicle:AddToggle("AutoRefuelToggle", {
+    Title = "Auto Refuel",
+    Default = Config.AutoRefuel,
+    Callback = function(Value)
+        Config.AutoRefuel = Value
+        SaveConfig()
+        setAutoRefuel(Value)
+    end
+})
+
+Tabs.Vehicle:AddSection("Utility")
+
+Tabs.Vehicle:AddButton({
+    Title = "Flip Vehicle",
+    Callback = function()
+        flipCurrentVehicle()
+    end
+})
+
+Tabs.Vehicle:AddButton({
+    Title = "Stop Vehicle",
+    Callback = function()
+        stopCurrentVehicle()
+    end
+})
+
+Tabs.Vehicle:AddButton({
+    Title = "Reset Vehicle Mods",
+    Callback = function()
+        Config.VehiclePerformance = false
+        Config.VehicleDrift = false
+        Config.VehicleFly = false
+        Config.InfFuel = false
+        Config.AutoRefuel = false
+        Config.VehicleIndestructible = false
+        setAutoRefuel(false)
+        for veh in pairs(vehicleStates) do
+            restoreVehiclePerformance(veh)
+            restoreVehicleGrip(veh)
+        end
+        SaveConfig()
+        pcall(function()
+            Fluent:Notify({
+                Title = "Vehicle",
+                Content = "All vehicle mods reset to default!",
+                Duration = 3
+            })
+        end)
     end
 })
 
@@ -2850,15 +3483,11 @@ local function formatBuildingName(name)
 end
 
 local teleData = {
-    selectedGas = "None",
-    selectedPawn = "None",
-    gasMap = {},
-    pawnMap = {},
-    gasSig = "",
-    pawnSig = "",
+    selectedBuilding = "None",
+    buildingMap = {},
+    buildingSig = "",
     isRefreshing = false,
-    GasDropdown = nil,
-    PawnDropdown = nil
+    BuildingDropdown = nil
 }
 
 local function refreshTeleportLists(force)
@@ -2866,8 +3495,7 @@ local function refreshTeleportLists(force)
     local buildings = (map and map:FindFirstChild("Buildings")) or workspace:FindFirstChild("Buildings")
     if not buildings then return end
 
-    local gasEntries = {}
-    local pawnEntries = {}
+    local buildingEntries = {}
 
     for _, b in ipairs(buildings:GetChildren()) do
         if b:IsA("Model") then
@@ -2887,15 +3515,15 @@ local function refreshTeleportLists(force)
                 end
 
                 if isGasStation(b) then
-                    table.insert(gasEntries, {
+                    table.insert(buildingEntries, {
                         Instance = b,
-                        Label = label,
+                        Label = "[Gas] " .. label,
                         Order = order
                     })
                 elseif isPawnShop(b) then
-                    table.insert(pawnEntries, {
+                    table.insert(buildingEntries, {
                         Instance = b,
-                        Label = label,
+                        Label = "[Pawn] " .. label,
                         Order = order
                     })
                 end
@@ -2903,79 +3531,42 @@ local function refreshTeleportLists(force)
         end
     end
 
-    table.sort(gasEntries, function(a, b)
+    table.sort(buildingEntries, function(a, b)
         if a.Order == b.Order then
             return a.Label < b.Label
         end
         return a.Order < b.Order
     end)
 
-    table.sort(pawnEntries, function(a, b)
-        if a.Order == b.Order then
-            return a.Label < b.Label
-        end
-        return a.Order < b.Order
-    end)
-
-    local newGasMap = {}
-    local gasValues = { "None" }
-    local seenGas = {}
-    for _, entry in ipairs(gasEntries) do
+    local newBuildingMap = {}
+    local buildingValues = { "None" }
+    local seenBuilding = {}
+    for _, entry in ipairs(buildingEntries) do
         local l = entry.Label
-        if seenGas[l] then
-            seenGas[l] = seenGas[l] + 1
-            l = l .. " (" .. seenGas[l] .. ")"
+        if seenBuilding[l] then
+            seenBuilding[l] = seenBuilding[l] + 1
+            l = l .. " (" .. seenBuilding[l] .. ")"
         else
-            seenGas[l] = 1
+            seenBuilding[l] = 1
         end
-        table.insert(gasValues, l)
-        newGasMap[l] = entry.Instance
+        table.insert(buildingValues, l)
+        newBuildingMap[l] = entry.Instance
     end
 
-    local newPawnMap = {}
-    local pawnValues = { "None" }
-    local seenPawn = {}
-    for _, entry in ipairs(pawnEntries) do
-        local l = entry.Label
-        if seenPawn[l] then
-            seenPawn[l] = seenPawn[l] + 1
-            l = l .. " (" .. seenPawn[l] .. ")"
-        else
-            seenPawn[l] = 1
-        end
-        table.insert(pawnValues, l)
-        newPawnMap[l] = entry.Instance
-    end
-
-    local newGasSig = table.concat(gasValues, "\0")
-    local newPawnSig = table.concat(pawnValues, "\0")
+    local newBuildingSig = table.concat(buildingValues, "\0")
 
     teleData.isRefreshing = true
 
-    if teleData.GasDropdown then
-        teleData.gasMap = newGasMap
-        if force or teleData.gasSig ~= newGasSig then
-            teleData.gasSig = newGasSig
-            teleData.GasDropdown:SetValues(gasValues)
-            if newGasMap[teleData.selectedGas] then
-                teleData.GasDropdown:SetValue(teleData.selectedGas)
+    if teleData.BuildingDropdown then
+        teleData.buildingMap = newBuildingMap
+        if force or teleData.buildingSig ~= newBuildingSig then
+            teleData.buildingSig = newBuildingSig
+            teleData.BuildingDropdown:SetValues(buildingValues)
+            if newBuildingMap[teleData.selectedBuilding] then
+                teleData.BuildingDropdown:SetValue(teleData.selectedBuilding)
             else
-                teleData.GasDropdown:SetValue("None")
-                teleData.selectedGas = "None"
-            end
-        end
-    end
-
-    if teleData.PawnDropdown then
-        teleData.pawnMap = newPawnMap
-        if force or teleData.pawnSig ~= newPawnSig then
-            teleData.pawnSig = newPawnSig
-            teleData.PawnDropdown:SetValues(pawnValues)
-            if newPawnMap[teleData.selectedPawn] then
-                teleData.PawnDropdown:SetValue(teleData.selectedPawn)
-            else
-                teleData.PawnDropdown:SetValue("None")
-                teleData.selectedPawn = "None"
+                teleData.BuildingDropdown:SetValue("None")
+                teleData.selectedBuilding = "None"
             end
         end
     end
@@ -3148,61 +3739,32 @@ Tabs.Teleport:AddButton({
     end
 })
 
-Tabs.Teleport:AddSection("Gas Station")
+Tabs.Teleport:AddSection("Buildings")
 
-teleData.GasDropdown = Tabs.Teleport:AddDropdown("GasStationDropdown", {
+teleData.BuildingDropdown = Tabs.Teleport:AddDropdown("BuildingDropdown", {
     Title = "Select",
     Values = { "None" },
     Multi = false,
     Default = "None",
     Callback = function(Value)
-        teleData.selectedGas = Value
+        teleData.selectedBuilding = Value
     end
 })
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport To Selected Gas Station",
+    Title = "Teleport To Selected Building",
     Callback = function()
-        if not teleData.selectedGas or teleData.selectedGas == "None" or not teleData.gasMap[teleData.selectedGas] then
+        if not teleData.selectedBuilding or teleData.selectedBuilding == "None" or not teleData.buildingMap[teleData.selectedBuilding] then
             pcall(function()
                 Fluent:Notify({
                     Title = "Teleport",
-                    Content = "Please select a Gas Station first",
+                    Content = "Please select a Building first",
                     Duration = 3
                 })
             end)
             return
         end
-        teleportToTarget(teleData.gasMap[teleData.selectedGas], teleData.selectedGas)
-    end
-})
-
-Tabs.Teleport:AddSection("Pawn Shop")
-
-teleData.PawnDropdown = Tabs.Teleport:AddDropdown("PawnShopDropdown", {
-    Title = "Select",
-    Values = { "None" },
-    Multi = false,
-    Default = "None",
-    Callback = function(Value)
-        teleData.selectedPawn = Value
-    end
-})
-
-Tabs.Teleport:AddButton({
-    Title = "Teleport To Selected Pawn Shop",
-    Callback = function()
-        if not teleData.selectedPawn or teleData.selectedPawn == "None" or not teleData.pawnMap[teleData.selectedPawn] then
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Teleport",
-                    Content = "Please select a Pawn Shop first",
-                    Duration = 3
-                })
-            end)
-            return
-        end
-        teleportToTarget(teleData.pawnMap[teleData.selectedPawn], teleData.selectedPawn)
+        teleportToTarget(teleData.buildingMap[teleData.selectedBuilding], teleData.selectedBuilding)
     end
 })
 
@@ -3255,10 +3817,29 @@ task.spawn(function()
     end
 end)
 
-Tabs.Item:AddButton({
-    Title = "Bring All Items",
-    Callback = function()
-        bringAllItems()
+bringToggleElement = Tabs.Item:AddToggle("BringItemsToggle", {
+    Title = "Bring Items",
+    Default = Config.LoopBringItems,
+    Callback = function(Value)
+        Config.LoopBringItems = Value
+        SaveConfig()
+        if Value then
+            bringAllItems(true)
+        else
+            haltBringItems()
+        end
+    end
+})
+
+Tabs.Item:AddSlider("BringDistanceSlider", {
+    Title = "Bring Distance",
+    Default = Config.BringDistance or 200,
+    Min = 50,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.BringDistance = Value
+        SaveConfig()
     end
 })
 
@@ -3283,6 +3864,18 @@ Tabs.Item:AddToggle("AutoLootToggle", {
         elseif stopAutoLoot then
             pcall(stopAutoLoot)
         end
+    end
+})
+
+Tabs.Item:AddSlider("AutoLootDistanceSlider", {
+    Title = "Loot Distance",
+    Default = Config.AutoLootDistance or 200,
+    Min = 50,
+    Max = 1000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AutoLootDistance = Value
+        SaveConfig()
     end
 })
 
@@ -3342,14 +3935,50 @@ Tabs.ESP:AddToggle("ESPItemToggle", {
     end
 })
 
+Tabs.ESP:AddToggle("ESPATMToggle", {
+    Title = "ESP ATM",
+    Default = Config.ESPATM,
+    Callback = function(Value)
+        Config.ESPATM = Value
+        SaveConfig()
+        if not Value then
+            cleanCashESP("ATM")
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPRegisterToggle", {
+    Title = "ESP Register",
+    Default = Config.ESPRegister,
+    Callback = function(Value)
+        Config.ESPRegister = Value
+        SaveConfig()
+        if not Value then
+            cleanCashESP("Register")
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPSafeToggle", {
+    Title = "ESP Safe",
+    Default = Config.ESPSafe,
+    Callback = function(Value)
+        Config.ESPSafe = Value
+        SaveConfig()
+        if not Value then
+            cleanCashESP("Safe")
+        end
+    end
+})
+
 Tabs.ESP:AddToggle("ESPCashToggle", {
-    Title = "ESP Cash Source",
+    Title = "ESP Source Cash",
     Default = Config.ESPCash,
     Callback = function(Value)
         Config.ESPCash = Value
         SaveConfig()
         if not Value then
-            cleanCashESP()
+            cleanCashESP("Cash Source")
         end
     end
 })
@@ -4464,7 +5093,7 @@ RunService.RenderStepped:Connect(function(dt)
         FOVCircle.Visible = false
     end
 
-    if not Config.ESPPlayer and not Config.ESPMob and not Config.ESPItem and not Config.ESPCash then return end
+    if not Config.ESPPlayer and not Config.ESPMob and not Config.ESPItem and not Config.ESPCash and not Config.ESPATM and not Config.ESPRegister and not Config.ESPSafe then return end
 
     _espThrottle = _espThrottle + (dt or 0.016)
     if _espThrottle < 0.08 then return end
@@ -4629,64 +5258,71 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    if Config.ESPCash then
+    if Config.ESPCash or Config.ESPATM or Config.ESPRegister or Config.ESPSafe then
         for obj, targetPart in pairs(breakableCache) do
             if obj.Parent and targetPart and targetPart.Parent and isBreakableAlive(obj) then
-                local labelText = getCashObjectLabel(obj)
+                if isCashObjectESPEnabled(obj) then
+                    local labelText = getCashObjectLabel(obj)
 
-                local esp = targetPart:FindFirstChild("StarCrowCashESP")
-                local chams = obj:FindFirstChild("StarCrowCashChams")
+                    local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                    local chams = obj:FindFirstChild("StarCrowCashChams")
 
-                local offsetY = 2
-                if obj:IsA("Model") then
-                    local _, size = obj:GetBoundingBox()
-                    offsetY = size.Y * 0.5 + 1.2
-                elseif targetPart:IsA("BasePart") then
-                    offsetY = targetPart.Size.Y * 0.5 + 1.2
-                end
-
-                if not esp then
-                    for _, desc in ipairs(obj:GetDescendants()) do
-                        if desc.Name == "StarCrowCashESP" then
-                            pcall(function() desc:Destroy() end)
-                        end
+                    local offsetY = 2
+                    if obj:IsA("Model") then
+                        local _, size = obj:GetBoundingBox()
+                        offsetY = size.Y * 0.5 + 1.2
+                    elseif targetPart:IsA("BasePart") then
+                        offsetY = targetPart.Size.Y * 0.5 + 1.2
                     end
 
-                    esp = Instance.new("BillboardGui")
-                    esp.Name = "StarCrowCashESP"
-                    esp.Adornee = targetPart
-                    esp.Size = UDim2.new(0, 140, 0, 24)
-                    esp.StudsOffset = Vector3.new(0, offsetY, 0)
-                    esp.AlwaysOnTop = true
+                    if not esp then
+                        for _, desc in ipairs(obj:GetDescendants()) do
+                            if desc.Name == "StarCrowCashESP" then
+                                pcall(function() desc:Destroy() end)
+                            end
+                        end
 
-                    local text = Instance.new("TextLabel")
-                    text.Name = "NameText"
-                    text.Parent = esp
-                    text.Size = UDim2.new(1, 0, 1, 0)
-                    text.BackgroundTransparency = 1
-                    text.Font = Enum.Font.GothamBold
-                    text.TextSize = 13
-                    text.TextColor3 = Color3.fromRGB(85, 255, 127)
-                    text.TextStrokeTransparency = 0
-                    text.RichText = true
-                    text.Text = labelText
-                    esp.Parent = targetPart
-                end
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowCashESP"
+                        esp.Adornee = targetPart
+                        esp.Size = UDim2.new(0, 140, 0, 24)
+                        esp.StudsOffset = Vector3.new(0, offsetY, 0)
+                        esp.AlwaysOnTop = true
 
-                local nameLabel = esp:FindFirstChild("NameText")
-                if nameLabel and nameLabel.Text ~= labelText then
-                    nameLabel.Text = labelText
-                end
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.Font = Enum.Font.GothamBold
+                        text.TextSize = 13
+                        text.TextColor3 = Color3.fromRGB(85, 255, 127)
+                        text.TextStrokeTransparency = 0
+                        text.RichText = true
+                        text.Text = labelText
+                        esp.Parent = targetPart
+                    end
 
-                if not chams then
-                    chams = Instance.new("Highlight")
-                    chams.Name = "StarCrowCashChams"
-                    chams.FillColor = Color3.fromRGB(85, 255, 127)
-                    chams.OutlineColor = Color3.fromRGB(85, 255, 127)
-                    chams.FillTransparency = 0.65
-                    chams.OutlineTransparency = 0.2
-                    chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    chams.Parent = obj
+                    local nameLabel = esp:FindFirstChild("NameText")
+                    if nameLabel and nameLabel.Text ~= labelText then
+                        nameLabel.Text = labelText
+                    end
+
+                    if not chams then
+                        chams = Instance.new("Highlight")
+                        chams.Name = "StarCrowCashChams"
+                        chams.FillColor = Color3.fromRGB(85, 255, 127)
+                        chams.OutlineColor = Color3.fromRGB(85, 255, 127)
+                        chams.FillTransparency = 0.65
+                        chams.OutlineTransparency = 0.2
+                        chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        chams.Parent = obj
+                    end
+                else
+                    local esp = targetPart:FindFirstChild("StarCrowCashESP")
+                    if esp then esp:Destroy() end
+                    local chams = obj:FindFirstChild("StarCrowCashChams")
+                    if chams then chams:Destroy() end
                 end
             else
                 if targetPart then
@@ -4705,6 +5341,8 @@ RunService.RenderStepped:Connect(function(dt)
                 breakableCache[obj] = nil
             end
         end
+    else
+        cleanCashESP()
     end
 end)
 
