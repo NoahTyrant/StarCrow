@@ -118,8 +118,7 @@ local Config = {
     VehicleTireGrip = 0.6,
     VehicleIndestructible = false,
     InstantInteract = false,
-    LoopBringItems = false,
-    BringDistance = 1000
+    LoopBringItems = false
 }
 
 local function SaveConfig()
@@ -139,9 +138,6 @@ local function LoadConfig()
             Config.PovSize = 90
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
-            end
-            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 2000 then
-                Config.BringDistance = 1000
             end
         end
     end)
@@ -243,28 +239,21 @@ local function isActualLoot(item)
     if CollectionService:HasTag(item, "BuyableLoot") or CollectionService:HasTag(item, "BuyableItem") or CollectionService:HasTag(item, "ForbiddenLoot") or CollectionService:HasTag(item, "GasPump") or CollectionService:HasTag(item, "Vehicle") then
         return false
     end
-    if item:FindFirstAncestorWhichIsA("Player") then
-        return false
-    end
-    local npcsFolder = workspace:FindFirstChild("NPCs")
-    if npcsFolder and item:IsDescendantOf(npcsFolder) then
-        return false
-    end
     local current = item.Parent
     while current and current ~= workspace do
-        if current:FindFirstChildOfClass("Humanoid") or Players:GetPlayerFromCharacter(current) then
-            return false
-        end
+        if CollectionService:HasTag(current, "Vehicle") then return false end
+        if current:FindFirstChildOfClass("Humanoid") or Players:GetPlayerFromCharacter(current) then return false end
         current = current.Parent
     end
-    if item:FindFirstChildOfClass("Humanoid") then
-        return false
-    end
+    if item:FindFirstAncestorWhichIsA("Player") then return false end
+    if item:FindFirstChildOfClass("Humanoid") or item:FindFirstChildOfClass("VehicleSeat") then return false end
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder and item:IsDescendantOf(npcsFolder) then return false end
     if item:FindFirstAncestor("GasPump") or item:FindFirstAncestor("RefuelSystem") or item:FindFirstAncestor("GasPumps") or item:FindFirstAncestor("Vehicles") then
         return false
     end
     local name = item.Name:lower()
-    if name:find("pump") or name:find("nozzle") or name:find("hose") or name:find("refuel") or name:find("gas") or name:find("fuel") or name:find("vehicle") or name:find("car") then
+    if name:find("pump") or name:find("nozzle") or name:find("hose") or name:find("refuel") or name:find("gas") or name:find("fuel") or name:find("vehicle") or name:find("car") or name:find("police") or name:find("cop") or name:find("truck") or name:find("bike") or name:find("moto") then
         return false
     end
     local lootFolder = workspace:FindFirstChild("Loot")
@@ -586,7 +575,6 @@ local function bringAllItems(loopMode)
             return CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z))
         end
         while isBringingItems and not stopBringItems do
-            local maxDist = Config.BringDistance or 1000
             local items = getAllItems()
             table.sort(items, function(a, b)
                 local posA = (a:IsA("Model") and a:GetPivot().Position) or (a:IsA("BasePart") and a.Position) or Vector3.zero
@@ -601,21 +589,54 @@ local function bringAllItems(loopMode)
                 local part = getPickupPart(item)
                 if not part and item:IsA("Model") then
                     local pivot = item:GetPivot()
-                    local pdist = (pivot.Position - origCFrame.Position).Magnitude
-                    if pdist <= maxDist then
-                        pcall(function()
-                            LocalPlayer:RequestStreamAroundAsync(pivot.Position, 3)
-                        end)
-                        task.wait(0.05)
-                        part = getPickupPart(item)
-                    end
+                    pcall(function()
+                        LocalPlayer:RequestStreamAroundAsync(pivot.Position, 3)
+                    end)
+                    task.wait(0.05)
+                    part = getPickupPart(item)
                 end
                 if part and part.Parent then
                     local dist = (part.Position - origCFrame.Position).Magnitude
-                    if dist <= 25 then
+                    if dist <= 15 then
+                        pcall(function()
+                            curChar:PivotTo(CFrame.new(part.Position + Vector3.new(0, 3, 0)))
+                            curHrp.AssemblyLinearVelocity = Vector3.zero
+                            curHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.1)
+                            if not part.Parent then return end
+                            if item:HasTag("Attachable") and flow and flow.Loot and type(flow.Loot.WeldDetach) == "function" then
+                                pcall(flow.Loot.WeldDetach, part)
+                            end
+                            pcall(function() FlowFunction:InvokeServer("Loot", "LootEquip", part) end)
+                            if flow and flow.Loot and type(flow.Loot.LootEquip) == "function" then
+                                pcall(flow.Loot.LootEquip, item)
+                            end
+                            for _, prompt in ipairs(item:GetDescendants()) do
+                                if prompt:IsA("ProximityPrompt") then
+                                    if type(fireproximityprompt) == "function" then
+                                        pcall(fireproximityprompt, prompt)
+                                    else
+                                        pcall(function()
+                                            local d = prompt.HoldDuration
+                                            prompt.HoldDuration = 0
+                                            prompt:InputHoldBegin()
+                                            task.wait(0.05)
+                                            prompt:InputHoldEnd()
+                                            prompt.HoldDuration = d
+                                        end)
+                                    end
+                                end
+                            end
+                            task.wait(0.15)
+                            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                                LocalPlayer.Character:PivotTo(origCFrame)
+                                LocalPlayer.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+                                LocalPlayer.Character.HumanoidRootPart.AssemblyAngularVelocity = Vector3.zero
+                            end
+                        end)
                         broughtHistory[item] = true
                         pcall(function() item:SetAttribute("StarCrowBrought", true) end)
-                    elseif dist <= maxDist then
+                    elseif dist > 15 then
                         pcall(function()
                             local pickup = getPickupCFrame(curHrp, part)
                             pcall(function()
@@ -1024,6 +1045,8 @@ local function runAutoCollectCash()
     end
     autoCollectCashRunning = false
 end
+
+
 
 local weaponConfigs = {}
 local origWeaponStats = {}
@@ -3910,18 +3933,6 @@ bringToggleElement = Tabs.Item:AddToggle("BringItemsToggle", {
         else
             haltBringItems()
         end
-    end
-})
-
-Tabs.Item:AddSlider("BringDistanceSlider", {
-    Title = "Bring Distance",
-    Default = Config.BringDistance or 1000,
-    Min = 50,
-    Max = 2000,
-    Rounding = 0,
-    Callback = function(Value)
-        Config.BringDistance = Value
-        SaveConfig()
     end
 })
 
