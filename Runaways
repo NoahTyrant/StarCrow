@@ -142,13 +142,13 @@ local function LoadConfig()
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
             end
-            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 3000 then
+            if not Config.BringDistance or Config.BringDistance < 50 or Config.BringDistance > 2000 then
                 Config.BringDistance = 1000
             end
-            if not Config.AutoLootDistance or Config.AutoLootDistance < 50 or Config.AutoLootDistance > 3000 then
+            if not Config.AutoLootDistance or Config.AutoLootDistance < 50 or Config.AutoLootDistance > 2000 then
                 Config.AutoLootDistance = 1000
             end
-            if not Config.AutoCashDistance or Config.AutoCashDistance < 50 or Config.AutoCashDistance > 3000 then
+            if not Config.AutoCashDistance or Config.AutoCashDistance < 50 or Config.AutoCashDistance > 2000 then
                 Config.AutoCashDistance = 1000
             end
         end
@@ -214,7 +214,7 @@ local function checkBreakable(obj)
 end
 
 for _, desc in ipairs(workspace:GetDescendants()) do
-    if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" or desc.Name == "StarCrowBountyTargetESP" or desc.Name == "StarCrowBountyTargetChams" or desc.Name == "StarCrowPosterESP" or desc.Name == "StarCrowPosterChams" or desc.Name == "StarCrowBountyMarker" then
+    if desc.Name == "StarCrowCashESP" or desc.Name == "StarCrowCashChams" or desc.Name == "StarCrowBountyTargetESP" or desc.Name == "StarCrowBountyTargetChams" or desc.Name == "StarCrowPosterESP" or desc.Name == "StarCrowPosterChams" or desc.Name == "StarCrowBountyMarker" or desc.Name == "StarCrowItemESP" or desc.Name == "StarCrowItemChams" then
         pcall(function() desc:Destroy() end)
     end
 end
@@ -251,7 +251,21 @@ local function isActualLoot(item)
     if CollectionService:HasTag(item, "BuyableLoot") or CollectionService:HasTag(item, "BuyableItem") or CollectionService:HasTag(item, "ForbiddenLoot") or CollectionService:HasTag(item, "GasPump") or CollectionService:HasTag(item, "Vehicle") then
         return false
     end
-    if item:FindFirstAncestorWhichIsA("Player") or item:FindFirstAncestorOfClass("Humanoid") then
+    if item:FindFirstAncestorWhichIsA("Player") then
+        return false
+    end
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder and item:IsDescendantOf(npcsFolder) then
+        return false
+    end
+    local current = item.Parent
+    while current and current ~= workspace do
+        if current:FindFirstChildOfClass("Humanoid") or Players:GetPlayerFromCharacter(current) then
+            return false
+        end
+        current = current.Parent
+    end
+    if item:FindFirstChildOfClass("Humanoid") then
         return false
     end
     if item:FindFirstAncestor("GasPump") or item:FindFirstAncestor("RefuelSystem") or item:FindFirstAncestor("GasPumps") or item:FindFirstAncestor("Vehicles") then
@@ -281,45 +295,68 @@ local function getAllItems()
     if lootFolder then
         for _, item in ipairs(lootFolder:GetChildren()) do
             if item:IsA("Model") or item:IsA("BasePart") then
-                if not seen[item] and isActualLoot(item) then
-                    table.insert(items, item)
+                if not seen[item] then
                     seen[item] = true
+                    if isActualLoot(item) then
+                        table.insert(items, item)
+                    else
+                        local esp = item:FindFirstChild("StarCrowItemESP", true)
+                        if esp then pcall(function() esp:Destroy() end) end
+                        local chams = item:FindFirstChild("StarCrowItemChams")
+                        if chams then pcall(function() chams:Destroy() end) end
+                    end
                 end
             elseif item:IsA("Folder") then
                 for _, sub in ipairs(item:GetChildren()) do
-                    if not seen[sub] and isActualLoot(sub) then
-                        table.insert(items, sub)
+                    if not seen[sub] then
                         seen[sub] = true
+                        if isActualLoot(sub) then
+                            table.insert(items, sub)
+                        else
+                            local esp = sub:FindFirstChild("StarCrowItemESP", true)
+                            if esp then pcall(function() esp:Destroy() end) end
+                            local chams = sub:FindFirstChild("StarCrowItemChams")
+                            if chams then pcall(function() chams:Destroy() end) end
+                        end
                     end
                 end
             end
         end
     end
     for _, item in ipairs(CollectionService:GetTagged("Draggable")) do
-        if not seen[item] and isActualLoot(item) then
-            table.insert(items, item)
+        if not seen[item] then
             seen[item] = true
+            if isActualLoot(item) then
+                table.insert(items, item)
+            else
+                local esp = item:FindFirstChild("StarCrowItemESP", true)
+                if esp then pcall(function() esp:Destroy() end) end
+                local chams = item:FindFirstChild("StarCrowItemChams")
+                if chams then pcall(function() chams:Destroy() end) end
+            end
         end
     end
     for _, item in ipairs(CollectionService:GetTagged("Equippable")) do
-        if not seen[item] and isActualLoot(item) then
-            table.insert(items, item)
+        if not seen[item] then
             seen[item] = true
+            if isActualLoot(item) then
+                table.insert(items, item)
+            else
+                local esp = item:FindFirstChild("StarCrowItemESP", true)
+                if esp then pcall(function() esp:Destroy() end) end
+                local chams = item:FindFirstChild("StarCrowItemChams")
+                if chams then pcall(function() chams:Destroy() end) end
+            end
         end
     end
     return items
 end
 
 local function cleanItemESP()
-    local items = getAllItems()
-    for _, item in ipairs(items) do
-        local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
-        if handle then
-            local esp = handle:FindFirstChild("StarCrowItemESP")
-            if esp then esp:Destroy() end
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc.Name == "StarCrowItemESP" or desc.Name == "StarCrowItemChams" then
+            pcall(function() desc:Destroy() end)
         end
-        local chams = item:FindFirstChild("StarCrowItemChams")
-        if chams then chams:Destroy() end
     end
 end
 
@@ -1717,51 +1754,11 @@ Tabs.Main:AddSlider("AutoCashDistanceSlider", {
     Title = "Distance",
     Default = Config.AutoCashDistance or 1000,
     Min = 50,
-    Max = 3000,
+    Max = 2000,
     Rounding = 0,
     Callback = function(Value)
         Config.AutoCashDistance = Value
         SaveConfig()
-    end
-})
-
-Tabs.Main:AddSection("Attack")
-
-Tabs.Main:AddToggle("NoPunchCooldownToggle", {
-    Title = "Attack No Cooldown",
-    Default = Config.NoPunchCooldown,
-    Callback = function(Value)
-        Config.NoPunchCooldown = Value
-        SaveConfig()
-        scanWeapons()
-    end
-})
-
-Tabs.Main:AddSlider("PunchDamageSlider", {
-    Title = "Dame",
-    Default = Config.PunchDamage or 10,
-    Min = 10,
-    Max = 2000,
-    Rounding = 0,
-    Callback = function(Value)
-        Config.PunchDamage = Value
-        SaveConfig()
-        pcall(function()
-            local DataModule = ReplicatedStorage:FindFirstChild("Data")
-            if DataModule then
-                local Data = require(DataModule)
-                if Data and Data.Tools and Data.Tools.GetToolConfig then
-                    local meleeList = {"Punch", "Punches", "Bat", "Crowbar", "Knuckle", "Mace", "Machete", "Pan", "Sword", "RiotShield", "Baton", "Axe", "Chainsaw", "Cleaver"}
-                    for _, mName in ipairs(meleeList) do
-                        local mCfg = Data.Tools.GetToolConfig(mName)
-                        if mCfg and type(mCfg) == "table" then
-                            mCfg.damage = Value
-                            mCfg.destructibleDamage = Value
-                        end
-                    end
-                end
-            end
-        end)
     end
 })
 
@@ -2071,6 +2068,46 @@ Tabs.Combat:AddToggle("FastThrowBombToggle", {
         Config.FastThrowBomb = Value
         SaveConfig()
         scanWeapons()
+    end
+})
+
+Tabs.Combat:AddSection("Attack")
+
+Tabs.Combat:AddToggle("NoPunchCooldownToggle", {
+    Title = "Attack No Cooldown",
+    Default = Config.NoPunchCooldown,
+    Callback = function(Value)
+        Config.NoPunchCooldown = Value
+        SaveConfig()
+        scanWeapons()
+    end
+})
+
+Tabs.Combat:AddSlider("PunchDamageSlider", {
+    Title = "Dame",
+    Default = Config.PunchDamage or 10,
+    Min = 10,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.PunchDamage = Value
+        SaveConfig()
+        pcall(function()
+            local DataModule = ReplicatedStorage:FindFirstChild("Data")
+            if DataModule then
+                local Data = require(DataModule)
+                if Data and Data.Tools and Data.Tools.GetToolConfig then
+                    local meleeList = {"Punch", "Punches", "Bat", "Crowbar", "Knuckle", "Mace", "Machete", "Pan", "Sword", "RiotShield", "Baton", "Axe", "Chainsaw", "Cleaver"}
+                    for _, mName in ipairs(meleeList) do
+                        local mCfg = Data.Tools.GetToolConfig(mName)
+                        if mCfg and type(mCfg) == "table" then
+                            mCfg.damage = Value
+                            mCfg.destructibleDamage = Value
+                        end
+                    end
+                end
+            end
+        end)
     end
 })
 
@@ -3908,7 +3945,7 @@ Tabs.Item:AddSlider("BringDistanceSlider", {
     Title = "Bring Distance",
     Default = Config.BringDistance or 1000,
     Min = 50,
-    Max = 3000,
+    Max = 2000,
     Rounding = 0,
     Callback = function(Value)
         Config.BringDistance = Value
@@ -3944,7 +3981,7 @@ Tabs.Item:AddSlider("AutoLootDistanceSlider", {
     Title = "Loot Distance",
     Default = Config.AutoLootDistance or 1000,
     Min = 50,
-    Max = 3000,
+    Max = 2000,
     Rounding = 0,
     Callback = function(Value)
         Config.AutoLootDistance = Value
