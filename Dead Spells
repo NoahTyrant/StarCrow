@@ -1634,6 +1634,7 @@ local Tabs = {
     Item = Window:AddTab({ Title = "Item", Icon = "package" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
@@ -2571,5 +2572,126 @@ if LocalPlayer.Character then
     setupAutoHealForCharacter(LocalPlayer.Character)
 end
 LocalPlayer.CharacterAdded:Connect(setupAutoHealForCharacter)
+
+
+local _tpStations = {
+    { name = "0Km",        pos = Vector3.new(19.53, 21.57, -39995.31) },
+    { name = "10Km",       pos = Vector3.new(18.65, 33.94, -29980.46) },
+    { name = "20Km",       pos = Vector3.new(19.13, 20.87, -19994.57) },
+    { name = "30Km",       pos = Vector3.new(23.09, 23.84, -9993.21)  },
+    { name = "40Km",       pos = Vector3.new(7.02,  26.53, 3.36)      },
+    { name = "50Km",       pos = Vector3.new(19.89, 23.59, 10005.61)  },
+    { name = "60Km",       pos = Vector3.new(23.20, 18.76, 20022.58)  },
+    { name = "70Km",       pos = Vector3.new(24.48, 21.44, 30021.83)  },
+    { name = "80Km",       pos = Vector3.new(15.58, 24.05, 40025.31)  },
+    { name = "Final",      pos = Vector3.new(-1.92, 24.94, 46813.37)  },
+}
+
+local _tpBosses = {
+    { name = "Sky Island",  pos = Vector3.new(-106.83, 70.03, 37392.73) },
+    { name = "Thief King",  pos = Vector3.new(37.89,   46.74, -18019.26) },
+    { name = "Samurai",     pos = Vector3.new(-94.51,  28.16, -3432.33) },
+    { name = "Vampire",     pos = Vector3.new(-32.01,  48.85, 7525.46)  },
+    { name = "Dwarf King",  pos = Vector3.new(53.52,   27.76, 13962.37) },
+    { name = "SteamPunk",   pos = Vector3.new(-8.46,   51.43, 26926.90) },
+    { name = "Ice King",    pos = Vector3.new(13.47,   54.91, 46162.40) },
+}
+
+local _selectedTpStation = nil
+local _selectedTpBoss = nil
+local _freezeConn = nil
+
+local function _doFreeze()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local frozenCF = hrp.CFrame
+    if _freezeConn then _freezeConn:Disconnect() end
+    _freezeConn = RunService.Heartbeat:Connect(function()
+        local c = LocalPlayer.Character
+        if not c then return end
+        local r = c:FindFirstChild("HumanoidRootPart")
+        if r then r.CFrame = frozenCF end
+    end)
+end
+
+local function _stopFreeze()
+    if _freezeConn then
+        _freezeConn:Disconnect()
+        _freezeConn = nil
+    end
+end
+
+Tabs.Teleport:AddSection("Stations")
+
+local _stationOptions = {}
+for _, v in ipairs(_tpStations) do table.insert(_stationOptions, v.name) end
+
+local _stationDropdown = Tabs.Teleport:AddDropdown("TpStationDropdown", {
+    Title = "Select Station",
+    Values = _stationOptions,
+    Multi = false,
+    Default = nil,
+    Callback = function(val)
+        for _, v in ipairs(_tpStations) do
+            if v.name == val then _selectedTpStation = v break end
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport to Station",
+    Callback = function()
+        if not _selectedTpStation then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(_selectedTpStation.pos)
+            task.wait(0.1)
+            _doFreeze()
+        end
+    end
+})
+
+Tabs.Teleport:AddSection("Boss TP")
+
+local _bossOptions = {}
+for _, v in ipairs(_tpBosses) do table.insert(_bossOptions, v.name) end
+
+local _bossDropdown = Tabs.Teleport:AddDropdown("TpBossDropdown", {
+    Title = "Select Boss",
+    Values = _bossOptions,
+    Multi = false,
+    Default = nil,
+    Callback = function(val)
+        for _, v in ipairs(_tpBosses) do
+            if v.name == val then _selectedTpBoss = v break end
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport to Boss",
+    Callback = function()
+        if not _selectedTpBoss then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(_selectedTpBoss.pos)
+            task.wait(0.1)
+            _doFreeze()
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Stop Freeze",
+    Callback = function()
+        _stopFreeze()
+    end
+})
 
 Window:SelectTab(1) 
