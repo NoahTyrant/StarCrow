@@ -342,6 +342,7 @@ end)
 
 local cachedBosses = {}
 local bossTargets = {
+    thiefking = true,
     mastersamurai = true,
     eldervampire = true,
     gnomechampion = true,
@@ -352,6 +353,9 @@ local bossTargets = {
 
 local function getBossKey(model)
     local name = string.gsub(string.lower(model.Name), "%s+", "")
+    if string.find(name, "thief") then
+        return "thiefking"
+    end
     if string.find(name, "machinarch") or string.find(name, "steamborne") then
         return "machinarch"
     end
@@ -388,6 +392,7 @@ workspace.DescendantRemoving:Connect(function(v)
 end)
 
 local bosses = {
+    { n = "thiefking", pos = CFrame.new(37.89, 46.74, -18019.26) },
     { n = "mastersamurai", pos = CFrame.new(103.27, 40.89, -3560.05) },
     { n = "eldervampire", pos = CFrame.new(103.08, 37.85, 7407.76) },
     { n = "gnomechampion", pos = CFrame.new(37.76, 3.00, 13993.09) },
