@@ -1377,34 +1377,113 @@ local function getClosestNPCToCenter()
     local shortestDistance = math.huge
     local centerPos = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
 
-    local npcsFolder = workspace:FindFirstChild("NPCs")
-    if not npcsFolder then return nil end
-
-    for _, npc in ipairs(npcsFolder:GetChildren()) do
-        local hum = npc:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then
-            local targetPart
-            if Config.AimPart == "Body" then
-                targetPart = npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
-            else
-                targetPart = npc:FindFirstChild("Head") or npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart")
+    local function evaluateTargetPart(part)
+        if not part or not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then return end
+        local screenPos = cam:WorldToViewportPoint(part.Position)
+        if screenPos.Z > 0 then
+            local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerPos).Magnitude
+            local inFov = (Config.PovMode == "No Pov") or (dist <= Config.PovSize)
+            if inFov and dist < shortestDistance then
+                closest = part
+                shortestDistance = dist
             end
+        end
+    end
 
-            if targetPart then
-                local screenPos = cam:WorldToViewportPoint(targetPart.Position)
-                if screenPos.Z > 0 then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerPos).Magnitude
-                    local inFov = (Config.PovMode == "No Pov") or (dist <= Config.PovSize)
-                    if inFov and dist < shortestDistance then
-                        closest = targetPart
-                        shortestDistance = dist
-                    end
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            local hum = npc:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local targetPart
+                if Config.AimPart == "Body" then
+                    targetPart = npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
+                else
+                    targetPart = npc:FindFirstChild("Head") or npc:FindFirstChild("UpperTorso") or npc:FindFirstChild("Torso") or npc:FindFirstChild("HumanoidRootPart")
                 end
+                evaluateTargetPart(targetPart)
+            end
+        end
+    end
+
+    local checkedHelis = {}
+    local function checkHeli(heli)
+        if not heli or checkedHelis[heli] or not heli:IsDescendantOf(workspace) then return end
+        checkedHelis[heli] = true
+
+        local hum = heli:FindFirstChildOfClass("Humanoid") or heli:FindFirstChildWhichIsA("Humanoid", true)
+        if hum and hum.Health <= 0 then return end
+
+        local healthVal = heli:FindFirstChild("Health") or heli:FindFirstChild("health") or heli:FindFirstChildWhichIsA("NumberValue", true)
+        if healthVal and healthVal:IsA("NumberValue") and healthVal.Value <= 0 then return end
+
+        local healthAttr = heli:GetAttribute("Health") or heli:GetAttribute("health")
+        if type(healthAttr) == "number" and healthAttr <= 0 then return end
+
+        if heli:GetAttribute("Destroyed") == true or heli:GetAttribute("Dead") == true or heli:GetAttribute("Broken") == true then return end
+
+        local pilot = heli:FindFirstChild("Pilot") or heli:FindFirstChild("Driver")
+        if pilot and pilot:IsA("Model") then
+            local pilotHum = pilot:FindFirstChildOfClass("Humanoid")
+            if not pilotHum or pilotHum.Health > 0 then
+                local pPart = (Config.AimPart == "Body" and (pilot:FindFirstChild("UpperTorso") or pilot:FindFirstChild("Torso") or pilot:FindFirstChild("HumanoidRootPart")))
+                    or pilot:FindFirstChild("Head")
+                    or pilot:FindFirstChildWhichIsA("BasePart")
+                if pPart then
+                    evaluateTargetPart(pPart)
+                    return
+                end
+            end
+        end
+
+        local hPart = nil
+        if Config.AimPart == "Head" then
+            hPart = heli:FindFirstChild("Cockpit", true) or heli:FindFirstChild("Head", true) or heli:FindFirstChild("Engine", true)
+        end
+
+        if not hPart then
+            hPart = heli:FindFirstChild("Hitbox", true)
+                or heli:FindFirstChild("Engine", true)
+                or heli:FindFirstChild("Body", true)
+                or (heli:IsA("Model") and heli.PrimaryPart)
+                or heli:FindFirstChild("HumanoidRootPart", true)
+                or (heli:IsA("BasePart") and heli)
+                or heli:FindFirstChildWhichIsA("BasePart", true)
+        end
+
+        evaluateTargetPart(hPart)
+    end
+
+    for _, obj in ipairs(workspace:GetChildren()) do
+        local n = obj.Name:lower()
+        if obj.Name == "Helicopter" or n:find("heli") or n:find("copter") then
+            checkHeli(obj)
+        end
+    end
+
+    local vehicles = workspace:FindFirstChild("Vehicles")
+    if vehicles then
+        for _, obj in ipairs(vehicles:GetChildren()) do
+            local n = obj.Name:lower()
+            if obj.Name == "Helicopter" or n:find("heli") or n:find("copter") then
+                checkHeli(obj)
             end
         end
     end
 
     return closest
+end
+
+local function isTargetHeli(tgt)
+    local current = tgt
+    while current and current ~= workspace do
+        local n = current.Name:lower()
+        if n == "helicopter" or n:find("heli") or n:find("copter") then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
 end
 
 local oldNamecall
@@ -1420,6 +1499,13 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local direction = args[2]
                 local params = args[3]
                 if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" and direction.Magnitude > 50 then
+                    if isTargetHeli(target) then
+                        task.defer(function()
+                            pcall(function()
+                                FlowEvent:FireServer("PoliceHeliServer", "Hit", 280)
+                            end)
+                        end)
+                    end
                     local toTarget = target.Position - origin
                     local newDir = toTarget.Unit * math.max(direction.Magnitude, 1000)
                     return oldNamecall(self, origin, newDir, params)
@@ -1960,7 +2046,7 @@ Tabs.Combat:AddSlider("KillAuraRangeSlider", {
 Tabs.Combat:AddSection("Silent Aim")
 
 Tabs.Combat:AddToggle("SilentAimToggle", {
-    Title = "Silent Aim NPC",
+    Title = "Silent Aim",
     Default = Config.SilentAim,
     Callback = function(Value)
         Config.SilentAim = Value
