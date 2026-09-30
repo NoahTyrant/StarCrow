@@ -345,12 +345,16 @@ local bossTargets = {
     mastersamurai = true,
     eldervampire = true,
     gnomechampion = true,
+    machinarch = true,
     steamborneczar = true,
     kingice = true,
 }
 
 local function getBossKey(model)
     local name = string.gsub(string.lower(model.Name), "%s+", "")
+    if string.find(name, "machinarch") or string.find(name, "steamborne") then
+        return "machinarch"
+    end
     for n in pairs(bossTargets) do
         if string.find(name, n) then return n end
     end
@@ -387,7 +391,7 @@ local bosses = {
     { n = "mastersamurai", pos = CFrame.new(103.27, 40.89, -3560.05) },
     { n = "eldervampire", pos = CFrame.new(103.08, 37.85, 7407.76) },
     { n = "gnomechampion", pos = CFrame.new(37.76, 3.00, 13993.09) },
-    { n = "steamborneczar", pos = CFrame.new(-15.31, 3.02, 27032.90) },
+    { n = "machinarch", pos = CFrame.new(-15.31, 3.02, 27032.90) },
     { n = "kingice", pos = CFrame.new(24.27, 3.00, 45907.91) },
 }
 
