@@ -583,7 +583,7 @@ local function executeAttackBehind(target)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
 
-        if Config.AutoUseSkills then
+        if Config.AutoKill and Config.AutoUseSkills then
             triggerSkillsER()
         end
 
@@ -757,21 +757,16 @@ task.spawn(function()
                 end
             end
         else
-            if (Config.FastAttack or Config.AutoUseSkills) and LocalPlayer:GetAttribute("InGame") then
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    if Config.AutoUseSkills then
-                        triggerSkillsER()
-                    end
-                    if Config.FastAttack and isAttackButtonPressed() then
-                        local aid = getPrimaryAbilityId()
-                        if aid and AbilityControllerMod then
-                            pcall(function()
-                                if CasterBusyMod then CasterBusyMod.Release() end
-                                AbilityControllerMod.Activate(aid)
-                            end)
-                        end
+                if hum and hum.Health > 0 and isAttackButtonPressed() then
+                    local aid = getPrimaryAbilityId()
+                    if aid and AbilityControllerMod then
+                        pcall(function()
+                            if CasterBusyMod then CasterBusyMod.Release() end
+                            AbilityControllerMod.Activate(aid)
+                        end)
                     end
                 end
             end
