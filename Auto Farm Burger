@@ -2,41 +2,16 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
+local targetPlaceId = 89744231770777
+
+if game.PlaceId ~= targetPlaceId then
+    return
+end
+
 local queueTeleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
 if queueTeleport then
     pcall(function()
-        queueTeleport('repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character; loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Auto%20Farm%20Burger"))()')
-    end)
-end
-
-pcall(function()
-    if makefolder and isfolder and not isfolder("StarCrowHub") then
-        makefolder("StarCrowHub")
-    end
-end)
-
-local resetFile = "StarCrowHub/BurgerResetTime.txt"
-if isfile and not isfile(resetFile) and isfile("BurgerResetTime.txt") then
-    pcall(function()
-        local old = readfile("BurgerResetTime.txt")
-        if old and #old > 0 and writefile then
-            writefile(resetFile, old)
-        end
-    end)
-end
-
-local currentResetMin = tonumber(getgenv and getgenv().AutoResetMinute) or tonumber(_G.AutoResetMinute)
-pcall(function()
-    if isfile and isfile(resetFile) then
-        local saved = tonumber(readfile(resetFile))
-        if saved and saved > 0 and not currentResetMin then
-            currentResetMin = saved
-        end
-    end
-end)
-if currentResetMin and writefile then
-    pcall(function()
-        writefile(resetFile, tostring(currentResetMin))
+        queueTeleport('repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character; if game.PlaceId == ' .. tostring(targetPlaceId) .. ' then loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Auto%20Farm%20Burger"))() end')
     end)
 end
 
@@ -50,12 +25,6 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
-
-if game.PlaceId == 104770044244450 or game.PlaceId ~= 89744231770777 then
-    LocalPlayer:Kick("Auto Farm is not support in the lobby")
-    return
-end
-
 local Camera = workspace.CurrentCamera
 
 local Config = {
@@ -65,15 +34,19 @@ local Config = {
     KillAuraDistance = 1000,
     AutoFarmEnabled = true,
     BringBurger = true,
-    AutoResetMinutes = currentResetMin or 3
+    AutoResetMinutes = 3
 }
+
+local isResetting = false
+local collectedBurgerCount = 0
+local updateBurgerCounterGui = nil
 
 pcall(function()
     local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
     local oldMeleeHitBox = ToolShared.meleeHitBox
 
     ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
-        if Config.KillAuraEnabled then
+        if Config.KillAuraEnabled and not isResetting then
             local hackLength = Config.KillAuraDistance
             local hackWidth = Config.KillAuraDistance
             local hackHeight = Config.KillAuraDistance
@@ -89,9 +62,10 @@ pcall(function()
     local originalMeleeHit
     originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
         local args = {...}
-        if Config.FastAttackEnabled then
+        if Config.FastAttackEnabled and not isResetting then
             task.spawn(function()
                 for i = 1, Config.FastAttackMultiplier - 1 do
+                    if isResetting then break end
                     task.wait(0.03)
                     originalMeleeHit(unpack(args))
                 end
@@ -103,9 +77,10 @@ pcall(function()
     local originalLaserHit
     originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
         local args = {...}
-        if Config.FastAttackEnabled then
+        if Config.FastAttackEnabled and not isResetting then
             task.spawn(function()
                 for i = 1, Config.FastAttackMultiplier - 1 do
+                    if isResetting then break end
                     task.wait(0.03)
                     originalLaserHit(unpack(args))
                 end
@@ -116,6 +91,7 @@ pcall(function()
 end)
 
 LocalPlayer.Idled:Connect(function()
+    if isResetting then return end
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
 end)
@@ -157,10 +133,12 @@ local function restoreAllSounds()
 end
 
 local function activateHeldTool()
+    if isResetting then return end
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    if not hum or hum.Health <= 0 then return end
+    local animator = hum:FindFirstChildOfClass("Animator")
     local tool = char:FindFirstChildWhichIsA("Tool")
     if tool and isMelee(tool) then
         pcall(function()
@@ -222,7 +200,7 @@ LocalPlayer.CharacterAdded:Connect(hookCharAnimations)
 task.spawn(function()
     while true do
         task.wait(0.12)
-        if Config.KillAuraEnabled then
+        if Config.KillAuraEnabled and not isResetting then
             local char = LocalPlayer.Character
             if char then
                 local tool = char:FindFirstChildOfClass("Tool")
@@ -242,8 +220,64 @@ end)
 
 local targetItems = { ["Burger"] = true, ["GoldenBurger"] = true, ["DiamondBurger"] = true }
 local itemQueue = {}
-local currentTarget = nil
 local collectTimer = 0
+
+local function hookBurgerNotification(obj)
+    if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+        local function checkText()
+            local text = string.lower(obj.Text or "")
+            if string.find(text, "burger") and (string.find(text, "gain") or string.find(text, "+")) then
+                local gain = string.match(text, "%+(%d+)")
+                local num = tonumber(gain) or 1
+                collectedBurgerCount = collectedBurgerCount + num
+                if updateBurgerCounterGui then
+                    updateBurgerCounterGui()
+                end
+            end
+        end
+        checkText()
+        obj:GetPropertyChangedSignal("Text"):Connect(checkText)
+    end
+end
+
+local function hookGuiContainer(container)
+    if not container then return end
+    for _, desc in ipairs(container:GetDescendants()) do
+        hookBurgerNotification(desc)
+    end
+    container.DescendantAdded:Connect(hookBurgerNotification)
+end
+
+pcall(function()
+    hookGuiContainer(game:GetService("CoreGui"))
+end)
+
+if LocalPlayer:FindFirstChild("PlayerGui") then
+    hookGuiContainer(LocalPlayer.PlayerGui)
+end
+LocalPlayer.ChildAdded:Connect(function(child)
+    if child.Name == "PlayerGui" then
+        hookGuiContainer(child)
+    end
+end)
+
+task.spawn(function()
+    local lastVal = nil
+    while task.wait(0.5) do
+        local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Data") or LocalPlayer:FindFirstChild("Stats")
+        if ls then
+            for _, v in ipairs(ls:GetChildren()) do
+                if string.find(string.lower(v.Name), "burger") and v:IsA("ValueBase") then
+                    if lastVal ~= nil and v.Value > lastVal then
+                        collectedBurgerCount = collectedBurgerCount + (v.Value - lastVal)
+                        if updateBurgerCounterGui then updateBurgerCounterGui() end
+                    end
+                    lastVal = v.Value
+                end
+            end
+        end
+    end
+end)
 
 local function isItemEquipped(obj)
     local ancestor = obj.Parent
@@ -292,8 +326,37 @@ task.spawn(function()
     end
 end)
 
+local function getNearbyBurgerCount()
+    local camPos = Camera.CFrame.Position
+    local count = 0
+    for i = #itemQueue, 1, -1 do
+        local item = itemQueue[i]
+        if not isValidBurger(item) then
+            table.remove(itemQueue, i)
+        else
+            local targetPart = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or (item:IsA("BasePart") and item)
+            if targetPart and (camPos - targetPart.Position).Magnitude <= 1000 then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+local function waitForBurgersCollected(maxWait)
+    local timeout = maxWait or 5
+    local start = tick()
+    while tick() - start < timeout do
+        if getNearbyBurgerCount() == 0 then
+            break
+        end
+        task.wait(0.2)
+    end
+    task.wait(0.3)
+end
+
 RunService.RenderStepped:Connect(function(deltaTime)
-    if not Config.BringBurger then return end
+    if not Config.BringBurger or isResetting then return end
 
     local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -2.5)
     local camPos = Camera.CFrame.Position
@@ -407,6 +470,7 @@ local engaged = false
 local autoFarmStartTime = tick()
 
 RunService.Heartbeat:Connect(function()
+    if isResetting then return end
     local char = LocalPlayer.Character
     if not char or not hoverPos or not Config.AutoFarmEnabled then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -416,12 +480,14 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
+local clickedPlayAgain = false
+
 task.spawn(function()
     while task.wait(0.5) do
         if not Config.AutoFarmEnabled then continue end
 
         local char = LocalPlayer.Character
-        if char then
+        if char and not isResetting then
             local tool = char:FindFirstChildOfClass("Tool")
             if not tool or not isMelee(tool) then
                 for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
@@ -435,48 +501,106 @@ task.spawn(function()
 
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         if not pg then continue end
+
+        local foundVisibleBtn = false
         for _, v in ipairs(pg:GetDescendants()) do
             if v:IsA("TextLabel") or v:IsA("TextButton") then
                 if string.find(string.lower(v.Text or ""), "play again") then
                     local btn = v:IsA("TextButton") and v or v.Parent
                     if btn and btn:IsA("GuiButton") and btn.Visible then
-                        pcall(function()
-                            if getconnections then
-                                for _, e in ipairs(getconnections(btn.Activated)) do e:Fire() end
-                                for _, e in ipairs(getconnections(btn.MouseButton1Click)) do e:Fire() end
-                                for _, e in ipairs(getconnections(btn.MouseButton1Down)) do e:Fire() end
-                            end
-                            if firesignal then
-                                firesignal(btn.Activated)
-                                firesignal(btn.MouseButton1Click)
-                                firesignal(btn.MouseButton1Down)
-                            end
-                            local absPos = btn.AbsolutePosition
-                            local absSize = btn.AbsoluteSize
-                            local inset = GuiService:GetGuiInset()
-                            local cx = absPos.X + absSize.X / 2
-                            local cy = absPos.Y + absSize.Y / 2 + inset.Y
-                            if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-                                VirtualInputManager:SendTouchEvent(cx, cy, true)
-                                task.wait(0.1)
-                                VirtualInputManager:SendTouchEvent(cx, cy, false)
-                            else
-                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-                                task.wait(0.1)
-                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-                            end
-                        end)
+                        foundVisibleBtn = true
+                        if not clickedPlayAgain then
+                            clickedPlayAgain = true
+                            pcall(function()
+                                if getconnections then
+                                    for _, e in ipairs(getconnections(btn.Activated)) do e:Fire() end
+                                    for _, e in ipairs(getconnections(btn.MouseButton1Click)) do e:Fire() end
+                                    for _, e in ipairs(getconnections(btn.MouseButton1Down)) do e:Fire() end
+                                end
+                                if firesignal then
+                                    firesignal(btn.Activated)
+                                    firesignal(btn.MouseButton1Click)
+                                    firesignal(btn.MouseButton1Down)
+                                end
+                                local absPos = btn.AbsolutePosition
+                                local absSize = btn.AbsoluteSize
+                                local inset = GuiService:GetGuiInset()
+                                local cx = absPos.X + absSize.X / 2
+                                local cy = absPos.Y + absSize.Y / 2 + inset.Y
+                                if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+                                    VirtualInputManager:SendTouchEvent(cx, cy, true)
+                                    task.wait(0.1)
+                                    VirtualInputManager:SendTouchEvent(cx, cy, false)
+                                else
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+                                    task.wait(0.1)
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+                                end
+                            end)
+                        end
+                        break
                     end
                 end
             end
         end
+
+        if not foundVisibleBtn then
+            clickedPlayAgain = false
+        end
     end
 end)
+
+local function forceResetUntilDead()
+    isResetting = true
+    hoverPos = nil
+    local dead = false
+    local startTime = tick()
+    while tick() - startTime < 10 do
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if not h or h.Health <= 0 then
+            dead = true
+            break
+        end
+        pcall(function()
+            local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+            Remotes.Reset.fireServer()
+        end)
+        task.wait(0.5)
+        local cAfter = LocalPlayer.Character
+        local hAfter = cAfter and cAfter:FindFirstChildOfClass("Humanoid")
+        if not hAfter or hAfter.Health <= 0 then
+            dead = true
+            break
+        end
+    end
+    if not dead then
+        while true do
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if not h or h.Health <= 0 then break end
+            pcall(function()
+                local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+                Remotes.Reset.fireServer()
+            end)
+            task.wait(0.5)
+        end
+    end
+    repeat task.wait(0.2) until LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Health > 0 and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    task.wait(1)
+    isResetting = false
+end
 
 task.spawn(function()
     while task.wait(0.1) do
         if not Config.AutoFarmEnabled then
             hoverPos = nil
+            continue
+        end
+
+        if isResetting then
+            hoverPos = nil
+            task.wait(0.2)
             continue
         end
 
@@ -486,22 +610,6 @@ task.spawn(function()
         local hrp = char:FindFirstChild("HumanoidRootPart")
         local hum = char:FindFirstChild("Humanoid")
         if not hrp or not hum then continue end
-
-        if autoFarmStartTime > 0 and tick() - autoFarmStartTime >= Config.AutoResetMinutes * 60 then
-            pcall(function()
-                local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
-                for _ = 1, 3 do
-                    Remotes.Reset.fireServer()
-                    task.wait(1)
-                end
-            end)
-            hoverPos = nil
-            visited = false
-            engaged = false
-            currentIdx = 1
-            autoFarmStartTime = tick()
-            continue
-        end
 
         if hum.Health <= 0 then
             hoverPos = nil
@@ -534,7 +642,7 @@ task.spawn(function()
                     bHrp.Velocity = Vector3.new(0, 0, 0)
                     hoverPos = CFrame.lookAt(info.pos.Position + Vector3.new(0, 15, 0), info.pos.Position)
                 elseif bHum and bHum.Health <= 0 then
-                    task.wait(3)
+                    waitForBurgersCollected(4)
                     engaged = false
                     visited = false
                     hoverPos = nil
@@ -542,7 +650,7 @@ task.spawn(function()
                 end
             else
                 if engaged then
-                    task.wait(3)
+                    waitForBurgersCollected(4)
                     engaged = false
                     visited = false
                     hoverPos = nil
@@ -560,15 +668,11 @@ task.spawn(function()
                 end
             end
         else
+            waitForBurgersCollected(5)
             hoverPos = nil
             currentIdx = 1
             autoFarmStartTime = tick()
-            task.spawn(function()
-                pcall(function()
-                    local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
-                    Remotes.Reset.fireServer()
-                end)
-            end)
+            forceResetUntilDead()
             task.wait(3)
         end
     end
@@ -582,14 +686,14 @@ pcall(function() FloatGui.Parent = game:GetService("CoreGui") end)
 if not FloatGui.Parent then FloatGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 270, 0, 115)
-MainFrame.Position = UDim2.new(0.5, -135, 0.1, 0)
+MainFrame.Size = UDim2.new(0, 190, 0, 48)
+MainFrame.Position = UDim2.new(0.5, -95, 0.1, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = FloatGui
 
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
 local MainStroke = Instance.new("UIStroke", MainFrame)
 MainStroke.Thickness = 1.5
@@ -606,117 +710,27 @@ end)
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 22)
-TitleLabel.Position = UDim2.new(0, 0, 0, 4)
+TitleLabel.Position = UDim2.new(0, 0, 0, 3)
 TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "Auto Farm Burger"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
 TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextSize = 13
+TitleLabel.TextSize = 12
 TitleLabel.Parent = MainFrame
 
-local NoteLabel = Instance.new("TextLabel")
-NoteLabel.Size = UDim2.new(1, -20, 0, 46)
-NoteLabel.Position = UDim2.new(0, 10, 0, 26)
-NoteLabel.BackgroundTransparency = 1
-NoteLabel.Text = "Set the interval in minutes The character will automatically reset every X minutes to prevent getting stuck."
-NoteLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
-NoteLabel.Font = Enum.Font.Gotham
-NoteLabel.TextSize = 10
-NoteLabel.TextWrapped = true
-NoteLabel.Parent = MainFrame
+local CounterLabel = Instance.new("TextLabel")
+CounterLabel.Size = UDim2.new(1, 0, 0, 18)
+CounterLabel.Position = UDim2.new(0, 0, 0, 24)
+CounterLabel.BackgroundTransparency = 1
+CounterLabel.Text = "Collected: 0"
+CounterLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+CounterLabel.Font = Enum.Font.GothamMedium
+CounterLabel.TextSize = 11
+CounterLabel.Parent = MainFrame
 
-local InputContainer = Instance.new("Frame")
-InputContainer.Size = UDim2.new(1, -20, 0, 26)
-InputContainer.Position = UDim2.new(0, 10, 0, 78)
-InputContainer.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
-InputContainer.BorderSizePixel = 0
-InputContainer.Parent = MainFrame
-
-Instance.new("UICorner", InputContainer).CornerRadius = UDim.new(0, 6)
-
-local InputLabel = Instance.new("TextLabel")
-InputLabel.Size = UDim2.new(0, 100, 1, 0)
-InputLabel.Position = UDim2.new(0, 8, 0, 0)
-InputLabel.BackgroundTransparency = 1
-InputLabel.Text = "Reset Minute"
-InputLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
-InputLabel.Font = Enum.Font.GothamMedium
-InputLabel.TextSize = 11
-InputLabel.TextXAlignment = Enum.TextXAlignment.Left
-InputLabel.Parent = InputContainer
-
-local MinusBtn = Instance.new("TextButton")
-MinusBtn.Size = UDim2.new(0, 24, 0, 20)
-MinusBtn.Position = UDim2.new(1, -98, 0, 3)
-MinusBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-MinusBtn.BorderSizePixel = 0
-MinusBtn.Text = "-"
-MinusBtn.TextColor3 = Color3.fromRGB(255, 215, 0)
-MinusBtn.Font = Enum.Font.GothamBold
-MinusBtn.TextSize = 14
-MinusBtn.AutoButtonColor = true
-MinusBtn.Parent = InputContainer
-Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
-
-local TimeBox = Instance.new("TextBox")
-TimeBox.Size = UDim2.new(0, 40, 0, 20)
-TimeBox.Position = UDim2.new(1, -70, 0, 3)
-TimeBox.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-TimeBox.BorderSizePixel = 0
-TimeBox.Text = tostring(Config.AutoResetMinutes)
-TimeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-TimeBox.Font = Enum.Font.GothamBold
-TimeBox.TextSize = 11
-TimeBox.ClearTextOnFocus = false
-TimeBox.Parent = InputContainer
-Instance.new("UICorner", TimeBox).CornerRadius = UDim.new(0, 4)
-
-local PlusBtn = Instance.new("TextButton")
-PlusBtn.Size = UDim2.new(0, 24, 0, 20)
-PlusBtn.Position = UDim2.new(1, -26, 0, 3)
-PlusBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-PlusBtn.BorderSizePixel = 0
-PlusBtn.Text = "+"
-PlusBtn.TextColor3 = Color3.fromRGB(255, 215, 0)
-PlusBtn.Font = Enum.Font.GothamBold
-PlusBtn.TextSize = 14
-PlusBtn.AutoButtonColor = true
-PlusBtn.Parent = InputContainer
-Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
-
-local function updateResetTime(newVal)
-    local val = tonumber(newVal)
-    if val and val > 0 then
-        Config.AutoResetMinutes = math.floor(val)
-        TimeBox.Text = tostring(Config.AutoResetMinutes)
-        if getgenv then getgenv().AutoResetMinute = Config.AutoResetMinutes end
-        _G.AutoResetMinute = Config.AutoResetMinutes
-        if writefile then
-            pcall(function()
-                if makefolder and isfolder and not isfolder("StarCrowHub") then
-                    makefolder("StarCrowHub")
-                end
-                writefile(resetFile, tostring(Config.AutoResetMinutes))
-            end)
-        end
-    else
-        TimeBox.Text = tostring(Config.AutoResetMinutes)
-    end
+updateBurgerCounterGui = function()
+    CounterLabel.Text = "Collected: " .. tostring(collectedBurgerCount)
 end
-
-TimeBox.FocusLost:Connect(function()
-    updateResetTime(TimeBox.Text)
-end)
-
-MinusBtn.MouseButton1Click:Connect(function()
-    if Config.AutoResetMinutes > 1 then
-        updateResetTime(Config.AutoResetMinutes - 1)
-    end
-end)
-
-PlusBtn.MouseButton1Click:Connect(function()
-    updateResetTime(Config.AutoResetMinutes + 1)
-end)
 
 do
     local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
