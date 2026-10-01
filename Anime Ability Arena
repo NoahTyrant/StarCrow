@@ -1,1 +1,993 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+local GuiService = game:GetService("GuiService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local Config = {
+    AutoKill = false,
+    ClickKillPlayer = false,
+    TargetKill = false,
+    TargetPlayer = "",
+    Whitelist = {},
+    NoCooldown = false,
+    AntiRagdoll = false,
+    AntiVoid = false,
+    DashNoCooldown = false,
+    NoclipEnabled = false,
+    WalkSpeedEnabled = false,
+    WalkSpeed = 16,
+    InfJump = false,
+    ESPEnabled = false,
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/AnimeAbilityArena.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, false, game, 1)
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(300)
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end
+end)
+
+local setUpval = debug.setupvalue or setupvalue
+local getUpvals = debug.getupvalues or getupvalues
+
+local function resetDashState(dashCtrl)
+    if not dashCtrl or not setUpval or not getUpvals then return end
+    pcall(function()
+        if dashCtrl.GetCharges then
+            for idx, val in pairs(getUpvals(dashCtrl.GetCharges)) do
+                if type(val) == "number" then
+                    setUpval(dashCtrl.GetCharges, idx, 999)
+                end
+            end
+        end
+        if dashCtrl.GetCooldown then
+            for idx, val in pairs(getUpvals(dashCtrl.GetCooldown)) do
+                if type(val) == "number" and val < 0 then
+                    setUpval(dashCtrl.GetCooldown, idx, 0)
+                end
+            end
+        end
+    end)
+end
+
+local AbilityControllerMod = nil
+local CasterBusyMod = nil
+local RegistryMod = nil
+local singleTargetChar = nil
+
+local function getPrimaryAbilityId()
+    if not RegistryMod then return nil end
+    local movesetName = LocalPlayer:GetAttribute("Moveset")
+    if not movesetName then return nil end
+    local moveset = RegistryMod.GetMoveset(movesetName)
+    if moveset and moveset.Abilities and moveset.Abilities[1] then
+        return moveset.Abilities[1].Id
+    end
+    return nil
+end
+
+local function isPunchAbility(res, ability, id)
+    local primId = getPrimaryAbilityId()
+    if id and primId and id == primId then
+        return true
+    end
+    if type(res) == "table" then
+        if res.Kind == "Attack" or res.Name == "Attack" then
+            return true
+        end
+    end
+    if type(ability) == "table" then
+        if ability.Kind == "Attack" or ability.Name == "Attack" then
+            return true
+        end
+        if ability.Config and type(ability.Config) == "table" then
+            if ability.Config.Kind == "Attack" or ability.Config.Name == "Attack" then
+                return true
+            end
+        end
+        if primId and ability.Id == primId then
+            return true
+        end
+    end
+    if type(ability) == "string" and primId and ability == primId then
+        return true
+    end
+    if RegistryMod and RegistryMod.GetAbilityById then
+        local checkId = id or (type(ability) == "string" and ability) or (type(ability) == "table" and ability.Id)
+        if checkId then
+            local ab = RegistryMod.GetAbilityById(checkId)
+            if ab then
+                if ab.Kind == "Attack" or ab.Name == "Attack" then
+                    return true
+                end
+                if ab.Config and (ab.Config.Kind == "Attack" or ab.Config.Name == "Attack") then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+pcall(function()
+    local Shared = ReplicatedStorage:WaitForChild("Shared", 5)
+    if Shared then
+        local AbilityController = require(Shared:WaitForChild("Client"):WaitForChild("AbilityController"))
+        local CasterBusy = require(Shared:WaitForChild("Client"):WaitForChild("CasterBusy"))
+        local Overrides = require(Shared:WaitForChild("Abilities"):WaitForChild("Overrides"))
+        local DashController = require(Shared:WaitForChild("Client"):WaitForChild("DashController"))
+        local Controls = require(Shared:WaitForChild("Client"):WaitForChild("Controls"))
+        local GameConfig = require(Shared:WaitForChild("Config"))
+        local Registry = require(Shared:WaitForChild("Abilities"):WaitForChild("Registry"))
+        local RagdollUtil = require(Shared:WaitForChild("Util"):WaitForChild("RagdollUtil"))
+        local RagdollCancelCtrl = require(Shared:WaitForChild("Client"):WaitForChild("RagdollCancelController"))
+        local Network = require(Shared:WaitForChild("Network"))
+
+        AbilityControllerMod = AbilityController
+        CasterBusyMod = CasterBusy
+        RegistryMod = Registry
+
+        local oldActivate = AbilityController.Activate
+        AbilityController.Activate = function(id)
+            if (Config.NoCooldown or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and isPunchAbility(nil, nil, id) then
+                pcall(function() CasterBusy.Release() end)
+            end
+            return oldActivate(id)
+        end
+
+        local oldConfig = Overrides.Config
+        Overrides.Config = function(player, ability)
+            local res = oldConfig(player, ability)
+            if (Config.NoCooldown or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and type(res) == "table" and isPunchAbility(res, ability, nil) then
+                local copy = {}
+                for k, v in pairs(res) do copy[k] = v end
+                copy.Cooldown = 0
+                return copy
+            end
+            return res
+        end
+
+        local origDashCooldown = GameConfig.Dash and GameConfig.Dash.Cooldown or 1
+        local origDashCharges = GameConfig.Dash and GameConfig.Dash.Charges or 1
+
+        local oldGetMoveset = Registry.GetMoveset
+        Registry.GetMoveset = function(name)
+            local m = oldGetMoveset(name)
+            if m and Config.DashNoCooldown then
+                m.DashRefill = 0.001
+                m.Dashes = 999
+            end
+            return m
+        end
+
+        local oldIsDashLocked = Controls.IsDashLocked
+        if oldIsDashLocked then
+            Controls.IsDashLocked = function(...)
+                if Config.DashNoCooldown then return false end
+                return oldIsDashLocked(...)
+            end
+        end
+
+        local oldIsDashing = Controls.IsDashing
+        if oldIsDashing then
+            Controls.IsDashing = function(...)
+                if Config.DashNoCooldown then return false end
+                return oldIsDashing(...)
+            end
+        end
+
+        local oldTryDash = DashController.TryDash
+        DashController.TryDash = function(...)
+            if Config.DashNoCooldown then
+                if GameConfig.Dash then
+                    GameConfig.Dash.Cooldown = 0.001
+                    GameConfig.Dash.Charges = 999
+                end
+                resetDashState(DashController)
+                pcall(function() CasterBusy.Release() end)
+            else
+                if GameConfig.Dash then
+                    GameConfig.Dash.Cooldown = origDashCooldown
+                    GameConfig.Dash.Charges = origDashCharges
+                end
+            end
+            local res = oldTryDash(...)
+            if Config.DashNoCooldown then
+                resetDashState(DashController)
+            end
+            return res
+        end
+
+        local oldGetDashCooldown = DashController.GetCooldown
+        DashController.GetCooldown = function()
+            if Config.DashNoCooldown then return 0, 0 end
+            return oldGetDashCooldown()
+        end
+
+        local oldIsRagdolled = RagdollUtil.IsRagdolled
+        RagdollUtil.IsRagdolled = function(char)
+            if Config.AntiRagdoll and char == LocalPlayer.Character then
+                return false
+            end
+            return oldIsRagdolled(char)
+        end
+
+        local oldIsIncapacitated = RagdollUtil.IsIncapacitated
+        RagdollUtil.IsIncapacitated = function(char)
+            if Config.AntiRagdoll and char == LocalPlayer.Character then
+                return false
+            end
+            return oldIsIncapacitated(char)
+        end
+
+        local oldSetState = RagdollUtil.SetState
+        RagdollUtil.SetState = function(char, state)
+            if Config.AntiRagdoll and char == LocalPlayer.Character and state == "Ragdoll" then
+                return oldSetState(char, "None")
+            end
+            return oldSetState(char, state)
+        end
+
+        local oldAttempt = RagdollCancelCtrl.Attempt
+        RagdollCancelCtrl.Attempt = function(...)
+            if Config.AntiRagdoll then
+                pcall(function()
+                    Network.Combat.packets.RagdollCancel.send({ Active = true })
+                end)
+                return true
+            end
+            return oldAttempt(...)
+        end
+
+        CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
+            if Config.AntiRagdoll and char == LocalPlayer.Character then
+                task.defer(function()
+                    CollectionService:RemoveTag(char, "BG_RagdollActive")
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        hum.PlatformStand = false
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    end
+                    pcall(function()
+                        Network.Combat.packets.RagdollCancel.send({ Active = true })
+                    end)
+                end)
+            end
+        end)
+
+        local lastDashReset = 0
+        RunService.Heartbeat:Connect(function()
+            if Config.DashNoCooldown then
+                local now = os.clock()
+                if now - lastDashReset > 0.25 then
+                    lastDashReset = now
+                    resetDashState(DashController)
+                end
+            end
+            if Config.AntiRagdoll then
+                local char = LocalPlayer.Character
+                if char then
+                    if CollectionService:HasTag(char, "BG_RagdollActive") then
+                        CollectionService:RemoveTag(char, "BG_RagdollActive")
+                    end
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.PlatformStand then
+                        hum.PlatformStand = false
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+local voidTargetCF = CFrame.new(19.11, 446.07, 37.93)
+
+local function isInsideLobby(targetPart)
+    if not targetPart then return true end
+    if targetPart.Position.Z < -300 then return true end
+    return false
+end
+
+local cachedPlayBtn = nil
+local function clickPlayButton()
+    if cachedPlayBtn and cachedPlayBtn.Parent and cachedPlayBtn.Visible and cachedPlayBtn.AbsoluteSize.X > 0 and cachedPlayBtn.AbsoluteSize.Y > 0 then
+        local btn = cachedPlayBtn
+        if firesignal then
+            pcall(function() firesignal(btn.MouseButton1Down) end)
+            pcall(function() firesignal(btn.MouseButton1Click) end)
+            pcall(function() firesignal(btn.Activated) end)
+            pcall(function() firesignal(btn.MouseButton1Up) end)
+        end
+        if getconnections then
+            for _, sig in ipairs({"Activated", "MouseButton1Click", "MouseButton1Up"}) do
+                pcall(function()
+                    for _, c in ipairs(getconnections(btn[sig])) do
+                        c:Fire()
+                    end
+                end)
+            end
+        end
+        pcall(function()
+            local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+            local inset = GuiService:GetGuiInset()
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, true, game, 1)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, false, game, 1)
+        end)
+        return true
+    end
+
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return false end
+    for _, obj in ipairs(pGui:GetDescendants()) do
+        if obj.Name == "PlayButton" or obj.Name == "Play" or (obj:IsA("TextButton") and obj.Text:lower():find("play")) then
+            local btn = obj:IsA("GuiButton") and obj or obj:FindFirstChildWhichIsA("GuiButton", true)
+            if btn and btn.Visible and btn.AbsoluteSize.X > 0 and btn.AbsoluteSize.Y > 0 then
+                cachedPlayBtn = btn
+                if firesignal then
+                    pcall(function() firesignal(btn.MouseButton1Down) end)
+                    pcall(function() firesignal(btn.MouseButton1Click) end)
+                    pcall(function() firesignal(btn.Activated) end)
+                    pcall(function() firesignal(btn.MouseButton1Up) end)
+                end
+                if getconnections then
+                    for _, sig in ipairs({"Activated", "MouseButton1Click", "MouseButton1Up"}) do
+                        pcall(function()
+                            for _, c in ipairs(getconnections(btn[sig])) do
+                                c:Fire()
+                            end
+                        end)
+                    end
+                end
+                pcall(function()
+                    local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+                    local inset = GuiService:GetGuiInset()
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, true, game, 1)
+                    task.wait(0.05)
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, false, game, 1)
+                end)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hum and hrp and hum.Health > 0 then
+            if (Config.AntiVoid or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and not isInsideLobby(hrp) then
+                local fallenHeight = workspace.FallenPartsDestroyHeight or -500
+                if hrp.Position.Y < 350 or hrp.Position.Y < fallenHeight + 60 then
+                    hrp.CFrame = voidTargetCF
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    hum.PlatformStand = false
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+            end
+
+            if Config.WalkSpeedEnabled then
+                hum.WalkSpeed = Config.WalkSpeed
+                if hum.MoveDirection.Magnitude > 0 then
+                    local dir = hum.MoveDirection
+                    hrp.AssemblyLinearVelocity = Vector3.new(dir.X * Config.WalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * Config.WalkSpeed)
+                end
+            end
+        end
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if Config.NoclipEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end
+end)
+
+local function getPlayerNames()
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(list, p.Name)
+        end
+    end
+    return list
+end
+
+local function isWhitelisted(name)
+    if not Config.Whitelist then return false end
+    return Config.Whitelist[name] == true
+end
+
+local function getAutoKillTarget()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or isInsideLobby(hrp) then return nil end
+    if not LocalPlayer:GetAttribute("InGame") then return nil end
+
+    local bestTarget = nil
+    local bestDist = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player:GetAttribute("InGame") and not isWhitelisted(player.Name) then
+            local tChar = player.Character
+            local lobbyModel = workspace:FindFirstChild("Lobby")
+            if tChar and (not lobbyModel or not tChar:IsDescendantOf(lobbyModel)) then
+                local tHum = tChar:FindFirstChildOfClass("Humanoid")
+                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
+                if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+                    local dist = (tHrp.Position - hrp.Position).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
+                        bestTarget = tChar
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+local function executeAttackBehind(target)
+    if not target then return end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not (char and hrp and hum and hum.Health > 0) then return end
+
+    local tHum = target:FindFirstChildOfClass("Humanoid")
+    local tHrp = target:FindFirstChild("HumanoidRootPart")
+    if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+        local targetPos = tHrp.Position
+        local behindPos = targetPos - (tHrp.CFrame.LookVector * 2.2)
+        hrp.CFrame = CFrame.lookAt(behindPos, targetPos)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+
+        local aid = getPrimaryAbilityId()
+        if aid and AbilityControllerMod then
+            pcall(function()
+                if CasterBusyMod then CasterBusyMod.Release() end
+                AbilityControllerMod.Activate(aid)
+            end)
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if not Config.ClickKillPlayer then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local mouse = LocalPlayer:GetMouse()
+        local target = mouse and mouse.Target
+        if target then
+            local model = target:FindFirstAncestorOfClass("Model")
+            if model and model ~= LocalPlayer.Character then
+                local player = Players:GetPlayerFromCharacter(model)
+                if player and not isWhitelisted(player.Name) then
+                    local hum = model:FindFirstChildOfClass("Humanoid")
+                    local hrp = model:FindFirstChild("HumanoidRootPart")
+                    if hum and hrp and hum.Health > 0 and not isInsideLobby(hrp) then
+                        singleTargetChar = model
+                    end
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.03)
+        if singleTargetChar ~= nil then
+            local tHum = singleTargetChar:FindFirstChildOfClass("Humanoid")
+            local tHrp = singleTargetChar:FindFirstChild("HumanoidRootPart")
+            local targetPlr = Players:GetPlayerFromCharacter(singleTargetChar)
+            if not singleTargetChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or tHrp.Position.Y < 350 or isInsideLobby(tHrp) or (targetPlr and isWhitelisted(targetPlr.Name)) then
+                singleTargetChar = nil
+            else
+                executeAttackBehind(singleTargetChar)
+            end
+        elseif Config.TargetKill and Config.TargetPlayer and Config.TargetPlayer ~= "" then
+            local targetPlr = Players:FindFirstChild(Config.TargetPlayer)
+            if targetPlr and targetPlr.Character and not isWhitelisted(targetPlr.Name) then
+                local tHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
+                local tHrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+                if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+                    executeAttackBehind(targetPlr.Character)
+                end
+            end
+        elseif Config.AutoKill then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not LocalPlayer:GetAttribute("InGame") or isInsideLobby(hrp) then
+                clickPlayButton()
+                task.wait(0.4)
+            else
+                local target = getAutoKillTarget()
+                if target then
+                    executeAttackBehind(target)
+                end
+            end
+        end
+    end
+end)
+
+local function clearPlayerESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head then
+                local esp = head:FindFirstChild("StarCrowESP")
+                if esp then esp:Destroy() end
+            end
+            local chams = char:FindFirstChild("StarCrowChams")
+            if chams then chams:Destroy() end
+        end
+    end
+end
+
+local function updateESP()
+    if not Config.ESPEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
+                local hum = char.Humanoid
+                local head = char.Head
+                local esp = head:FindFirstChild("StarCrowESP")
+                local chams = char:FindFirstChild("StarCrowChams")
+
+                if hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 240, 0, 40)
+                        esp.StudsOffset = Vector3.new(0, 2.5, 0)
+                        esp.AlwaysOnTop = true
+                        esp.MaxDistance = math.huge
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.TextScaled = false
+                        text.TextSize = 13
+                        text.Font = Enum.Font.GothamBold
+                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        text.TextStrokeTransparency = 0
+                        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                        text.RichText = true
+                        text.TextXAlignment = Enum.TextXAlignment.Center
+                        esp.Parent = head
+                    end
+                    
+                    local teamColor = Color3.fromRGB(255, 255, 255)
+                    if player.Team and player.Team.TeamColor then
+                        teamColor = player.Team.TeamColor.Color
+                    end
+                    local nameHex = string.format("#%02x%02x%02x", math.floor(teamColor.R * 255), math.floor(teamColor.G * 255), math.floor(teamColor.B * 255))
+                    
+                    local nameStr = string.format('<font color="%s">%s</font>', nameHex, player.DisplayName)
+                    local hp = math.floor(hum.Health)
+                    local hpPercent = hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) * 100 or 0
+                    local hpColor = hpPercent > 60 and "#00ff00" or hpPercent > 30 and "#ffaa00" or "#ff3300"
+                    local fullText = nameStr .. "\n" .. string.format('<font color="%s">%d HP</font>', hpColor, hp)
+                    
+                    if esp.NameText.Text ~= fullText then
+                        esp.NameText.Text = fullText
+                    end
+                    
+                    if not chams then
+                        chams = Instance.new("Highlight")
+                        chams.Name = "StarCrowChams"
+                        chams.FillColor = teamColor
+                        chams.OutlineColor = teamColor
+                        chams.FillTransparency = 0.7
+                        chams.OutlineTransparency = 0
+                        chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        chams.Parent = char
+                    elseif chams.FillColor ~= teamColor then
+                        chams.FillColor = teamColor
+                        chams.OutlineColor = teamColor
+                    end
+                else
+                    if esp then esp:Destroy() end
+                    if chams then chams:Destroy() end
+                end
+            end
+        end
+    end
+end
+
+local espThrottle = 0
+RunService.RenderStepped:Connect(function(dt)
+    if not Config.ESPEnabled then return end
+    espThrottle = espThrottle + dt
+    if espThrottle < 0.1 then return end
+    espThrottle = 0
+    updateESP()
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and Config.InfJump then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+do
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            dragInput = nil
+        end
+    end)
+end
+
+local uiVisible = true
+local minimizeKey = Enum.KeyCode.LeftControl
+local lastToggleTime = 0
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
+    uiVisible = not uiVisible
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and (desc.Text == "StarCrow Hub" or desc.Text:find("StarCrow")) then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do p = p.Parent end
+                    if p and p:IsA("Frame") then p.Visible = uiVisible return end
+                end
+            end
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == minimizeKey then
+        uiVisible = not uiVisible
+    end
+end)
+
+local clickStartPos = Vector2.new()
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+end)
+LogoBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+        if dist < 10 then
+            toggleUI()
+        end
+    end
+end)
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrow Hub",
+    SubTitle = " | Anime Ability Arena",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = "Amethyst",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+Tabs.Main:AddSection("Combat")
+
+Tabs.Main:AddToggle("AutoKillToggle", {
+    Title = "Auto Kill",
+    Default = Config.AutoKill,
+    Callback = function(Value)
+        Config.AutoKill = Value
+        if Value then
+            clickPlayButton()
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("ClickKillPlayerToggle", {
+    Title = "Click Player To Kill",
+    Default = Config.ClickKillPlayer,
+    Callback = function(Value)
+        Config.ClickKillPlayer = Value
+        if not Value then
+            singleTargetChar = nil
+        end
+        SaveConfig()
+    end
+})
+
+local targetDropdown = Tabs.Main:AddDropdown("TargetPlayerDropdown", {
+    Title = "Select Target",
+    Values = getPlayerNames(),
+    Default = Config.TargetPlayer ~= "" and Config.TargetPlayer or nil,
+    Multi = false,
+    Callback = function(Value)
+        Config.TargetPlayer = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("TargetKillToggle", {
+    Title = "Kill Selected Player",
+    Default = Config.TargetKill,
+    Callback = function(Value)
+        Config.TargetKill = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("NoCooldownToggle", {
+    Title = "Punch No Cooldown",
+    Default = Config.NoCooldown,
+    Callback = function(Value)
+        Config.NoCooldown = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("DashNoCooldownToggle", {
+    Title = "Dash No Cooldown",
+    Default = Config.DashNoCooldown,
+    Callback = function(Value)
+        Config.DashNoCooldown = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Whitelist")
+
+local whitelistDropdown = Tabs.Main:AddDropdown("WhitelistDropdown", {
+    Title = "Whitelist Players",
+    Values = getPlayerNames(),
+    Default = Config.Whitelist,
+    Multi = true,
+    Callback = function(Value)
+        Config.Whitelist = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Defense")
+
+Tabs.Main:AddToggle("AntiRagdollToggle", {
+    Title = "Anti Ragdoll",
+    Default = Config.AntiRagdoll,
+    Callback = function(Value)
+        Config.AntiRagdoll = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AntiVoidToggle", {
+    Title = "Anti Void",
+    Default = Config.AntiVoid,
+    Callback = function(Value)
+        Config.AntiVoid = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSection("Movement")
+
+Tabs.Player:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Default = Config.NoclipEnabled,
+    Callback = function(Value)
+        Config.NoclipEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("WalkSpeedToggle", {
+    Title = "Enable Speed",
+    Default = Config.WalkSpeedEnabled,
+    Callback = function(Value)
+        Config.WalkSpeedEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("WalkSpeedSlider", {
+    Title = "Speed Amount",
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJumpToggle", {
+    Title = "Infinite Jump",
+    Default = Config.InfJump,
+    Callback = function(Value)
+        Config.InfJump = Value
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddSection("ESP")
+
+Tabs.ESP:AddToggle("ESPPlayersToggle", {
+    Title = "ESP Players",
+    Default = Config.ESPEnabled,
+    Callback = function(Value)
+        Config.ESPEnabled = Value
+        SaveConfig()
+        if not Value then
+            clearPlayerESP()
+        end
+    end
+})
+
+Tabs.Settings:AddSection("Menu")
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
+        minimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+    end
+})
+
+local function refreshAllPlayerDropdowns()
+    local names = getPlayerNames()
+    if targetDropdown then
+        targetDropdown:SetValues(names)
+    end
+    if whitelistDropdown then
+        whitelistDropdown:SetValues(names)
+    end
+end
+
+Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    refreshAllPlayerDropdowns()
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(1)
+    refreshAllPlayerDropdowns()
+end)
+
+Window:SelectTab(1)
