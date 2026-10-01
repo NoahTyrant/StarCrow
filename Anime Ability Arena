@@ -106,6 +106,10 @@ local CasterBusyMod = nil
 local RegistryMod = nil
 local singleTargetChar = nil
 
+local function isCombatActive()
+    return Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil
+end
+
 local function getPrimaryAbilityId()
     if not RegistryMod then return nil end
     local movesetName = LocalPlayer:GetAttribute("Moveset")
@@ -257,7 +261,7 @@ pcall(function()
 
         local oldIsRagdolled = RagdollUtil.IsRagdolled
         RagdollUtil.IsRagdolled = function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if (Config.AntiRagdoll or isCombatActive()) and char == LocalPlayer.Character then
                 return false
             end
             return oldIsRagdolled(char)
@@ -265,7 +269,7 @@ pcall(function()
 
         local oldIsIncapacitated = RagdollUtil.IsIncapacitated
         RagdollUtil.IsIncapacitated = function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if (Config.AntiRagdoll or isCombatActive()) and char == LocalPlayer.Character then
                 return false
             end
             return oldIsIncapacitated(char)
@@ -273,7 +277,7 @@ pcall(function()
 
         local oldSetState = RagdollUtil.SetState
         RagdollUtil.SetState = function(char, state)
-            if Config.AntiRagdoll and char == LocalPlayer.Character and state == "Ragdoll" then
+            if (Config.AntiRagdoll or isCombatActive()) and char == LocalPlayer.Character and state == "Ragdoll" then
                 return oldSetState(char, "None")
             end
             return oldSetState(char, state)
@@ -281,7 +285,7 @@ pcall(function()
 
         local oldAttempt = RagdollCancelCtrl.Attempt
         RagdollCancelCtrl.Attempt = function(...)
-            if Config.AntiRagdoll then
+            if Config.AntiRagdoll or isCombatActive() then
                 pcall(function()
                     Network.Combat.packets.RagdollCancel.send({ Active = true })
                 end)
@@ -291,7 +295,7 @@ pcall(function()
         end
 
         CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if (Config.AntiRagdoll or isCombatActive()) and char == LocalPlayer.Character then
                 task.defer(function()
                     CollectionService:RemoveTag(char, "BG_RagdollActive")
                     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -315,7 +319,7 @@ pcall(function()
                     resetDashState(DashController)
                 end
             end
-            if Config.AntiRagdoll then
+            if Config.AntiRagdoll or isCombatActive() then
                 local char = LocalPlayer.Character
                 if char then
                     if CollectionService:HasTag(char, "BG_RagdollActive") then
@@ -519,6 +523,7 @@ end
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if not Config.ClickKillPlayer then return end
+    if singleTargetChar ~= nil then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         local mouse = LocalPlayer:GetMouse()
         local target = mouse and mouse.Target
