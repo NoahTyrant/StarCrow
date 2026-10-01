@@ -624,6 +624,105 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
+local mobileAttackHolding = false
+local lastHookedAttackBtn = nil
+local activeAttackTouch = nil
+
+local function getMobileAttackButton()
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return nil end
+    local mainUI = pGui:FindFirstChild("MainUI")
+    if not mainUI then return nil end
+    local hud = mainUI:FindFirstChild("HUD")
+    if not hud then return nil end
+    local mobileHud = hud:FindFirstChild("MobileHUD")
+    if mobileHud then
+        local btn = mobileHud:FindFirstChild("Attack")
+        if btn then return btn end
+    end
+    local abilities = hud:FindFirstChild("Abilities")
+    local abilityButtons = abilities and abilities:FindFirstChild("AbilityButtons")
+    if abilityButtons then
+        local btn = abilityButtons:FindFirstChild("Attack")
+        if btn then return btn end
+    end
+    return nil
+end
+
+local function hookMobileAttackButton()
+    local btn = getMobileAttackButton()
+    if not btn or btn == lastHookedAttackBtn then return btn end
+    lastHookedAttackBtn = btn
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            mobileAttackHolding = true
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
+                local aid = getPrimaryAbilityId()
+                if aid and AbilityControllerMod then
+                    pcall(function()
+                        if CasterBusyMod then CasterBusyMod.Release() end
+                        AbilityControllerMod.Activate(aid)
+                    end)
+                end
+            end
+        end
+    end)
+    btn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            mobileAttackHolding = false
+            activeAttackTouch = nil
+        end
+    end)
+    return btn
+end
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch then
+        local btn = getMobileAttackButton()
+        if btn and btn.Visible then
+            local bPos = btn.AbsolutePosition
+            local bSize = btn.AbsoluteSize
+            local p = input.Position
+            if p.X >= bPos.X and p.X <= (bPos.X + bSize.X) and p.Y >= bPos.Y and p.Y <= (bPos.Y + bSize.Y) then
+                activeAttackTouch = input
+                mobileAttackHolding = true
+                if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
+                    local aid = getPrimaryAbilityId()
+                    if aid and AbilityControllerMod then
+                        pcall(function()
+                            if CasterBusyMod then CasterBusyMod.Release() end
+                            AbilityControllerMod.Activate(aid)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch then
+        if input == activeAttackTouch then
+            activeAttackTouch = nil
+            mobileAttackHolding = false
+        end
+    end
+end)
+
+local function isAttackButtonPressed()
+    local btn = hookMobileAttackButton()
+    if btn and btn.Visible then
+        if mobileAttackHolding then
+            return true
+        end
+        if not UserInputService.TouchEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+            return true
+        end
+        return false
+    end
+    return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+end
+
 task.spawn(function()
     while true do
         task.wait(0.03)
@@ -665,7 +764,7 @@ task.spawn(function()
                     if Config.AutoUseSkills then
                         triggerSkillsER()
                     end
-                    if Config.FastAttack and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                    if Config.FastAttack and isAttackButtonPressed() then
                         local aid = getPrimaryAbilityId()
                         if aid and AbilityControllerMod then
                             pcall(function()
