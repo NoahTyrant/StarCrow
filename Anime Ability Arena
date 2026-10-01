@@ -549,6 +549,29 @@ local function executeAttackBehind(target)
     end
 end
 
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if not Config.ClickKillPlayer then return end
+    if singleTargetChar ~= nil then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local mouse = LocalPlayer:GetMouse()
+        local target = mouse and mouse.Target
+        if target then
+            local model = target:FindFirstAncestorOfClass("Model")
+            if model and model ~= LocalPlayer.Character then
+                local player = Players:GetPlayerFromCharacter(model)
+                if player and not isWhitelisted(player.Name) then
+                    local hum = model:FindFirstChildOfClass("Humanoid")
+                    local hrp = model:FindFirstChild("HumanoidRootPart")
+                    if hum and hrp and hum.Health > 0 and not isInsideLobby(hrp) then
+                        singleTargetChar = model
+                    end
+                end
+            end
+        end
+    end
+end)
+
 local mobileAttackHolding = false
 local lastHookedAttackBtn = nil
 local activeAttackTouch = nil
@@ -573,112 +596,6 @@ local function getMobileAttackButton()
     end
     return nil
 end
-
-local function isValidClickTarget(tChar)
-    if not tChar or not tChar.Parent then return false end
-    if tChar == LocalPlayer.Character then return false end
-    local plr = Players:GetPlayerFromCharacter(tChar)
-    if not plr or plr == LocalPlayer or plr:GetAttribute("InGame") == false or isWhitelisted(plr.Name) then return false end
-    local lobbyModel = workspace:FindFirstChild("Lobby")
-    if lobbyModel and tChar:IsDescendantOf(lobbyModel) then return false end
-    local hum = tChar:FindFirstChildOfClass("Humanoid")
-    local hrp = tChar:FindFirstChild("HumanoidRootPart")
-    if not hum or not hrp or hum.Health <= 0 or isInsideLobby(hrp) then return false end
-    return true
-end
-
-local function findClickTarget(touchPos, isTouch)
-    local cam = workspace.CurrentCamera or Camera
-    if not cam then return nil end
-    local bestChar = nil
-    local shortestDist = math.huge
-    local maxRadius = isTouch and 140 or 70
-
-    local ray = cam:ViewportPointToRay(touchPos.X, touchPos.Y)
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
-    rayParams.IgnoreWater = true
-    local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
-    if hit and hit.Instance then
-        local current = hit.Instance
-        while current and current ~= workspace do
-            if current:IsA("Model") and isValidClickTarget(current) then
-                return current
-            end
-            current = current.Parent
-        end
-    end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        local tChar = player.Character
-        if isValidClickTarget(tChar) then
-            local parts = {
-                tChar:FindFirstChild("HumanoidRootPart"),
-                tChar:FindFirstChild("Head"),
-                tChar:FindFirstChild("UpperTorso") or tChar:FindFirstChild("Torso")
-            }
-            for _, part in ipairs(parts) do
-                if part then
-                    local sPos, onScreen = cam:WorldToViewportPoint(part.Position)
-                    if onScreen and sPos.Z > 0 then
-                        local dist = (Vector2.new(sPos.X, sPos.Y) - touchPos).Magnitude
-                        if dist < shortestDist and dist <= maxRadius then
-                            shortestDist = dist
-                            bestChar = tChar
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    if not bestChar and not isTouch then
-        local mouse = LocalPlayer:GetMouse()
-        local target = mouse and mouse.Target
-        if target then
-            local model = target:FindFirstAncestorOfClass("Model")
-            if isValidClickTarget(model) then
-                bestChar = model
-            end
-        end
-    end
-
-    return bestChar
-end
-
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if not Config.ClickKillPlayer then return end
-    local isTouch = (input.UserInputType == Enum.UserInputType.Touch)
-    local isMouse = (input.UserInputType == Enum.UserInputType.MouseButton1)
-    if not (isTouch or isMouse) then return end
-
-    if isTouch then
-        local btn = getMobileAttackButton()
-        if btn and btn.Visible then
-            local bPos = btn.AbsolutePosition
-            local bSize = btn.AbsoluteSize
-            local p = input.Position
-            if p.X >= bPos.X and p.X <= (bPos.X + bSize.X) and p.Y >= bPos.Y and p.Y <= (bPos.Y + bSize.Y) then
-                return
-            end
-        end
-    end
-
-    local touchPos = Vector2.new(input.Position.X, input.Position.Y)
-    if isMouse then
-        local mouse = LocalPlayer:GetMouse()
-        if mouse then
-            touchPos = Vector2.new(mouse.X, mouse.Y)
-        end
-    end
-
-    local target = findClickTarget(touchPos, isTouch)
-    if target then
-        singleTargetChar = target
-    end
-end)
 
 local function hookMobileAttackButton()
     local btn = getMobileAttackButton()
