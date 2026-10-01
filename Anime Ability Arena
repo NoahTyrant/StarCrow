@@ -131,6 +131,7 @@ local AbilityControllerMod = nil
 local CasterBusyMod = nil
 local RegistryMod = nil
 local singleTargetChar = nil
+local currentAutoKillChar = nil
 local aimlockTargetChar = nil
 local aimlockFloatBtn = nil
 local aimlockFloatStroke = nil
@@ -153,11 +154,75 @@ local function getPrimaryAbilityId()
     return nil
 end
 
+local function fireGuiButton(btn)
+    if not btn then return end
+    local clickable = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
+    if not clickable then clickable = btn end
+    if firesignal then
+        pcall(function() firesignal(clickable.MouseButton1Down) end)
+        pcall(function() firesignal(clickable.MouseButton1Click) end)
+        pcall(function() firesignal(clickable.Activated) end)
+        pcall(function() firesignal(clickable.MouseButton1Up) end)
+    end
+    if getconnections then
+        for _, sig in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
+            pcall(function()
+                if clickable[sig] then
+                    for _, c in ipairs(getconnections(clickable[sig])) do
+                        c:Fire()
+                    end
+                end
+            end)
+        end
+    end
+    pcall(function()
+        if clickable.AbsoluteSize.X > 0 and clickable.AbsoluteSize.Y > 0 then
+            local center = clickable.AbsolutePosition + (clickable.AbsoluteSize / 2)
+            local inset = GuiService:GetGuiInset()
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, true, game, 1)
+            task.wait(0.01)
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, false, game, 1)
+        end
+    end)
+end
+
+local function clickHudSkillButtons()
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return false end
+    local mainUI = pGui:FindFirstChild("MainUI")
+    if not mainUI then return false end
+    local hud = mainUI:FindFirstChild("HUD")
+    if not hud then return false end
+
+    local abilities = hud:FindFirstChild("Abilities")
+    local abilityButtons = abilities and abilities:FindFirstChild("AbilityButtons")
+    if abilityButtons then
+        for _, child in ipairs(abilityButtons:GetChildren()) do
+            if child:IsA("GuiObject") and child.Name ~= "Attack" and child.Name ~= "UIListLayout" and child.Name ~= "UIPadding" then
+                fireGuiButton(child)
+            end
+        end
+    end
+
+    local mobileHud = hud:FindFirstChild("MobileHUD")
+    if mobileHud then
+        for _, child in ipairs(mobileHud:GetChildren()) do
+            if child:IsA("GuiObject") and child.Name ~= "Attack" and child.Name ~= "Dash" and child.Name ~= "Jump" and child.Name ~= "UIListLayout" and child.Name ~= "UIPadding" then
+                fireGuiButton(child)
+            end
+        end
+    end
+end
+
 local lastSkillTime = 0
 local function triggerSkillsER()
     local now = tick()
-    if now - lastSkillTime < 0.2 then return end
+    if now - lastSkillTime < 0.15 then return end
     lastSkillTime = now
+
+    pcall(function()
+        clickHudSkillButtons()
+    end)
 
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
@@ -177,6 +242,10 @@ local function triggerSkillsER()
             for _, sId in ipairs(skills) do
                 AbilityControllerMod.Activate(sId)
             end
+            AbilityControllerMod.Activate("Ability1")
+            AbilityControllerMod.Activate("Ability2")
+            AbilityControllerMod.Activate("E")
+            AbilityControllerMod.Activate("R")
         end)
     end
 end
@@ -748,12 +817,23 @@ task.spawn(function()
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             if not LocalPlayer:GetAttribute("InGame") or isInsideLobby(hrp) then
+                currentAutoKillChar = nil
                 clickPlayButton()
                 task.wait(0.4)
             else
-                local target = getAutoKillTarget()
-                if target then
-                    executeAttackBehind(target)
+                if currentAutoKillChar then
+                    local tHum = currentAutoKillChar:FindFirstChildOfClass("Humanoid")
+                    local tHrp = currentAutoKillChar:FindFirstChild("HumanoidRootPart")
+                    local tPlr = Players:GetPlayerFromCharacter(currentAutoKillChar)
+                    if not currentAutoKillChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or isInsideLobby(tHrp) or (tPlr and isWhitelisted(tPlr.Name)) then
+                        currentAutoKillChar = nil
+                    end
+                end
+                if not currentAutoKillChar then
+                    currentAutoKillChar = getAutoKillTarget()
+                end
+                if currentAutoKillChar then
+                    executeAttackBehind(currentAutoKillChar)
                 end
             end
         else
@@ -1188,6 +1268,8 @@ Tabs.Main:AddToggle("AutoKillToggle", {
         Config.AutoKill = Value
         if Value then
             clickPlayButton()
+        else
+            currentAutoKillChar = nil
         end
         SaveConfig()
     end
