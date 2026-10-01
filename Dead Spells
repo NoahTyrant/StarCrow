@@ -258,7 +258,23 @@ ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
     end
 end)
 
+local function clearPlayerESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head then
+                local esp = head:FindFirstChild("StarCrowESP")
+                if esp then esp:Destroy() end
+            end
+            local chams = char:FindFirstChild("StarCrowChams")
+            if chams then chams:Destroy() end
+        end
+    end
+end
+
 local function updateESP()
+    if not Config.ESPEnabled then return end
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             local char = player.Character
@@ -268,7 +284,7 @@ local function updateESP()
                 local esp = head:FindFirstChild("StarCrowESP")
                 local chams = char:FindFirstChild("StarCrowChams")
 
-                if Config.ESPEnabled and hum.Health > 0 then
+                if hum.Health > 0 then
                     if not esp then
                         esp = Instance.new("BillboardGui")
                         esp.Name = "StarCrowESP"
@@ -331,8 +347,13 @@ local function updateESP()
     end
 end
 
-RunService.RenderStepped:Connect(function()
+local _espThrottle = 0
+RunService.RenderStepped:Connect(function(dt)
     Camera = workspace.CurrentCamera
+    if not Config.ESPEnabled then return end
+    _espThrottle = _espThrottle + dt
+    if _espThrottle < 0.05 then return end
+    _espThrottle = 0
     updateESP()
 end)
 
@@ -342,9 +363,9 @@ RunService.Stepped:Connect(function(_, dt)
     if char then
         if Config.NoclipEnabled then
             _noclipThrottle = _noclipThrottle + dt
-            if _noclipThrottle >= 0.1 then
+            if _noclipThrottle >= 0.05 then
                 _noclipThrottle = 0
-                for _, part in ipairs(char:GetDescendants()) do
+                for _, part in ipairs(char:GetChildren()) do
                     if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
                 end
             end
@@ -614,51 +635,24 @@ local function applyHitbox(npc)
     outline.Adornee = head
     outline.Parent = head
 
-    local _hbThrottle = 0
-    local connection = RunService.Heartbeat:Connect(function(dt)
-        if not Config.NPCHitboxEnabled or not npc.Parent or hum.Health <= 0 then
-            cleanupNPC(npc)
-            return
-        end
-        _hbThrottle = _hbThrottle + dt
-        if _hbThrottle < 0.1 then return end
-        _hbThrottle = 0
-        local wanted = Vector3.new(Config.NPCHitboxSize, Config.NPCHitboxSize, Config.NPCHitboxSize)
-        if head.Size ~= wanted then
-            head.Size = wanted
-            head.Transparency = 1
-            head.CanCollide = false
-            head.Massless = true
-        end
-    end)
-
-    npcs[npc] = {
-        head = head,
-        connection = connection
-    }
+    npcs[npc] = { head = head, hum = hum }
 end
 
-local function scanNPCs()
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if isValidNPC(v) then
-            applyHitbox(v)
-        end
+local function cleanupNPC(npc)
+    local data = npcs[npc]
+    if not data then return end
+    local head = data.head
+    if head and head.Parent then
+        head.Size = origSizes[head] or Vector3.new(2,1,1)
+        head.Transparency = 0
+        head.CanCollide = true
+        head.Massless = false
+        local outline = head:FindFirstChild("StarCrowHitboxOutline")
+        if outline then outline:Destroy() end
     end
+    origSizes[head] = nil
+    npcs[npc] = nil
 end
-
-local function clearHitbox()
-    for npc in pairs(npcs) do
-        cleanupNPC(npc)
-    end
-end
-
-task.spawn(function()
-    while task.wait(1) do
-        if Config.NPCHitboxEnabled then
-            scanNPCs()
-        end
-    end
-end)
 
 local bossHitboxNPCs = {}
 local bossOrigSizes = {}
@@ -675,7 +669,6 @@ end
 local function cleanupBossHitbox(npc)
     local data = bossHitboxNPCs[npc]
     if not data then return end
-    if data.connection then data.connection:Disconnect() end
     local head = data.head
     if head and head.Parent then
         head.Size = bossOrigSizes[head] or Vector3.new(2, 1, 1)
@@ -710,44 +703,95 @@ local function applyBossHitbox(npc)
     outline.Adornee = head
     outline.Parent = head
 
-    local _bhThrottle = 0
-    local connection = RunService.Heartbeat:Connect(function(dt)
-        if not Config.NPCHitboxEnabled or not npc.Parent or hum.Health <= 0 then
-            cleanupBossHitbox(npc)
-            return
-        end
-        _bhThrottle = _bhThrottle + dt
-        if _bhThrottle < 0.1 then return end
-        _bhThrottle = 0
-        local wanted = Vector3.new(200, 200, 200)
-        if head.Size ~= wanted then
-            head.Size = wanted
-            head.Transparency = 1
-            head.CanCollide = false
-            head.Massless = true
-        end
-    end)
-
-    bossHitboxNPCs[npc] = { head = head, connection = connection }
+    bossHitboxNPCs[npc] = { head = head, hum = hum }
 end
 
-task.spawn(function()
-    while task.wait(1) do
-        if Config.NPCHitboxEnabled then
-            for _, v in ipairs(workspace:GetDescendants()) do
-                if v:IsA("Model") and v:FindFirstChildOfClass("Humanoid") and isBossModel(v) then
-                    applyBossHitbox(v)
-                end
+local function clearHitbox()
+    for npc in pairs(npcs) do
+        cleanupNPC(npc)
+    end
+    for npc in pairs(bossHitboxNPCs) do
+        cleanupBossHitbox(npc)
+    end
+end
+
+local function scanNPCs()
+    if not Config.NPCHitboxEnabled then return end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("Model") then
+            if isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
+                applyBossHitbox(v)
+            elseif isValidNPC(v) then
+                applyHitbox(v)
             end
+        end
+    end
+end
+
+local _hbThrottle = 0
+RunService.Heartbeat:Connect(function(dt)
+    if not Config.NPCHitboxEnabled then return end
+    _hbThrottle = _hbThrottle + dt
+    if _hbThrottle < 0.1 then return end
+    _hbThrottle = 0
+
+    local wanted = Vector3.new(Config.NPCHitboxSize, Config.NPCHitboxSize, Config.NPCHitboxSize)
+    for npc, data in pairs(npcs) do
+        if not npc.Parent or not data.hum or data.hum.Health <= 0 or not data.head or not data.head.Parent then
+            cleanupNPC(npc)
         else
-            for npc in pairs(bossHitboxNPCs) do
-                cleanupBossHitbox(npc)
+            local head = data.head
+            if head.Size ~= wanted then
+                head.Size = wanted
+                head.Transparency = 1
+                head.CanCollide = false
+                head.Massless = true
+            end
+        end
+    end
+
+    local wantedBoss = Vector3.new(200, 200, 200)
+    for npc, data in pairs(bossHitboxNPCs) do
+        if not npc.Parent or not data.hum or data.hum.Health <= 0 or not data.head or not data.head.Parent then
+            cleanupBossHitbox(npc)
+        else
+            local head = data.head
+            if head.Size ~= wantedBoss then
+                head.Size = wantedBoss
+                head.Transparency = 1
+                head.CanCollide = false
+                head.Massless = true
             end
         end
     end
 end)
 
 local activeNPCESP = {}
+
+pcall(function()
+    for _, v in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if v.Name == "StarCrowNPCESP" then v:Destroy() end
+    end
+end)
+pcall(function()
+    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+        for _, v in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+            if v.Name == "StarCrowNPCESP" then v:Destroy() end
+        end
+    end
+end)
+
+local function cleanupNPCESP(npc)
+    local data = activeNPCESP[npc]
+    if data then
+        pcall(function()
+            if data.billboard and data.billboard.Parent then
+                data.billboard:Destroy()
+            end
+        end)
+        activeNPCESP[npc] = nil
+    end
+end
 
 local function setupNPCESP(npc)
     if not isValidNPC(npc) then return end
@@ -756,6 +800,9 @@ local function setupNPCESP(npc)
     local hum = npc:FindFirstChildOfClass("Humanoid")
     local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
     if not hum or not root then return end
+
+    local oldBB = root:FindFirstChild("StarCrowNPCESP")
+    if oldBB then oldBB:Destroy() end
 
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "StarCrowNPCESP"
@@ -778,9 +825,10 @@ local function setupNPCESP(npc)
     textLabel.TextStrokeTransparency = 0
     textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     textLabel.RichText = true
+    local hp = math.floor(hum.Health)
+    textLabel.Text = string.format('<font color="#ffffff">%s</font>\n<font color="#00ff00">%d HP</font>', npc.Name, hp)
 
-    pcall(function() billboard.Parent = game:GetService("CoreGui") end)
-    if not billboard.Parent then billboard.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+    billboard.Parent = root
 
     activeNPCESP[npc] = {
         billboard = billboard,
@@ -791,29 +839,28 @@ local function setupNPCESP(npc)
     }
 end
 
-local function cleanupNPCESP(npc)
-    local data = activeNPCESP[npc]
-    if not data then return end
-    pcall(function() data.billboard:Destroy() end)
-    activeNPCESP[npc] = nil
-end
-
 local function updateNPCESP()
     for npc, data in pairs(activeNPCESP) do
-        if not npc or not npc.Parent or not data.root.Parent or data.hum.Health <= 0 then
+        local ok, alive = pcall(function()
+            return npc and npc.Parent and data.root and data.root.Parent and data.hum and data.hum.Parent and data.hum.Health > 0 and data.billboard and data.label
+        end)
+        if not ok or not alive then
             cleanupNPCESP(npc)
         else
             local on = Config.NPCESPEnabled
             data.billboard.Enabled = on
             if on then
-                local hp = math.floor(data.hum.Health)
-                data.label.Text = string.format('<font color="#ffffff">%s</font>\n<font color="#00ff00">%d HP</font>', data.name, hp)
+                pcall(function()
+                    local hp = math.floor(data.hum.Health)
+                    data.label.Text = string.format('<font color="#ffffff">%s</font>\n<font color="#00ff00">%d HP</font>', data.name, hp)
+                end)
             end
         end
     end
 end
 
 local function scanNPCESP()
+    if not Config.NPCESPEnabled then return end
     for _, v in ipairs(workspace:GetDescendants()) do
         if isValidNPC(v) then
             setupNPCESP(v)
@@ -822,16 +869,47 @@ local function scanNPCESP()
 end
 
 workspace.DescendantAdded:Connect(function(v)
-    task.wait(0.2)
-    if Config.NPCESPEnabled and isValidNPC(v) then
-        setupNPCESP(v)
+    local doHitbox = Config.NPCHitboxEnabled
+    local doESP = Config.NPCESPEnabled
+    if (doHitbox or doESP) and v:IsA("Model") then
+        task.wait(0.2)
+        if v.Parent then
+            if doHitbox and isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
+                applyBossHitbox(v)
+            end
+            if isValidNPC(v) then
+                if doHitbox then applyHitbox(v) end
+                if doESP then setupNPCESP(v) end
+            end
+        end
     end
 end)
 
 task.spawn(function()
-    while task.wait(2) do
-        if Config.NPCESPEnabled then
-            scanNPCESP()
+    while true do
+        task.wait(2)
+        local doHitbox = Config.NPCHitboxEnabled
+        local doESP = Config.NPCESPEnabled
+        if doHitbox or doESP then
+            for _, v in ipairs(workspace:GetDescendants()) do
+                if v:IsA("Model") then
+                    if doHitbox and isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
+                        applyBossHitbox(v)
+                    end
+                    if isValidNPC(v) then
+                        if doHitbox then applyHitbox(v) end
+                        if doESP then setupNPCESP(v) end
+                    end
+                end
+            end
+        end
+        if not doHitbox then
+            if next(npcs) then
+                for npc in pairs(npcs) do cleanupNPC(npc) end
+            end
+            if next(bossHitboxNPCs) then
+                for npc in pairs(bossHitboxNPCs) do cleanupBossHitbox(npc) end
+            end
         end
     end
 end)
@@ -1052,10 +1130,14 @@ local function buildBurgerESP(obj)
     highlight.Enabled = Config.BurgerESPEnabled
     highlight.Parent = espFolder
 
-    local targetPart = obj:IsA("Model") and obj.PrimaryPart or obj
-    if not targetPart and obj:IsA("Model") then targetPart = obj:FindFirstChildWhichIsA("BasePart") end
+    local targetPart = nil
+    if obj:IsA("BasePart") then
+        targetPart = obj
+    elseif obj:IsA("Model") or obj:IsA("Tool") then
+        targetPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+    end
 
-    if targetPart then
+    if targetPart and targetPart:IsA("BasePart") then
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "Text"
         billboard.Size = UDim2.new(0, 200, 0, 50)
@@ -1116,34 +1198,36 @@ workspace.DescendantAdded:Connect(addToQueue)
 
 local function updateBurgerESP()
     for i = #activeBurgers, 1, -1 do
-        local obj = activeBurgers[i]
-        if not isValidBurger(obj) then
-            local espFolder = obj and obj:FindFirstChild("StarCrowBurgerESP")
-            if espFolder then espFolder:Destroy() end
-            table.remove(activeBurgers, i)
-        else
-            local espFolder = obj:FindFirstChild("StarCrowBurgerESP")
-            if not espFolder then
-                buildBurgerESP(obj)
-                espFolder = obj:FindFirstChild("StarCrowBurgerESP")
-            end
-            if espFolder then
-                local highlight = espFolder:FindFirstChild("Chams")
-                if highlight then highlight.Enabled = Config.BurgerESPEnabled end
-                local billboard = espFolder:FindFirstChild("Text")
-                if billboard then
-                    billboard.Enabled = Config.BurgerESPEnabled
-                    if Config.BurgerESPEnabled then
-                        local label = billboard:FindFirstChildWhichIsA("TextLabel")
-                        local targetPart = billboard.Adornee
-                        if label and targetPart and Camera then
-                            local dist = math.floor((Camera.CFrame.Position - targetPart.Position).Magnitude)
-                            label.Text = string.format("%s\n[%dm]", obj.Name, dist)
+        pcall(function()
+            local obj = activeBurgers[i]
+            if not isValidBurger(obj) then
+                local espFolder = obj and obj:FindFirstChild("StarCrowBurgerESP")
+                if espFolder then espFolder:Destroy() end
+                table.remove(activeBurgers, i)
+            else
+                local espFolder = obj:FindFirstChild("StarCrowBurgerESP")
+                if not espFolder then
+                    buildBurgerESP(obj)
+                    espFolder = obj:FindFirstChild("StarCrowBurgerESP")
+                end
+                if espFolder then
+                    local highlight = espFolder:FindFirstChild("Chams")
+                    if highlight then highlight.Enabled = Config.BurgerESPEnabled end
+                    local billboard = espFolder:FindFirstChild("Text")
+                    if billboard then
+                        billboard.Enabled = Config.BurgerESPEnabled
+                        if Config.BurgerESPEnabled then
+                            local label = billboard:FindFirstChildWhichIsA("TextLabel")
+                            local targetPart = billboard.Adornee
+                            if label and targetPart and targetPart:IsA("BasePart") and Camera then
+                                local dist = math.floor((Camera.CFrame.Position - targetPart.Position).Magnitude)
+                                label.Text = string.format("%s\n[%dm]", obj.Name, dist)
+                            end
                         end
                     end
                 end
             end
-        end
+        end)
     end
 end
 
@@ -1226,25 +1310,27 @@ local scanBurgerTimer = 0
 task.spawn(function()
     while true do
         local dt = task.wait(0.1)
-        updateBurgerESP()
-        updateNPCESP()
+        pcall(updateBurgerESP)
+        pcall(updateNPCESP)
         scanBurgerTimer = scanBurgerTimer + dt
         if scanBurgerTimer >= 1.5 then
             scanBurgerTimer = 0
-            if Config.ItemESPEnabled then
-                scanItemESP()
-            end
-            for _, obj in ipairs(workspace:GetChildren()) do
-                if targetItems[obj.Name] then addToQueue(obj) end
-                if targetPotions[obj.Name] then addPotionToQueue(obj) end
-            end
-            local m = workspace:FindFirstChild("Models")
-            if m then
-                for _, obj in ipairs(m:GetChildren()) do
+            pcall(function()
+                if Config.ItemESPEnabled then
+                    scanItemESP()
+                end
+                for _, obj in ipairs(workspace:GetChildren()) do
                     if targetItems[obj.Name] then addToQueue(obj) end
                     if targetPotions[obj.Name] then addPotionToQueue(obj) end
                 end
-            end
+                local m = workspace:FindFirstChild("Models")
+                if m then
+                    for _, obj in ipairs(m:GetChildren()) do
+                        if targetItems[obj.Name] then addToQueue(obj) end
+                        if targetPotions[obj.Name] then addPotionToQueue(obj) end
+                    end
+                end
+            end)
         end
     end
 end)
@@ -1372,8 +1458,12 @@ local function getMineTarget()
     end
 end
 
-RunService.Heartbeat:Connect(function()
+local _mineThrottle = 0
+RunService.Heartbeat:Connect(function(dt)
     if not Config.AutoMineEnabled then return end
+    _mineThrottle = _mineThrottle + dt
+    if _mineThrottle < 0.1 then return end
+    _mineThrottle = 0
     local target = getMineTarget()
     if not target then return end
     local char = LocalPlayer.Character
@@ -1458,7 +1548,7 @@ local function createOreESP(obj)
 
     billboard.Parent = targetPart
 
-    activeOreESP[obj] = { highlight = highlight, billboard = billboard, part = targetPart }
+    activeOreESP[obj] = { highlight = highlight, billboard = billboard, part = targetPart, distLabel = distLabel }
 
     obj.AncestryChanged:Connect(function()
         if not obj.Parent then
@@ -1493,8 +1583,12 @@ workspace.DescendantAdded:Connect(function(obj)
     end
 end)
 
-RunService.Heartbeat:Connect(function()
+local _oreThrottle = 0
+RunService.Heartbeat:Connect(function(dt)
     if not Config.OreESPEnabled then return end
+    _oreThrottle = _oreThrottle + dt
+    if _oreThrottle < 0.2 then return end
+    _oreThrottle = 0
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
@@ -1503,7 +1597,7 @@ RunService.Heartbeat:Connect(function()
             activeOreESP[obj] = nil
         elseif data.part and data.part.Parent then
             local dist = math.floor((hrp.Position - data.part.Position).Magnitude)
-            local dl = data.billboard and data.billboard:FindFirstChild("DistLabel")
+            local dl = data.distLabel or (data.billboard and data.billboard:FindFirstChild("DistLabel"))
             if dl then dl.Text = dist .. "m" end
         end
     end
@@ -1831,6 +1925,9 @@ Tabs.ESP:AddToggle("ESPPlayers", {
     Callback = function(Value)
         Config.ESPEnabled = Value
         SaveConfig()
+        if not Value then
+            clearPlayerESP()
+        end
     end
 })
 
@@ -1863,6 +1960,7 @@ Tabs.ESP:AddToggle("ESPNPCToggle", {
         SaveConfig()
         if Value then
             scanNPCESP()
+            updateNPCESP()
         else
             for npc in pairs(activeNPCESP) do
                 cleanupNPCESP(npc)
@@ -2651,6 +2749,15 @@ Tabs.Teleport:AddButton({
             hrp.CFrame = CFrame.new(_selectedTpStation.pos)
             task.wait(0.1)
             _doFreeze()
+            for npc in pairs(activeNPCESP) do
+                cleanupNPCESP(npc)
+            end
+            if Config.NPCESPEnabled then
+                task.delay(0.5, function()
+                    scanNPCESP()
+                    updateNPCESP()
+                end)
+            end
         end
     end
 })
@@ -2683,6 +2790,15 @@ Tabs.Teleport:AddButton({
             hrp.CFrame = CFrame.new(_selectedTpBoss.pos)
             task.wait(0.1)
             _doFreeze()
+            for npc in pairs(activeNPCESP) do
+                cleanupNPCESP(npc)
+            end
+            if Config.NPCESPEnabled then
+                task.delay(0.5, function()
+                    scanNPCESP()
+                    updateNPCESP()
+                end)
+            end
         end
     end
 })
