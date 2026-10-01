@@ -340,7 +340,20 @@ local voidTargetCF = CFrame.new(19.11, 446.07, 37.93)
 
 local function isInsideLobby(targetPart)
     if not targetPart then return true end
-    if targetPart.Position.Z < -300 then return true end
+    local char = targetPart:FindFirstAncestorOfClass("Model")
+    if char then
+        local plr = Players:GetPlayerFromCharacter(char)
+        if plr then
+            local inGame = plr:GetAttribute("InGame")
+            if inGame == false or inGame == nil then
+                return true
+            end
+        end
+        local lobby = workspace:FindFirstChild("Lobby")
+        if lobby and char:IsDescendantOf(lobby) then
+            return true
+        end
+    end
     return false
 end
 
@@ -415,12 +428,12 @@ RunService.Heartbeat:Connect(function()
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hum and hrp and hum.Health > 0 then
-            if (Config.AntiVoid or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and not isInsideLobby(hrp) then
+            if (Config.AntiVoid or isCombatActive()) and not isInsideLobby(hrp) then
                 local fallenHeight = workspace.FallenPartsDestroyHeight or -500
-                if hrp.Position.Y < 350 or hrp.Position.Y < fallenHeight + 60 then
+                if hrp.Position.Y < 380 or hrp.Position.Y < fallenHeight + 60 then
                     hrp.CFrame = voidTargetCF
-                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
                 end
