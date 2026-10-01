@@ -21,7 +21,6 @@ local Config = {
     TargetPlayer = "",
     Whitelist = {},
     FastAttack = false,
-    AutoUseSkills = false,
     AntiRagdoll = false,
     AntiVoid = false,
     DashNoCooldown = false,
@@ -107,26 +106,6 @@ local function resetDashState(dashCtrl)
     end)
 end
 
-local function getSkillAbilityIds()
-    if not RegistryMod then return {} end
-    local movesetName = LocalPlayer:GetAttribute("Moveset")
-    if not movesetName and LocalPlayer.Character then
-        movesetName = LocalPlayer.Character:GetAttribute("Moveset")
-    end
-    if not movesetName then return {} end
-    local moveset = RegistryMod.GetMoveset and RegistryMod.GetMoveset(movesetName)
-    local skills = {}
-    if moveset and moveset.Abilities then
-        for i = 2, #moveset.Abilities do
-            local ab = moveset.Abilities[i]
-            if ab and ab.Id then
-                table.insert(skills, ab.Id)
-            end
-        end
-    end
-    return skills
-end
-
 local AbilityControllerMod = nil
 local CasterBusyMod = nil
 local RegistryMod = nil
@@ -152,102 +131,6 @@ local function getPrimaryAbilityId()
         return moveset.Abilities[1].Id
     end
     return nil
-end
-
-local function fireGuiButton(btn)
-    if not btn then return end
-    local clickable = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
-    if not clickable then clickable = btn end
-    if firesignal then
-        pcall(function() firesignal(clickable.MouseButton1Down) end)
-        pcall(function() firesignal(clickable.MouseButton1Click) end)
-        pcall(function() firesignal(clickable.Activated) end)
-        pcall(function() firesignal(clickable.MouseButton1Up) end)
-    end
-    if getconnections then
-        for _, sig in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
-            pcall(function()
-                if clickable[sig] then
-                    for _, c in ipairs(getconnections(clickable[sig])) do
-                        c:Fire()
-                    end
-                end
-            end)
-        end
-    end
-    pcall(function()
-        if clickable.AbsoluteSize.X > 0 and clickable.AbsoluteSize.Y > 0 then
-            local center = clickable.AbsolutePosition + (clickable.AbsoluteSize / 2)
-            local inset = GuiService:GetGuiInset()
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, true, game, 1)
-            task.wait(0.01)
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y + inset.Y, 0, false, game, 1)
-        end
-    end)
-end
-
-local function clickHudSkillButtons()
-    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:FindFirstChild("PlayerGui")
-    if not pGui then return false end
-    local mainUI = pGui:FindFirstChild("MainUI")
-    if not mainUI then return false end
-    local hud = mainUI:FindFirstChild("HUD")
-    if not hud then return false end
-
-    local abilities = hud:FindFirstChild("Abilities")
-    local abilityButtons = abilities and abilities:FindFirstChild("AbilityButtons")
-    if abilityButtons then
-        for _, child in ipairs(abilityButtons:GetChildren()) do
-            if child:IsA("GuiObject") and child.Name ~= "Attack" and child.Name ~= "UIListLayout" and child.Name ~= "UIPadding" then
-                fireGuiButton(child)
-            end
-        end
-    end
-
-    local mobileHud = hud:FindFirstChild("MobileHUD")
-    if mobileHud then
-        for _, child in ipairs(mobileHud:GetChildren()) do
-            if child:IsA("GuiObject") and child.Name ~= "Attack" and child.Name ~= "Dash" and child.Name ~= "Jump" and child.Name ~= "UIListLayout" and child.Name ~= "UIPadding" then
-                fireGuiButton(child)
-            end
-        end
-    end
-end
-
-local lastSkillTime = 0
-local function triggerSkillsER()
-    local now = tick()
-    if now - lastSkillTime < 0.15 then return end
-    lastSkillTime = now
-
-    pcall(function()
-        clickHudSkillButtons()
-    end)
-
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.01)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-    end)
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-        task.wait(0.01)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-    end)
-
-    if AbilityControllerMod then
-        pcall(function()
-            if CasterBusyMod then CasterBusyMod.Release() end
-            local skills = getSkillAbilityIds()
-            for _, sId in ipairs(skills) do
-                AbilityControllerMod.Activate(sId)
-            end
-            AbilityControllerMod.Activate("Ability1")
-            AbilityControllerMod.Activate("Ability2")
-            AbilityControllerMod.Activate("E")
-            AbilityControllerMod.Activate("R")
-        end)
-    end
 end
 
 local function isPunchAbility(res, ability, id)
@@ -651,10 +534,6 @@ local function executeAttackBehind(target)
         hrp.CFrame = CFrame.lookAt(behindPos, targetPos)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
-
-        if Config.AutoKill and Config.AutoUseSkills then
-            triggerSkillsER()
-        end
 
         if AbilityControllerMod then
             local aid = getPrimaryAbilityId()
@@ -1280,15 +1159,6 @@ Tabs.Main:AddToggle("FastAttackToggle", {
     Default = Config.FastAttack,
     Callback = function(Value)
         Config.FastAttack = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddToggle("AutoUseSkillsToggle", {
-    Title = "Auto Use Skill",
-    Default = Config.AutoUseSkills,
-    Callback = function(Value)
-        Config.AutoUseSkills = Value
         SaveConfig()
     end
 })
