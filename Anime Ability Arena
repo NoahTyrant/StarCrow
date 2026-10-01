@@ -20,7 +20,8 @@ local Config = {
     TargetKill = false,
     TargetPlayer = "",
     Whitelist = {},
-    NoCooldown = false,
+    FastAttack = false,
+    AutoUseSkills = false,
     AntiRagdoll = false,
     AntiVoid = false,
     DashNoCooldown = false,
@@ -29,6 +30,11 @@ local Config = {
     WalkSpeed = 16,
     InfJump = false,
     ESPEnabled = false,
+    AimlockEnabled = false,
+    AimlockKeybind = "T",
+    AimlockFloatVisible = false,
+    AimlockFloatSize = 46,
+    AimlockFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = 0 },
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -101,10 +107,33 @@ local function resetDashState(dashCtrl)
     end)
 end
 
+local function getSkillAbilityIds()
+    if not RegistryMod then return {} end
+    local movesetName = LocalPlayer:GetAttribute("Moveset")
+    if not movesetName and LocalPlayer.Character then
+        movesetName = LocalPlayer.Character:GetAttribute("Moveset")
+    end
+    if not movesetName then return {} end
+    local moveset = RegistryMod.GetMoveset and RegistryMod.GetMoveset(movesetName)
+    local skills = {}
+    if moveset and moveset.Abilities then
+        for i = 2, #moveset.Abilities do
+            local ab = moveset.Abilities[i]
+            if ab and ab.Id then
+                table.insert(skills, ab.Id)
+            end
+        end
+    end
+    return skills
+end
+
 local AbilityControllerMod = nil
 local CasterBusyMod = nil
 local RegistryMod = nil
 local singleTargetChar = nil
+local aimlockTargetChar = nil
+local aimlockFloatBtn = nil
+local aimlockFloatStroke = nil
 
 local function isCombatActive()
     return Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil
@@ -113,12 +142,43 @@ end
 local function getPrimaryAbilityId()
     if not RegistryMod then return nil end
     local movesetName = LocalPlayer:GetAttribute("Moveset")
+    if not movesetName and LocalPlayer.Character then
+        movesetName = LocalPlayer.Character:GetAttribute("Moveset")
+    end
     if not movesetName then return nil end
-    local moveset = RegistryMod.GetMoveset(movesetName)
+    local moveset = RegistryMod.GetMoveset and RegistryMod.GetMoveset(movesetName)
     if moveset and moveset.Abilities and moveset.Abilities[1] then
         return moveset.Abilities[1].Id
     end
     return nil
+end
+
+local lastSkillTime = 0
+local function triggerSkillsER()
+    local now = tick()
+    if now - lastSkillTime < 0.2 then return end
+    lastSkillTime = now
+
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.01)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+        task.wait(0.01)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+    end)
+
+    if AbilityControllerMod then
+        pcall(function()
+            if CasterBusyMod then CasterBusyMod.Release() end
+            local skills = getSkillAbilityIds()
+            for _, sId in ipairs(skills) do
+                AbilityControllerMod.Activate(sId)
+            end
+        end)
+    end
 end
 
 local function isPunchAbility(res, ability, id)
@@ -184,7 +244,7 @@ pcall(function()
 
         local oldActivate = AbilityController.Activate
         AbilityController.Activate = function(id)
-            if (Config.NoCooldown or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and isPunchAbility(nil, nil, id) then
+            if Config.FastAttack and isPunchAbility(nil, nil, id) then
                 pcall(function() CasterBusy.Release() end)
             end
             return oldActivate(id)
@@ -193,7 +253,7 @@ pcall(function()
         local oldConfig = Overrides.Config
         Overrides.Config = function(player, ability)
             local res = oldConfig(player, ability)
-            if (Config.NoCooldown or Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil) and type(res) == "table" and isPunchAbility(res, ability, nil) then
+            if Config.FastAttack and type(res) == "table" and isPunchAbility(res, ability, nil) then
                 local copy = {}
                 for k, v in pairs(res) do copy[k] = v end
                 copy.Cooldown = 0
@@ -340,12 +400,12 @@ local voidTargetCF = CFrame.new(19.11, 446.07, 37.93)
 
 local function isInsideLobby(targetPart)
     if not targetPart then return true end
-    local char = targetPart:FindFirstAncestorOfClass("Model")
+    local char = targetPart:IsA("Model") and targetPart or targetPart:FindFirstAncestorOfClass("Model")
     if char then
         local plr = Players:GetPlayerFromCharacter(char)
-        if plr then
+        if plr and plr == LocalPlayer then
             local inGame = plr:GetAttribute("InGame")
-            if inGame == false or inGame == nil then
+            if inGame == false then
                 return true
             end
         end
@@ -488,13 +548,13 @@ local function getAutoKillTarget()
     local bestDist = math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player:GetAttribute("InGame") and not isWhitelisted(player.Name) then
+        if player ~= LocalPlayer and player:GetAttribute("InGame") ~= false and not isWhitelisted(player.Name) then
             local tChar = player.Character
             local lobbyModel = workspace:FindFirstChild("Lobby")
             if tChar and (not lobbyModel or not tChar:IsDescendantOf(lobbyModel)) then
                 local tHum = tChar:FindFirstChildOfClass("Humanoid")
                 local tHrp = tChar:FindFirstChild("HumanoidRootPart")
-                if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+                if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
                     local dist = (tHrp.Position - hrp.Position).Magnitude
                     if dist < bestDist then
                         bestDist = dist
@@ -516,19 +576,27 @@ local function executeAttackBehind(target)
 
     local tHum = target:FindFirstChildOfClass("Humanoid")
     local tHrp = target:FindFirstChild("HumanoidRootPart")
-    if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+    if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
         local targetPos = tHrp.Position
         local behindPos = targetPos - (tHrp.CFrame.LookVector * 2.2)
         hrp.CFrame = CFrame.lookAt(behindPos, targetPos)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
 
-        local aid = getPrimaryAbilityId()
-        if aid and AbilityControllerMod then
-            pcall(function()
-                if CasterBusyMod then CasterBusyMod.Release() end
-                AbilityControllerMod.Activate(aid)
-            end)
+        if Config.AutoUseSkills then
+            triggerSkillsER()
+        end
+
+        if AbilityControllerMod then
+            local aid = getPrimaryAbilityId()
+            if aid then
+                pcall(function()
+                    if Config.FastAttack and CasterBusyMod then
+                        CasterBusyMod.Release()
+                    end
+                    AbilityControllerMod.Activate(aid)
+                end)
+            end
         end
     end
 end
@@ -563,7 +631,7 @@ task.spawn(function()
             local tHum = singleTargetChar:FindFirstChildOfClass("Humanoid")
             local tHrp = singleTargetChar:FindFirstChild("HumanoidRootPart")
             local targetPlr = Players:GetPlayerFromCharacter(singleTargetChar)
-            if not singleTargetChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or tHrp.Position.Y < 350 or isInsideLobby(tHrp) or (targetPlr and isWhitelisted(targetPlr.Name)) then
+            if not singleTargetChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or isInsideLobby(tHrp) or (targetPlr and isWhitelisted(targetPlr.Name)) then
                 singleTargetChar = nil
             else
                 executeAttackBehind(singleTargetChar)
@@ -573,7 +641,7 @@ task.spawn(function()
             if targetPlr and targetPlr.Character and not isWhitelisted(targetPlr.Name) then
                 local tHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
                 local tHrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
-                if tHum and tHrp and tHum.Health > 0 and tHrp.Position.Y >= 350 and not isInsideLobby(tHrp) then
+                if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
                     executeAttackBehind(targetPlr.Character)
                 end
             end
@@ -587,6 +655,25 @@ task.spawn(function()
                 local target = getAutoKillTarget()
                 if target then
                     executeAttackBehind(target)
+                end
+            end
+        else
+            if (Config.FastAttack or Config.AutoUseSkills) and LocalPlayer:GetAttribute("InGame") then
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    if Config.AutoUseSkills then
+                        triggerSkillsER()
+                    end
+                    if Config.FastAttack and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                        local aid = getPrimaryAbilityId()
+                        if aid and AbilityControllerMod then
+                            pcall(function()
+                                if CasterBusyMod then CasterBusyMod.Release() end
+                                AbilityControllerMod.Activate(aid)
+                            end)
+                        end
+                    end
                 end
             end
         end
@@ -763,6 +850,165 @@ do
     end)
 end
 
+local function makeDraggableFloat(b, posKey)
+    local dragging, moved, startPos, startBtnPos, activeInput = false, false, nil, nil, nil
+    b.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved, startPos, startBtnPos, activeInput = true, false, input.Position, b.Position, input
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    activeInput = nil
+                    if moved and posKey then
+                        local p = b.Position
+                        Config[posKey] = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
+                        SaveConfig()
+                    end
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input == activeInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - startPos
+            if delta.Magnitude > 6 then moved = true end
+            b.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
+        end
+    end)
+    return function() return moved end, function() moved = false end
+end
+
+local function setFloatStrokeActive(stroke, active)
+    if not stroke then return end
+    local oldGradient = stroke:FindFirstChildOfClass("UIGradient")
+    if oldGradient then oldGradient:Destroy() end
+    local gradient = Instance.new("UIGradient")
+    if active then
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 2.2
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
+        end)
+    else
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 1.6
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 180 }):Play()
+        end)
+    end
+end
+
+local function getAimlockTarget()
+    Camera = workspace.CurrentCamera
+    if not Camera then return nil end
+    local camPos = Camera.CFrame.Position
+    local camLook = Camera.CFrame.LookVector
+    local bestTarget = nil
+    local bestScore = -math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and not isWhitelisted(player.Name) then
+            local tChar = player.Character
+            if tChar and not isInsideLobby(tChar) then
+                local tHum = tChar:FindFirstChildOfClass("Humanoid")
+                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
+                if tHum and tHrp and tHum.Health > 0 then
+                    local offset = tHrp.Position - camPos
+                    local dist = offset.Magnitude
+                    if dist > 0 and dist < 2000 then
+                        local dot = camLook:Dot(offset.Unit)
+                        if dot > 0 then
+                            local score = dot * 1000 - dist
+                            if score > bestScore then
+                                bestScore = score
+                                bestTarget = tChar
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+local function toggleAimlock(state)
+    if state ~= nil then
+        Config.AimlockEnabled = state
+    else
+        Config.AimlockEnabled = not Config.AimlockEnabled
+    end
+    if Config.AimlockEnabled then
+        aimlockTargetChar = getAimlockTarget()
+        if not aimlockTargetChar then
+            Config.AimlockEnabled = false
+        end
+    else
+        aimlockTargetChar = nil
+    end
+    if aimlockFloatBtn then
+        aimlockFloatBtn.Text = Config.AimlockEnabled and "Locked" or "Aim"
+    end
+    if aimlockFloatStroke then
+        setFloatStrokeActive(aimlockFloatStroke, Config.AimlockEnabled)
+    end
+end
+
+local fPos = Config.AimlockFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = 0 }
+local fSize = tonumber(Config.AimlockFloatSize) or 46
+aimlockFloatBtn = Instance.new("TextButton")
+aimlockFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
+aimlockFloatBtn.Position = UDim2.new(fPos.xs, fPos.xo, fPos.ys, fPos.yo)
+aimlockFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+aimlockFloatBtn.BackgroundTransparency = 0.88
+aimlockFloatBtn.BorderSizePixel = 0
+aimlockFloatBtn.Text = "Aim"
+aimlockFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+aimlockFloatBtn.TextScaled = false
+aimlockFloatBtn.TextSize = 13
+aimlockFloatBtn.Font = Enum.Font.GothamBold
+aimlockFloatBtn.ZIndex = 15
+aimlockFloatBtn.Visible = Config.AimlockFloatVisible == true
+aimlockFloatBtn.Parent = LogoGui
+Instance.new("UICorner", aimlockFloatBtn).CornerRadius = UDim.new(0, 8)
+aimlockFloatStroke = Instance.new("UIStroke", aimlockFloatBtn)
+aimlockFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(aimlockFloatStroke, false)
+
+local getFloatMoved, resetFloatMoved = makeDraggableFloat(aimlockFloatBtn, "AimlockFloatPos")
+
+aimlockFloatBtn.MouseButton1Click:Connect(function()
+    if getFloatMoved() then resetFloatMoved() return end
+    toggleAimlock()
+end)
+
+RunService.RenderStepped:Connect(function()
+    if Config.AimlockEnabled and aimlockTargetChar then
+        local tHum = aimlockTargetChar:FindFirstChildOfClass("Humanoid")
+        local tHrp = aimlockTargetChar:FindFirstChild("HumanoidRootPart")
+        if not aimlockTargetChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or isInsideLobby(aimlockTargetChar) then
+            toggleAimlock(false)
+        else
+            local aimPart = aimlockTargetChar:FindFirstChild("Head") or tHrp
+            Camera = workspace.CurrentCamera
+            if Camera then
+                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, aimPart.Position)
+            end
+        end
+    end
+end)
+
 local uiVisible = true
 local minimizeKey = Enum.KeyCode.LeftControl
 local lastToggleTime = 0
@@ -785,9 +1031,25 @@ local function toggleUI()
     end
 end
 
+local function getAimlockKey()
+    local k = Config.AimlockKeybind or "T"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.T
+end
+
+local lastAimlockPress = 0
 UserInputService.InputBegan:Connect(function(input, processed)
+    if UserInputService:GetFocusedTextBox() then return end
     if not processed and input.KeyCode == minimizeKey then
         uiVisible = not uiVisible
+    end
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == getAimlockKey() then
+        local now = tick()
+        if now - lastAimlockPress >= 0.2 then
+            lastAimlockPress = now
+            toggleAimlock()
+        end
     end
 end)
 
@@ -837,6 +1099,38 @@ Tabs.Main:AddToggle("AutoKillToggle", {
     end
 })
 
+Tabs.Main:AddToggle("FastAttackToggle", {
+    Title = "Fast Attack",
+    Default = Config.FastAttack,
+    Callback = function(Value)
+        Config.FastAttack = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoUseSkillsToggle", {
+    Title = "Auto Use Skill",
+    Default = Config.AutoUseSkills,
+    Callback = function(Value)
+        Config.AutoUseSkills = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AimlockFloatToggle", {
+    Title = "Aimlock",
+    Default = Config.AimlockFloatVisible,
+    Callback = function(Value)
+        Config.AimlockFloatVisible = Value
+        if aimlockFloatBtn then
+            aimlockFloatBtn.Visible = Value
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Target")
+
 Tabs.Main:AddToggle("ClickKillPlayerToggle", {
     Title = "Click Player To Kill",
     Default = Config.ClickKillPlayer,
@@ -869,24 +1163,6 @@ Tabs.Main:AddToggle("TargetKillToggle", {
     end
 })
 
-Tabs.Main:AddToggle("NoCooldownToggle", {
-    Title = "Punch No Cooldown",
-    Default = Config.NoCooldown,
-    Callback = function(Value)
-        Config.NoCooldown = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddToggle("DashNoCooldownToggle", {
-    Title = "Dash No Cooldown",
-    Default = Config.DashNoCooldown,
-    Callback = function(Value)
-        Config.DashNoCooldown = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Main:AddSection("Whitelist")
 
 local whitelistDropdown = Tabs.Main:AddDropdown("WhitelistDropdown", {
@@ -900,27 +1176,16 @@ local whitelistDropdown = Tabs.Main:AddDropdown("WhitelistDropdown", {
     end
 })
 
-Tabs.Main:AddSection("Defense")
-
-Tabs.Main:AddToggle("AntiRagdollToggle", {
-    Title = "Anti Ragdoll",
-    Default = Config.AntiRagdoll,
-    Callback = function(Value)
-        Config.AntiRagdoll = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddToggle("AntiVoidToggle", {
-    Title = "Anti Void",
-    Default = Config.AntiVoid,
-    Callback = function(Value)
-        Config.AntiVoid = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Player:AddSection("Movement")
+
+Tabs.Player:AddToggle("DashNoCooldownToggle", {
+    Title = "Dash No Cooldown",
+    Default = Config.DashNoCooldown,
+    Callback = function(Value)
+        Config.DashNoCooldown = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
@@ -961,6 +1226,26 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     end
 })
 
+Tabs.Player:AddSection("Defense")
+
+Tabs.Player:AddToggle("AntiRagdollToggle", {
+    Title = "Anti Ragdoll",
+    Default = Config.AntiRagdoll,
+    Callback = function(Value)
+        Config.AntiRagdoll = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("AntiVoidToggle", {
+    Title = "Anti Void",
+    Default = Config.AntiVoid,
+    Callback = function(Value)
+        Config.AntiVoid = Value
+        SaveConfig()
+    end
+})
+
 Tabs.ESP:AddSection("ESP")
 
 Tabs.ESP:AddToggle("ESPPlayersToggle", {
@@ -985,6 +1270,36 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
         local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
         minimizeKey = keyCode
         Window.MinimizeKey = keyCode
+    end
+})
+
+Tabs.Settings:AddSection("Aimlock")
+
+Tabs.Settings:AddKeybind("AimlockKeybind", {
+    Title = "Aimlock Keybind",
+    Mode = "Toggle",
+    Default = Config.AimlockKeybind or "T",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.AimlockKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddSlider("AimlockFloatSizeSlider", {
+    Title = "Float Size",
+    Min = 20,
+    Max = 100,
+    Default = Config.AimlockFloatSize or 46,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AimlockFloatSize = Value
+        SaveConfig()
+        if aimlockFloatBtn then
+            aimlockFloatBtn.Size = UDim2.new(0, Value, 0, Value)
+        end
     end
 })
 
