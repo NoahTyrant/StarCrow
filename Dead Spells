@@ -653,77 +653,17 @@ local function cleanupNPC(npc)
     origSizes[head] = nil
     npcs[npc] = nil
 end
-
-local bossHitboxNPCs = {}
-local bossOrigSizes = {}
-
-local _bossTargets = {thiefking=true, mastersamurai=true, eldervampire=true, gnomechampion=true, steamborneczar=true, kingice=true}
-local function isBossModel(model)
-    local name = string.gsub(string.lower(model.Name), "%s+", "")
-    for n in pairs(_bossTargets) do
-        if string.find(name, n) then return true end
-    end
-    return false
-end
-
-local function cleanupBossHitbox(npc)
-    local data = bossHitboxNPCs[npc]
-    if not data then return end
-    local head = data.head
-    if head and head.Parent then
-        head.Size = bossOrigSizes[head] or Vector3.new(2, 1, 1)
-        head.Transparency = 0
-        head.CanCollide = true
-        head.Massless = false
-        local outline = head:FindFirstChild("StarCrowBossHitboxOutline")
-        if outline then outline:Destroy() end
-    end
-    bossOrigSizes[head] = nil
-    bossHitboxNPCs[npc] = nil
-end
-
-local function applyBossHitbox(npc)
-    if bossHitboxNPCs[npc] then return end
-    if not npc or not npc.Parent then return end
-    if not isBossModel(npc) then return end
-
-    local hum = npc:FindFirstChildOfClass("Humanoid")
-    local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
-    if not hum or not head then return end
-    if hum.Health <= 0 then return end
-
-    bossOrigSizes[head] = head.Size
-
-    local outline = Instance.new("SelectionBox")
-    outline.Name = "StarCrowBossHitboxOutline"
-    outline.Color3 = Color3.fromRGB(255, 165, 0)
-    outline.LineThickness = 0.3
-    outline.Transparency = 0
-    outline.SurfaceTransparency = 1
-    outline.Adornee = head
-    outline.Parent = head
-
-    bossHitboxNPCs[npc] = { head = head, hum = hum }
-end
-
 local function clearHitbox()
     for npc in pairs(npcs) do
         cleanupNPC(npc)
-    end
-    for npc in pairs(bossHitboxNPCs) do
-        cleanupBossHitbox(npc)
     end
 end
 
 local function scanNPCs()
     if not Config.NPCHitboxEnabled then return end
     for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("Model") then
-            if isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
-                applyBossHitbox(v)
-            elseif isValidNPC(v) then
-                applyHitbox(v)
-            end
+        if isValidNPC(v) then
+            applyHitbox(v)
         end
     end
 end
@@ -743,21 +683,6 @@ RunService.Heartbeat:Connect(function(dt)
             local head = data.head
             if head.Size ~= wanted then
                 head.Size = wanted
-                head.Transparency = 1
-                head.CanCollide = false
-                head.Massless = true
-            end
-        end
-    end
-
-    local wantedBoss = Vector3.new(200, 200, 200)
-    for npc, data in pairs(bossHitboxNPCs) do
-        if not npc.Parent or not data.hum or data.hum.Health <= 0 or not data.head or not data.head.Parent then
-            cleanupBossHitbox(npc)
-        else
-            local head = data.head
-            if head.Size ~= wantedBoss then
-                head.Size = wantedBoss
                 head.Transparency = 1
                 head.CanCollide = false
                 head.Massless = true
@@ -873,14 +798,9 @@ workspace.DescendantAdded:Connect(function(v)
     local doESP = Config.NPCESPEnabled
     if (doHitbox or doESP) and v:IsA("Model") then
         task.wait(0.2)
-        if v.Parent then
-            if doHitbox and isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
-                applyBossHitbox(v)
-            end
-            if isValidNPC(v) then
-                if doHitbox then applyHitbox(v) end
-                if doESP then setupNPCESP(v) end
-            end
+        if v.Parent and isValidNPC(v) then
+            if doHitbox then applyHitbox(v) end
+            if doESP then setupNPCESP(v) end
         end
     end
 end)
@@ -892,24 +812,14 @@ task.spawn(function()
         local doESP = Config.NPCESPEnabled
         if doHitbox or doESP then
             for _, v in ipairs(workspace:GetDescendants()) do
-                if v:IsA("Model") then
-                    if doHitbox and isBossModel(v) and v:FindFirstChildOfClass("Humanoid") then
-                        applyBossHitbox(v)
-                    end
-                    if isValidNPC(v) then
-                        if doHitbox then applyHitbox(v) end
-                        if doESP then setupNPCESP(v) end
-                    end
+                if isValidNPC(v) then
+                    if doHitbox then applyHitbox(v) end
+                    if doESP then setupNPCESP(v) end
                 end
             end
         end
-        if not doHitbox then
-            if next(npcs) then
-                for npc in pairs(npcs) do cleanupNPC(npc) end
-            end
-            if next(bossHitboxNPCs) then
-                for npc in pairs(bossHitboxNPCs) do cleanupBossHitbox(npc) end
-            end
+        if not doHitbox and next(npcs) then
+            for npc in pairs(npcs) do cleanupNPC(npc) end
         end
     end
 end)
