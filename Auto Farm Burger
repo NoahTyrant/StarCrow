@@ -252,33 +252,6 @@ pcall(function()
     hookGuiContainer(game:GetService("CoreGui"))
 end)
 
-if LocalPlayer:FindFirstChild("PlayerGui") then
-    hookGuiContainer(LocalPlayer.PlayerGui)
-end
-LocalPlayer.ChildAdded:Connect(function(child)
-    if child.Name == "PlayerGui" then
-        hookGuiContainer(child)
-    end
-end)
-
-task.spawn(function()
-    local lastVal = nil
-    while task.wait(0.5) do
-        local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Data") or LocalPlayer:FindFirstChild("Stats")
-        if ls then
-            for _, v in ipairs(ls:GetChildren()) do
-                if string.find(string.lower(v.Name), "burger") and v:IsA("ValueBase") then
-                    if lastVal ~= nil and v.Value > lastVal then
-                        collectedBurgerCount = collectedBurgerCount + (v.Value - lastVal)
-                        if updateBurgerCounterGui then updateBurgerCounterGui() end
-                    end
-                    lastVal = v.Value
-                end
-            end
-        end
-    end
-end)
-
 local function isItemEquipped(obj)
     local ancestor = obj.Parent
     while ancestor and ancestor ~= workspace do
