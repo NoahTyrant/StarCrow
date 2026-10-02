@@ -98,7 +98,7 @@ local function resetDashState(dashCtrl)
         end
         if dashCtrl.GetCooldown then
             for idx, val in pairs(getUpvals(dashCtrl.GetCooldown)) do
-                if type(val) == "number" and val < 0 then
+                if type(val) == "number" and val > 0 then
                     setUpval(dashCtrl.GetCooldown, idx, 0)
                 end
             end
@@ -109,6 +109,7 @@ end
 local AbilityControllerMod = nil
 local CasterBusyMod = nil
 local RegistryMod = nil
+local DashControllerMod = nil
 local singleTargetChar = nil
 local currentAutoKillChar = nil
 local aimlockTargetChar = nil
@@ -119,6 +120,9 @@ local function isCombatActive()
     return Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil
 end
 
+local cachedPrimaryAbilityId = nil
+local lastMovesetName = nil
+
 local function getPrimaryAbilityId()
     if not RegistryMod then return nil end
     local movesetName = LocalPlayer:GetAttribute("Moveset")
@@ -126,11 +130,48 @@ local function getPrimaryAbilityId()
         movesetName = LocalPlayer.Character:GetAttribute("Moveset")
     end
     if not movesetName then return nil end
+    if movesetName == lastMovesetName and cachedPrimaryAbilityId then
+        return cachedPrimaryAbilityId
+    end
+    lastMovesetName = movesetName
     local moveset = RegistryMod.GetMoveset and RegistryMod.GetMoveset(movesetName)
     if moveset and moveset.Abilities and moveset.Abilities[1] then
-        return moveset.Abilities[1].Id
+        cachedPrimaryAbilityId = moveset.Abilities[1].Id
+        return cachedPrimaryAbilityId
     end
     return nil
+end
+
+local function stopExcessActionTracks()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    if not animator then return end
+    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+        if track.Priority and track.Priority.Value >= Enum.AnimationPriority.Action.Value then
+            track:Stop(0)
+        end
+    end
+end
+
+local lastAttackTick = 0
+local ATTACK_INTERVAL = 0.1
+
+local function doAttack(aid)
+    aid = aid or getPrimaryAbilityId()
+    if not (aid and AbilityControllerMod) then return end
+    local now = os.clock()
+    local interval = Config.FastAttack and ATTACK_INTERVAL or 0.35
+    if now - lastAttackTick < interval then return end
+    lastAttackTick = now
+    pcall(function()
+        if Config.FastAttack then
+            if CasterBusyMod then CasterBusyMod.Release() end
+            stopExcessActionTracks()
+        end
+        AbilityControllerMod.Activate(aid)
+    end)
 end
 
 local function isPunchAbility(res, ability, id)
@@ -193,23 +234,31 @@ pcall(function()
         AbilityControllerMod = AbilityController
         CasterBusyMod = CasterBusy
         RegistryMod = Registry
+        DashControllerMod = DashController
 
         local oldActivate = AbilityController.Activate
         AbilityController.Activate = function(id)
             if Config.FastAttack and isPunchAbility(nil, nil, id) then
+                stopExcessActionTracks()
                 pcall(function() CasterBusy.Release() end)
             end
             return oldActivate(id)
         end
 
+        local cachedPunchConfig = nil
+        local lastPunchRes = nil
+
         local oldConfig = Overrides.Config
         Overrides.Config = function(player, ability)
             local res = oldConfig(player, ability)
             if Config.FastAttack and type(res) == "table" and isPunchAbility(res, ability, nil) then
-                local copy = {}
-                for k, v in pairs(res) do copy[k] = v end
-                copy.Cooldown = 0
-                return copy
+                if res ~= lastPunchRes or not cachedPunchConfig then
+                    lastPunchRes = res
+                    cachedPunchConfig = {}
+                    for k, v in pairs(res) do cachedPunchConfig[k] = v end
+                    cachedPunchConfig.Cooldown = 0
+                end
+                return cachedPunchConfig
             end
             return res
         end
@@ -243,11 +292,15 @@ pcall(function()
             end
         end
 
+        local lastDashTick = 0
         local oldTryDash = DashController.TryDash
         DashController.TryDash = function(...)
             if Config.DashNoCooldown then
+                local now = os.clock()
+                if now - lastDashTick < 0.08 then return false end
+                lastDashTick = now
                 if GameConfig.Dash then
-                    GameConfig.Dash.Cooldown = 0.001
+                    GameConfig.Dash.Cooldown = 0
                     GameConfig.Dash.Charges = 999
                 end
                 resetDashState(DashController)
@@ -322,15 +375,7 @@ pcall(function()
             end
         end)
 
-        local lastDashReset = 0
         RunService.Heartbeat:Connect(function()
-            if Config.DashNoCooldown then
-                local now = os.clock()
-                if now - lastDashReset > 0.25 then
-                    lastDashReset = now
-                    resetDashState(DashController)
-                end
-            end
             if Config.AntiRagdoll or isCombatActive() then
                 local char = LocalPlayer.Character
                 if char then
@@ -535,16 +580,9 @@ local function executeAttackBehind(target)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
 
-        if AbilityControllerMod then
-            local aid = getPrimaryAbilityId()
-            if aid then
-                pcall(function()
-                    if Config.FastAttack and CasterBusyMod then
-                        CasterBusyMod.Release()
-                    end
-                    AbilityControllerMod.Activate(aid)
-                end)
-            end
+        local aid = getPrimaryAbilityId()
+        if aid then
+            doAttack(aid)
         end
     end
 end
@@ -605,13 +643,7 @@ local function hookMobileAttackButton()
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
             mobileAttackHolding = true
             if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
-                local aid = getPrimaryAbilityId()
-                if aid and AbilityControllerMod then
-                    pcall(function()
-                        if CasterBusyMod then CasterBusyMod.Release() end
-                        AbilityControllerMod.Activate(aid)
-                    end)
-                end
+                doAttack()
             end
         end
     end)
@@ -635,13 +667,7 @@ UserInputService.InputBegan:Connect(function(input)
                 activeAttackTouch = input
                 mobileAttackHolding = true
                 if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
-                    local aid = getPrimaryAbilityId()
-                    if aid and AbilityControllerMod then
-                        pcall(function()
-                            if CasterBusyMod then CasterBusyMod.Release() end
-                            AbilityControllerMod.Activate(aid)
-                        end)
-                    end
+                    doAttack()
                 end
             end
         end
@@ -673,7 +699,7 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.03)
+        task.wait(0.05)
         if singleTargetChar ~= nil then
             local tHum = singleTargetChar:FindFirstChildOfClass("Humanoid")
             local tHrp = singleTargetChar:FindFirstChild("HumanoidRootPart")
@@ -720,13 +746,7 @@ task.spawn(function()
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 if hum and hum.Health > 0 and isAttackButtonPressed() then
-                    local aid = getPrimaryAbilityId()
-                    if aid and AbilityControllerMod then
-                        pcall(function()
-                            if CasterBusyMod then CasterBusyMod.Release() end
-                            AbilityControllerMod.Activate(aid)
-                        end)
-                    end
+                    doAttack()
                 end
             end
         end
@@ -991,6 +1011,11 @@ pcall(function()
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
+    cachedPrimaryAbilityId = nil
+    lastMovesetName = nil
+    if Config.DashNoCooldown and DashControllerMod then
+        resetDashState(DashControllerMod)
+    end
     if Config.InfJump then
         task.defer(function()
             syncMobileJumpButton()
@@ -1403,6 +1428,9 @@ Tabs.Player:AddToggle("DashNoCooldownToggle", {
     Callback = function(Value)
         Config.DashNoCooldown = Value
         SaveConfig()
+        if Value and DashControllerMod then
+            resetDashState(DashControllerMod)
+        end
     end
 })
 
