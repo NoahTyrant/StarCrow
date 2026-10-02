@@ -16,6 +16,7 @@ local Camera = workspace.CurrentCamera
 
 local Config = {
     AutoKill = false,
+    AttackPosition = "Under",
     ClickKillPlayer = false,
     TargetKill = false,
     TargetPlayer = "",
@@ -544,6 +545,19 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
+RunService.Stepped:Connect(function()
+    if isCombatActive() then
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end
+end)
+
 local function getPlayerNames()
     local list = {}
     for _, p in ipairs(Players:GetPlayers()) do
@@ -557,14 +571,13 @@ end
 local function getAutoKillTarget()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp or isInsideLobby(hrp) then return nil end
-    if not LocalPlayer:GetAttribute("InGame") then return nil end
+    if not hrp then return nil end
 
     local bestTarget = nil
     local bestDist = math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player:GetAttribute("InGame") ~= false then
+        if player ~= LocalPlayer then
             local tChar = player.Character
             if tChar then
                 local tHum = tChar:FindFirstChildOfClass("Humanoid")
@@ -582,7 +595,7 @@ local function getAutoKillTarget()
     return bestTarget
 end
 
-local function executeAttackBehind(target)
+local function executeAttackUnder(target)
     if not target then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -593,15 +606,16 @@ local function executeAttackBehind(target)
     local tHrp = target:FindFirstChild("HumanoidRootPart")
     if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
         local targetPos = tHrp.Position
-        local behindPos = targetPos - (tHrp.CFrame.LookVector * 2.2)
-        local dist = (hrp.Position - behindPos).Magnitude
-        if dist > 1.5 then
+        if Config.AttackPosition == "Behind" then
+            local behindPos = targetPos - (tHrp.CFrame.LookVector * 2.2)
             hrp.CFrame = CFrame.lookAt(behindPos, targetPos)
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
         else
-            hrp.CFrame = CFrame.lookAt(hrp.Position, targetPos)
+            local underPos = targetPos - Vector3.new(0, 2.5, 0)
+            local lookPos = targetPos + (tHrp.CFrame.LookVector * 0.1)
+            hrp.CFrame = CFrame.lookAt(underPos, lookPos)
         end
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
 
         local aid = getPrimaryAbilityId()
         if aid then
@@ -626,6 +640,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
                     local hrp = model:FindFirstChild("HumanoidRootPart")
                     if hum and hrp and hum.Health > 0 and not isInsideLobby(hrp) then
                         singleTargetChar = model
+                        executeAttackUnder(model)
                     end
                 end
             end
@@ -675,7 +690,7 @@ local function hookMobileAttackButton()
     btn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
             mobileAttackHolding = true
-            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
                 doAttack()
             end
         end
@@ -699,7 +714,7 @@ UserInputService.InputBegan:Connect(function(input)
             if p.X >= bPos.X and p.X <= (bPos.X + bSize.X) and p.Y >= bPos.Y and p.Y <= (bPos.Y + bSize.Y) then
                 activeAttackTouch = input
                 mobileAttackHolding = true
-                if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
+                if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
                     doAttack()
                 end
             end
@@ -732,15 +747,14 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.06)
+        task.wait(0.03)
         if singleTargetChar ~= nil then
             local tHum = singleTargetChar:FindFirstChildOfClass("Humanoid")
             local tHrp = singleTargetChar:FindFirstChild("HumanoidRootPart")
-            local targetPlr = Players:GetPlayerFromCharacter(singleTargetChar)
             if not singleTargetChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or isInsideLobby(tHrp) then
                 singleTargetChar = nil
             else
-                executeAttackBehind(singleTargetChar)
+                executeAttackUnder(singleTargetChar)
             end
         elseif Config.TargetKill and Config.TargetPlayer and Config.TargetPlayer ~= "" then
             local targetPlr = Players:FindFirstChild(Config.TargetPlayer)
@@ -748,21 +762,16 @@ task.spawn(function()
                 local tHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
                 local tHrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
                 if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
-                    executeAttackBehind(targetPlr.Character)
+                    executeAttackUnder(targetPlr.Character)
                 end
             end
         elseif Config.AutoKill then
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not LocalPlayer:GetAttribute("InGame") or isInsideLobby(hrp) then
-                currentAutoKillChar = nil
-                clickPlayButton()
-                task.wait(1)
-            else
+            if char and hrp then
                 if currentAutoKillChar then
                     local tHum = currentAutoKillChar:FindFirstChildOfClass("Humanoid")
                     local tHrp = currentAutoKillChar:FindFirstChild("HumanoidRootPart")
-                    local tPlr = Players:GetPlayerFromCharacter(currentAutoKillChar)
                     if not currentAutoKillChar.Parent or not tHum or not tHrp or tHum.Health <= 0 or isInsideLobby(tHrp) then
                         currentAutoKillChar = nil
                     end
@@ -771,13 +780,15 @@ task.spawn(function()
                     currentAutoKillChar = getAutoKillTarget()
                 end
                 if currentAutoKillChar then
-                    executeAttackBehind(currentAutoKillChar)
+                    executeAttackUnder(currentAutoKillChar)
                 else
-                    task.wait(0.1)
+                    if isInsideLobby(hrp) then
+                        clickPlayButton()
+                    end
                 end
             end
         else
-            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") then
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 if hum and hum.Health > 0 and isAttackButtonPressed() then
@@ -1396,10 +1407,26 @@ Tabs.Main:AddToggle("AutoKillToggle", {
     Callback = function(Value)
         Config.AutoKill = Value
         if Value then
-            clickPlayButton()
+            currentAutoKillChar = getAutoKillTarget()
+            if currentAutoKillChar then
+                executeAttackUnder(currentAutoKillChar)
+            else
+                clickPlayButton()
+            end
         else
             currentAutoKillChar = nil
         end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddDropdown("MethodAttackDropdown", {
+    Title = "Method Attack",
+    Values = {"Under", "Behind"},
+    Default = Config.AttackPosition or "Under",
+    Multi = false,
+    Callback = function(Value)
+        Config.AttackPosition = Value or "Under"
         SaveConfig()
     end
 })
@@ -1455,6 +1482,12 @@ Tabs.Main:AddToggle("TargetKillToggle", {
     Default = Config.TargetKill,
     Callback = function(Value)
         Config.TargetKill = Value
+        if Value and Config.TargetPlayer and Config.TargetPlayer ~= "" then
+            local targetPlr = Players:FindFirstChild(Config.TargetPlayer)
+            if targetPlr and targetPlr.Character then
+                executeAttackUnder(targetPlr.Character)
+            end
+        end
         SaveConfig()
     end
 })
