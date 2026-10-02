@@ -16,7 +16,9 @@ local Camera = workspace.CurrentCamera
 
 local Config = {
     AutoKill = false,
-    AttackPosition = "Under",
+    AutoAttack = false,
+    AttackPosition = "Above",
+    AttackDistance = 7,
     ClickKillPlayer = false,
     TargetKill = false,
     TargetPlayer = "",
@@ -114,6 +116,7 @@ local currentAutoKillChar = nil
 local aimlockTargetChar = nil
 local aimlockFloatBtn = nil
 local aimlockFloatStroke = nil
+local getAutoAttackTarget = nil
 
 local function isCombatActive()
     return Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil
@@ -271,7 +274,6 @@ pcall(function()
         local RagdollUtil = require(Shared:WaitForChild("Util"):WaitForChild("RagdollUtil"))
         local RagdollCancelCtrl = require(Shared:WaitForChild("Client"):WaitForChild("RagdollCancelController"))
         local Network = require(Shared:WaitForChild("Network"))
-
         AbilityControllerMod = AbilityController
         CasterBusyMod = CasterBusy
         RegistryMod = Registry
@@ -595,6 +597,34 @@ local function getAutoKillTarget()
     return bestTarget
 end
 
+getAutoAttackTarget = function(customRange)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or isInsideLobby(hrp) then return nil end
+
+    local maxRange = customRange or ((tonumber(Config.AttackDistance) or 7) + 5)
+    local bestTarget = nil
+    local bestDist = maxRange
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local tChar = player.Character
+            if tChar and tChar ~= char then
+                local tHum = tChar:FindFirstChildOfClass("Humanoid")
+                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
+                if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
+                    local dist = (tHrp.Position - hrp.Position).Magnitude
+                    if dist <= bestDist then
+                        bestDist = dist
+                        bestTarget = tChar
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
 local function executeAttackUnder(target)
     if not target then return end
     local char = LocalPlayer.Character
@@ -606,11 +636,21 @@ local function executeAttackUnder(target)
     local tHrp = target:FindFirstChild("HumanoidRootPart")
     if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
         local targetPos = tHrp.Position
+        local dist = tonumber(Config.AttackDistance) or 7
         if Config.AttackPosition == "Behind" then
-            local behindPos = targetPos - (tHrp.CFrame.LookVector * 2.2)
+            local behindPos = targetPos - (tHrp.CFrame.LookVector * dist)
             hrp.CFrame = CFrame.lookAt(behindPos, targetPos)
+        elseif Config.AttackPosition == "Above" then
+            local abovePos = targetPos + Vector3.new(0, dist, 0)
+            local forward = tHrp.CFrame.LookVector * Vector3.new(1, 0, 1)
+            if forward.Magnitude > 0.01 then
+                forward = forward.Unit
+            else
+                forward = Vector3.new(0, 0, -1)
+            end
+            hrp.CFrame = CFrame.lookAt(abovePos, targetPos, forward)
         else
-            local underPos = targetPos - Vector3.new(0, 2.5, 0)
+            local underPos = targetPos - Vector3.new(0, dist, 0)
             local lookPos = targetPos + (tHrp.CFrame.LookVector * 0.1)
             hrp.CFrame = CFrame.lookAt(underPos, lookPos)
         end
@@ -788,6 +828,18 @@ task.spawn(function()
                 end
             end
         else
+            if Config.AutoAttack and LocalPlayer:GetAttribute("InGame") ~= false then
+                local autoTarget = getAutoAttackTarget()
+                if autoTarget then
+                    local tHrp = autoTarget:FindFirstChild("HumanoidRootPart")
+                    local char = LocalPlayer.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp and tHrp then
+                        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tHrp.Position.X, hrp.Position.Y, tHrp.Position.Z))
+                    end
+                    doAttack()
+                end
+            end
             if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1420,13 +1472,34 @@ Tabs.Main:AddToggle("AutoKillToggle", {
     end
 })
 
+Tabs.Main:AddToggle("AutoAttackToggle", {
+    Title = "Auto Attack",
+    Default = Config.AutoAttack,
+    Callback = function(Value)
+        Config.AutoAttack = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Main:AddDropdown("MethodAttackDropdown", {
     Title = "Method Attack",
-    Values = {"Under", "Behind"},
-    Default = Config.AttackPosition or "Under",
+    Values = {"Above", "Under", "Behind"},
+    Default = Config.AttackPosition or "Above",
     Multi = false,
     Callback = function(Value)
-        Config.AttackPosition = Value or "Under"
+        Config.AttackPosition = Value or "Above"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("AttackDistanceSlider", {
+    Title = "Distance",
+    Default = Config.AttackDistance or 7,
+    Min = 1,
+    Max = 9,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.AttackDistance = Value
         SaveConfig()
     end
 })
