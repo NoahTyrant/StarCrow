@@ -831,15 +831,188 @@ RunService.RenderStepped:Connect(function(dt)
     updateESP()
 end)
 
-UserInputService.JumpRequest:Connect(function()
+local touchJumpController = nil
+local hookedJumpButtons = {}
+
+local function performInfJump()
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and Config.InfJump then
+        if hum and hum.Health > 0 and Config.InfJump then
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
         end
     end
+end
+
+local function hookJumpButton(btn)
+    if not btn or hookedJumpButtons[btn] then return end
+    hookedJumpButtons[btn] = true
+    btn:GetPropertyChangedSignal("Visible"):Connect(function()
+        if Config.InfJump and not btn.Visible then
+            btn.Visible = true
+        end
+    end)
+    btn.InputBegan:Connect(function(input)
+        if Config.InfJump and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            performInfJump()
+        end
+    end)
+end
+
+local function getTouchControlFrame()
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:FindFirstChild("PlayerGui")
+    if not pGui then return nil end
+    local touchGui = pGui:FindFirstChild("TouchGui")
+    if not touchGui then return nil end
+    return touchGui:FindFirstChild("TouchControlFrame")
+end
+
+local function syncMobileJumpButton()
+    if not Config.InfJump then return end
+    if not touchJumpController then
+        pcall(function()
+            local pScripts = LocalPlayer:FindFirstChildOfClass("PlayerScripts") or LocalPlayer:FindFirstChild("PlayerScripts")
+            if pScripts and pScripts:FindFirstChild("PlayerModule") then
+                local controls = require(pScripts.PlayerModule):GetControls()
+                if controls then
+                    touchJumpController = controls.touchJumpController
+                end
+            end
+        end)
+    end
+    local frame = getTouchControlFrame()
+    if frame then
+        local btn = frame:FindFirstChild("JumpButton")
+        if btn then
+            hookJumpButton(btn)
+            btn.Visible = true
+        end
+    end
+    if touchJumpController then
+        pcall(function()
+            touchJumpController:EnableButton(true)
+            if touchJumpController.jumpButton then
+                touchJumpController.jumpButton.Visible = true
+            end
+        end)
+    end
+end
+
+pcall(function()
+    local pScripts = LocalPlayer:FindFirstChildOfClass("PlayerScripts") or LocalPlayer:WaitForChild("PlayerScripts", 5)
+    if not pScripts then return end
+    local pMod = pScripts:FindFirstChild("PlayerModule") or pScripts:WaitForChild("PlayerModule", 5)
+    if not pMod then return end
+    local cMod = pMod:FindFirstChild("ControlModule") or pMod:WaitForChild("ControlModule", 5)
+    if not cMod then return end
+    local tjMod = cMod:FindFirstChild("TouchJump") or cMod:WaitForChild("TouchJump", 5)
+    if not tjMod then return end
+    local TouchJumpClass = require(tjMod)
+
+    local oldUpdate = TouchJumpClass.UpdateEnabled
+    TouchJumpClass.UpdateEnabled = function(self, ...)
+        if Config.InfJump then
+            self:EnableButton(true)
+            if self.jumpButton then
+                self.jumpButton.Visible = true
+                hookJumpButton(self.jumpButton)
+            end
+            return
+        end
+        return oldUpdate(self, ...)
+    end
+
+    local oldEnableBtn = TouchJumpClass.EnableButton
+    TouchJumpClass.EnableButton = function(self, enabled, ...)
+        if Config.InfJump and not enabled then
+            if not self.jumpButton then
+                self:Create()
+            end
+            if self.jumpButton then
+                self.jumpButton.Visible = true
+                hookJumpButton(self.jumpButton)
+            end
+            return
+        end
+        local res = oldEnableBtn(self, enabled, ...)
+        if self.jumpButton then
+            hookJumpButton(self.jumpButton)
+        end
+        return res
+    end
+
+    local oldCreate = TouchJumpClass.Create
+    TouchJumpClass.Create = function(self, ...)
+        local res = oldCreate(self, ...)
+        if self.jumpButton then
+            hookJumpButton(self.jumpButton)
+            if Config.InfJump then
+                self.jumpButton.Visible = true
+            end
+        end
+        return res
+    end
+
+    local controls = require(pMod):GetControls()
+    if controls then
+        touchJumpController = controls.touchJumpController or controls.controllers[TouchJumpClass]
+    end
 end)
+
+pcall(function()
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5)
+    if not pGui then return end
+    local function watchTouchGui(tg)
+        local frame = tg:FindFirstChild("TouchControlFrame") or tg:WaitForChild("TouchControlFrame", 5)
+        if frame then
+            local btn = frame:FindFirstChild("JumpButton")
+            if btn then
+                hookJumpButton(btn)
+                if Config.InfJump then btn.Visible = true end
+            end
+            frame.ChildAdded:Connect(function(child)
+                if child.Name == "JumpButton" then
+                    hookJumpButton(child)
+                    if Config.InfJump then child.Visible = true end
+                end
+            end)
+        end
+    end
+    local existingTG = pGui:FindFirstChild("TouchGui")
+    if existingTG then
+        watchTouchGui(existingTG)
+    end
+    pGui.ChildAdded:Connect(function(child)
+        if child.Name == "TouchGui" then
+            watchTouchGui(child)
+        end
+    end)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    if Config.InfJump then
+        task.defer(function()
+            syncMobileJumpButton()
+            local hum = char:WaitForChild("Humanoid", 3)
+            if hum then
+                hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            end
+        end)
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    performInfJump()
+end)
+
+task.spawn(function()
+    task.wait(1)
+    if Config.InfJump then
+        syncMobileJumpButton()
+    end
+end)
+
 
 local LogoGui = Instance.new("ScreenGui")
 LogoGui.Name = "StarCrowLogoGui"
@@ -1269,6 +1442,13 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     Callback = function(Value)
         Config.InfJump = Value
         SaveConfig()
+        if Value then
+            syncMobileJumpButton()
+        elseif touchJumpController then
+            pcall(function()
+                touchJumpController:UpdateEnabled()
+            end)
+        end
     end
 })
 
