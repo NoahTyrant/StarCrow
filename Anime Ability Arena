@@ -118,6 +118,14 @@ local function isCombatActive()
     return Config.AutoKill or Config.TargetKill or singleTargetChar ~= nil
 end
 
+local function isAntiRagdollActive()
+    return Config.AntiRagdoll or Config.AutoKill or Config.ClickKillPlayer
+end
+
+local function isAntiVoidActive()
+    return Config.AntiVoid or Config.AutoKill or Config.ClickKillPlayer
+end
+
 local cachedPrimaryAbilityId = nil
 local lastMovesetName = nil
 local punchAbilityCache = {}
@@ -358,7 +366,7 @@ pcall(function()
 
         local oldIsRagdolled = RagdollUtil.IsRagdolled
         RagdollUtil.IsRagdolled = function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if isAntiRagdollActive() and char == LocalPlayer.Character then
                 return false
             end
             return oldIsRagdolled(char)
@@ -366,7 +374,7 @@ pcall(function()
 
         local oldIsIncapacitated = RagdollUtil.IsIncapacitated
         RagdollUtil.IsIncapacitated = function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if isAntiRagdollActive() and char == LocalPlayer.Character then
                 return false
             end
             return oldIsIncapacitated(char)
@@ -374,7 +382,7 @@ pcall(function()
 
         local oldSetState = RagdollUtil.SetState
         RagdollUtil.SetState = function(char, state)
-            if Config.AntiRagdoll and char == LocalPlayer.Character and state == "Ragdoll" then
+            if isAntiRagdollActive() and char == LocalPlayer.Character and state == "Ragdoll" then
                 return oldSetState(char, "None")
             end
             return oldSetState(char, state)
@@ -382,7 +390,7 @@ pcall(function()
 
         local oldAttempt = RagdollCancelCtrl.Attempt
         RagdollCancelCtrl.Attempt = function(...)
-            if Config.AntiRagdoll then
+            if isAntiRagdollActive() then
                 pcall(function()
                     Network.Combat.packets.RagdollCancel.send({ Active = true })
                 end)
@@ -392,7 +400,7 @@ pcall(function()
         end
 
         CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
-            if Config.AntiRagdoll and char == LocalPlayer.Character then
+            if isAntiRagdollActive() and char == LocalPlayer.Character then
                 task.defer(function()
                     CollectionService:RemoveTag(char, "BG_RagdollActive")
                     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -507,16 +515,16 @@ RunService.Heartbeat:Connect(function()
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hum and hrp and hum.Health > 0 then
-            if Config.AntiRagdoll then
+            if isAntiRagdollActive() then
                 if hum.PlatformStand then
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
                 end
             end
 
-            if Config.AntiVoid and not isInsideLobby(hrp) then
+            if isAntiVoidActive() and not isInsideLobby(hrp) then
                 local fallenHeight = workspace.FallenPartsDestroyHeight or -500
-                if hrp.Position.Y <= 240 or hrp.Position.Y < fallenHeight + 60 then
+                if hrp.Position.Y <= 323.52 or hrp.Position.Y < fallenHeight + 60 then
                     hrp.CFrame = voidTargetCF
                     hrp.AssemblyLinearVelocity = Vector3.zero
                     hrp.AssemblyAngularVelocity = Vector3.zero
