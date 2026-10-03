@@ -38,7 +38,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/AnimeAbilityArena.json"
+local SAVE_FILE = SAVE_FOLDER .. "/AnimeAbilityArenaConfig.json"
 
 local function SaveConfig()
     pcall(function()
