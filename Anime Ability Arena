@@ -293,6 +293,7 @@ pcall(function()
         local GameConfig = require(Shared:WaitForChild("Config"))
         local Registry = require(Shared:WaitForChild("Abilities"):WaitForChild("Registry"))
         local RagdollUtil = require(Shared:WaitForChild("Util"):WaitForChild("RagdollUtil"))
+        local RagdollRig = require(Shared:WaitForChild("Util"):WaitForChild("RagdollRig"))
         local RagdollCancelCtrl = require(Shared:WaitForChild("Client"):WaitForChild("RagdollCancelController"))
         local Network = require(Shared:WaitForChild("Network"))
         AbilityControllerMod = AbilityController
@@ -409,10 +410,18 @@ pcall(function()
 
         local oldSetState = RagdollUtil.SetState
         RagdollUtil.SetState = function(char, state)
-            if isAntiRagdollActive() and char == LocalPlayer.Character and state == "Ragdoll" then
+            if isAntiRagdollActive() and char == LocalPlayer.Character then
                 return oldSetState(char, "None")
             end
             return oldSetState(char, state)
+        end
+
+        local oldRigBuild = RagdollRig.Build
+        RagdollRig.Build = function(p)
+            if isAntiRagdollActive() and p == LocalPlayer.Character then
+                return
+            end
+            return oldRigBuild(p)
         end
 
         local oldAttempt = RagdollCancelCtrl.Attempt
@@ -428,19 +437,44 @@ pcall(function()
 
         CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
             if isAntiRagdollActive() and char == LocalPlayer.Character then
-                task.defer(function()
-                    CollectionService:RemoveTag(char, "BG_RagdollActive")
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum.PlatformStand = false
-                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                    end
-                    pcall(function()
-                        Network.Combat.packets.RagdollCancel.send({ Active = true })
-                    end)
+                CollectionService:RemoveTag(char, "BG_RagdollActive")
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.PlatformStand = false
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+                pcall(function()
+                    Network.Combat.packets.RagdollCancel.send({ Active = true })
                 end)
             end
         end)
+
+        local function hookCharRagdollPhysics(char)
+            if not char then return end
+            char.DescendantAdded:Connect(function(desc)
+                if isAntiRagdollActive() then
+                    if desc:IsA("BallSocketConstraint") or desc:IsA("LinearVelocity") or desc:IsA("VectorForce") or desc:IsA("BodyVelocity") or desc:IsA("BodyPosition") or desc:IsA("BodyGyro") or desc.Name:find("BG_Pin") or desc.Name:find("BG_Ragdoll") or desc.Name:find("BG_Socket") then
+                        task.defer(function()
+                            if desc.Parent then
+                                desc:Destroy()
+                            end
+                        end)
+                    elseif desc:IsA("Motor6D") and not desc.Enabled then
+                        desc.Enabled = true
+                    end
+                end
+            end)
+            char:GetAttributeChangedSignal("Tethered"):Connect(function()
+                if isAntiRagdollActive() and char:GetAttribute("Tethered") then
+                    char:SetAttribute("Tethered", false)
+                end
+            end)
+        end
+
+        LocalPlayer.CharacterAdded:Connect(hookCharRagdollPhysics)
+        if LocalPlayer.Character then
+            hookCharRagdollPhysics(LocalPlayer.Character)
+        end
     end
 end)
 
@@ -547,6 +581,44 @@ RunService.Heartbeat:Connect(function()
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
                 end
+                local hState = hum:GetState()
+                if hState == Enum.HumanoidStateType.Physics or hState == Enum.HumanoidStateType.Ragdoll then
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+                if char:GetAttribute("Tethered") then
+                    char:SetAttribute("Tethered", false)
+                end
+                for _, item in ipairs(char:GetDescendants()) do
+                    if item:IsA("Motor6D") then
+                        if not item.Enabled then
+                            item.Enabled = true
+                        end
+                    elseif item:IsA("BallSocketConstraint") or item:IsA("LinearVelocity") or item:IsA("VectorForce") or item:IsA("BodyVelocity") or item:IsA("BodyPosition") or item:IsA("BodyGyro") or item.Name:find("BG_Pin") or item.Name:find("BG_Ragdoll") or item.Name:find("BG_Socket") then
+                        item:Destroy()
+                    end
+                end
+                if Camera.CameraSubject and Camera.CameraSubject.Name == "BG_CameraTarget" then
+                    Camera.CameraSubject = hum
+                end
+                local localRagdolls = workspace:FindFirstChild("BG_LocalRagdolls")
+                if localRagdolls then
+                    for _, rag in ipairs(localRagdolls:GetChildren()) do
+                        rag:Destroy()
+                    end
+                end
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") or p:IsA("Decal") then
+                        p.LocalTransparencyModifier = 0
+                    end
+                end
+            end
+
+            if Config.WalkSpeedEnabled then
+                hum.WalkSpeed = Config.WalkSpeed
+                if hum.MoveDirection.Magnitude > 0 then
+                    local dir = hum.MoveDirection
+                    hrp.AssemblyLinearVelocity = Vector3.new(dir.X * Config.WalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * Config.WalkSpeed)
+                end
             end
 
             if isAntiVoidActive() and not isInsideLobby(hrp) then
@@ -557,14 +629,6 @@ RunService.Heartbeat:Connect(function()
                     hrp.AssemblyAngularVelocity = Vector3.zero
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                end
-            end
-
-            if Config.WalkSpeedEnabled then
-                hum.WalkSpeed = Config.WalkSpeed
-                if hum.MoveDirection.Magnitude > 0 then
-                    local dir = hum.MoveDirection
-                    hrp.AssemblyLinearVelocity = Vector3.new(dir.X * Config.WalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * Config.WalkSpeed)
                 end
             end
         end
