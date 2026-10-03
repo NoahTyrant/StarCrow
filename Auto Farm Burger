@@ -23,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -34,12 +35,39 @@ local Config = {
     KillAuraDistance = 1000,
     AutoFarmEnabled = true,
     BringBurger = true,
-    AutoResetMinutes = 3
+    AutoResetMinutes = 5
 }
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/AutoFarmBurgerConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
 
 local isResetting = false
 local collectedBurgerCount = 0
 local updateBurgerCounterGui = nil
+local scriptStartTick = tick()
+local nextResetTick = tick() + (Config.AutoResetMinutes * 60)
 
 pcall(function()
     local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
@@ -331,7 +359,9 @@ end
 RunService.RenderStepped:Connect(function(deltaTime)
     if not Config.BringBurger or isResetting then return end
 
-    local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -2.5)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -2)
     local camPos = Camera.CFrame.Position
     local hasBurgersNearby = false
 
@@ -350,6 +380,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
                             p.CanCollide = false
                             p.AssemblyLinearVelocity = Vector3.zero
                             p.AssemblyAngularVelocity = Vector3.zero
+                            if hrp and firetouchinterest then
+                                firetouchinterest(hrp, p, 0)
+                                firetouchinterest(hrp, p, 1)
+                            end
+                        elseif p:IsA("ProximityPrompt") then
+                            if fireproximityprompt then
+                                fireproximityprompt(p)
+                            end
                         end
                     end
                 elseif item:IsA("BasePart") then
@@ -357,22 +395,27 @@ RunService.RenderStepped:Connect(function(deltaTime)
                     item.CanCollide = false
                     item.AssemblyLinearVelocity = Vector3.zero
                     item.AssemblyAngularVelocity = Vector3.zero
+                    if hrp and firetouchinterest then
+                        firetouchinterest(hrp, item, 0)
+                        firetouchinterest(hrp, item, 1)
+                    end
+                end
+                for _, prompt in ipairs(item:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        if fireproximityprompt then
+                            fireproximityprompt(prompt)
+                        end
+                    end
                 end
             end
         end
     end
 
     if hasBurgersNearby then
-        collectTimer = collectTimer + deltaTime
-        if collectTimer >= 0.05 then
-            collectTimer = 0
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end)
-        end
-    else
-        collectTimer = 0
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
     end
 end)
 
@@ -564,6 +607,21 @@ local function forceResetUntilDead()
     isResetting = false
 end
 
+local function executeResetCycle(count)
+    local totalResets = count or 3
+    isResetting = true
+    hoverPos = nil
+    for i = 1, totalResets do
+        forceResetUntilDead()
+        if i < totalResets then
+            task.wait(1.5)
+        end
+    end
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    autoFarmStartTime = tick()
+    isResetting = false
+end
+
 task.spawn(function()
     while task.wait(0.1) do
         if not Config.AutoFarmEnabled then
@@ -583,6 +641,15 @@ task.spawn(function()
         local hrp = char:FindFirstChild("HumanoidRootPart")
         local hum = char:FindFirstChild("Humanoid")
         if not hrp or not hum then continue end
+
+        if tick() >= nextResetTick then
+            waitForBurgersCollected(3)
+            hoverPos = nil
+            currentIdx = 1
+            executeResetCycle(3)
+            task.wait(2)
+            continue
+        end
 
         if hum.Health <= 0 then
             hoverPos = nil
@@ -644,8 +711,7 @@ task.spawn(function()
             waitForBurgersCollected(5)
             hoverPos = nil
             currentIdx = 1
-            autoFarmStartTime = tick()
-            forceResetUntilDead()
+            executeResetCycle(3)
             task.wait(3)
         end
     end
@@ -659,8 +725,8 @@ pcall(function() FloatGui.Parent = game:GetService("CoreGui") end)
 if not FloatGui.Parent then FloatGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 190, 0, 48)
-MainFrame.Position = UDim2.new(0.5, -95, 0.1, 0)
+MainFrame.Size = UDim2.new(0, 200, 0, 72)
+MainFrame.Position = UDim2.new(0.5, -100, 0.1, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -682,8 +748,8 @@ task.spawn(function()
 end)
 
 local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, 0, 0, 22)
-TitleLabel.Position = UDim2.new(0, 0, 0, 3)
+TitleLabel.Size = UDim2.new(1, 0, 0, 20)
+TitleLabel.Position = UDim2.new(0, 0, 0, 2)
 TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "Auto Farm Burger"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
@@ -692,14 +758,79 @@ TitleLabel.TextSize = 12
 TitleLabel.Parent = MainFrame
 
 local CounterLabel = Instance.new("TextLabel")
-CounterLabel.Size = UDim2.new(1, 0, 0, 18)
-CounterLabel.Position = UDim2.new(0, 0, 0, 24)
+CounterLabel.Size = UDim2.new(1, 0, 0, 16)
+CounterLabel.Position = UDim2.new(0, 0, 0, 22)
 CounterLabel.BackgroundTransparency = 1
 CounterLabel.Text = "Collected: 0"
 CounterLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 CounterLabel.Font = Enum.Font.GothamMedium
 CounterLabel.TextSize = 11
 CounterLabel.Parent = MainFrame
+
+local ResetTimerLabel = Instance.new("TextLabel")
+ResetTimerLabel.Size = UDim2.new(0, 130, 0, 22)
+ResetTimerLabel.Position = UDim2.new(0, 8, 0, 44)
+ResetTimerLabel.BackgroundTransparency = 1
+ResetTimerLabel.Text = "Reset in: 05:00"
+ResetTimerLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+ResetTimerLabel.Font = Enum.Font.Gotham
+ResetTimerLabel.TextSize = 10
+ResetTimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+ResetTimerLabel.Parent = MainFrame
+
+local MinusBtn = Instance.new("TextButton")
+MinusBtn.Size = UDim2.new(0, 24, 0, 20)
+MinusBtn.Position = UDim2.new(1, -56, 0, 45)
+MinusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+MinusBtn.Text = "-"
+MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinusBtn.Font = Enum.Font.GothamBold
+MinusBtn.TextSize = 14
+MinusBtn.Parent = MainFrame
+Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
+
+local PlusBtn = Instance.new("TextButton")
+PlusBtn.Size = UDim2.new(0, 24, 0, 20)
+PlusBtn.Position = UDim2.new(1, -28, 0, 45)
+PlusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+PlusBtn.Text = "+"
+PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlusBtn.Font = Enum.Font.GothamBold
+PlusBtn.TextSize = 14
+PlusBtn.Parent = MainFrame
+Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
+
+local function updateTimerLabel()
+    local remaining = math.max(0, math.floor(nextResetTick - tick()))
+    local mins = math.floor(remaining / 60)
+    local secs = remaining % 60
+    if isResetting then
+        ResetTimerLabel.Text = "Auto Reset..."
+    else
+        ResetTimerLabel.Text = string.format("Reset in: %02d:%02d", mins, secs)
+    end
+end
+
+MinusBtn.MouseButton1Click:Connect(function()
+    Config.AutoResetMinutes = math.max(1, Config.AutoResetMinutes - 1)
+    SaveConfig()
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    updateTimerLabel()
+end)
+
+PlusBtn.MouseButton1Click:Connect(function()
+    Config.AutoResetMinutes = Config.AutoResetMinutes + 1
+    SaveConfig()
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    updateTimerLabel()
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        updateTimerLabel()
+    end
+end)
 
 updateBurgerCounterGui = function()
     CounterLabel.Text = "Collected: " .. tostring(collectedBurgerCount)
