@@ -17,7 +17,7 @@ local Camera = workspace.CurrentCamera
 local Config = {
     AutoKill = false,
     AutoAttack = false,
-    AttackPosition = "Above",
+    AttackPosition = "Under",
     AttackDistance = 7,
     ClickKillPlayer = false,
     TargetKill = false,
@@ -197,33 +197,34 @@ local function stopExcessActionTracks()
     local animator = getAnimator()
     if not animator then return end
     local playing = animator:GetPlayingAnimationTracks()
-    if #playing > 2 then
-        for _, track in ipairs(playing) do
-            local name = track.Name and track.Name:lower() or ""
-            local anim = track.Animation
-            local animName = anim and anim.Name and anim.Name:lower() or ""
-            if not name:find("dash") and not animName:find("dash") then
-                if track.Priority and track.Priority.Value >= Enum.AnimationPriority.Action.Value then
-                    track:Stop(0)
-                end
+    for _, track in ipairs(playing) do
+        local name = track.Name and track.Name:lower() or ""
+        local anim = track.Animation
+        local animName = anim and anim.Name and anim.Name:lower() or ""
+        if not name:find("dash") and not animName:find("dash") then
+            if track.Priority and track.Priority.Value >= Enum.AnimationPriority.Action.Value then
+                track:Stop(0)
             end
         end
     end
 end
 
 local lastAttackTick = 0
-local ATTACK_INTERVAL = 0.18
+local ATTACK_INTERVAL = 0.01
 
 local function doAttack(aid)
     aid = aid or getPrimaryAbilityId()
     if not (aid and AbilityControllerMod) then return end
     local now = os.clock()
-    local interval = Config.FastAttack and ATTACK_INTERVAL or 0.35
+    local interval = (Config.FastAttack or Config.AutoAttack) and ATTACK_INTERVAL or 0.25
     if now - lastAttackTick < interval then return end
     lastAttackTick = now
     pcall(function()
-        if Config.FastAttack and CasterBusyMod then
-            CasterBusyMod.Release()
+        if (Config.FastAttack or Config.AutoAttack) then
+            stopExcessActionTracks()
+            if CasterBusyMod then
+                CasterBusyMod.Release()
+            end
         end
         AbilityControllerMod.Activate(aid)
     end)
@@ -293,7 +294,6 @@ pcall(function()
         local GameConfig = require(Shared:WaitForChild("Config"))
         local Registry = require(Shared:WaitForChild("Abilities"):WaitForChild("Registry"))
         local RagdollUtil = require(Shared:WaitForChild("Util"):WaitForChild("RagdollUtil"))
-        local RagdollRig = require(Shared:WaitForChild("Util"):WaitForChild("RagdollRig"))
         local RagdollCancelCtrl = require(Shared:WaitForChild("Client"):WaitForChild("RagdollCancelController"))
         local Network = require(Shared:WaitForChild("Network"))
         AbilityControllerMod = AbilityController
@@ -306,7 +306,7 @@ pcall(function()
             if not isPunchAbility(nil, nil, id) then
                 lastSkillUseTick = os.clock()
             end
-            if Config.FastAttack and isPunchAbility(nil, nil, id) then
+            if (Config.FastAttack or Config.AutoAttack) and isPunchAbility(nil, nil, id) then
                 stopExcessActionTracks()
                 pcall(function() CasterBusy.Release() end)
             end
@@ -319,7 +319,7 @@ pcall(function()
         local oldConfig = Overrides.Config
         Overrides.Config = function(player, ability)
             local res = oldConfig(player, ability)
-            if Config.FastAttack and type(res) == "table" and isPunchAbility(res, ability, nil) then
+            if (Config.FastAttack or Config.AutoAttack) and type(res) == "table" and isPunchAbility(res, ability, nil) then
                 if res ~= lastPunchRes or not cachedPunchConfig then
                     lastPunchRes = res
                     cachedPunchConfig = {}
@@ -410,18 +410,10 @@ pcall(function()
 
         local oldSetState = RagdollUtil.SetState
         RagdollUtil.SetState = function(char, state)
-            if isAntiRagdollActive() and char == LocalPlayer.Character then
+            if isAntiRagdollActive() and char == LocalPlayer.Character and state == "Ragdoll" then
                 return oldSetState(char, "None")
             end
             return oldSetState(char, state)
-        end
-
-        local oldRigBuild = RagdollRig.Build
-        RagdollRig.Build = function(p)
-            if isAntiRagdollActive() and p == LocalPlayer.Character then
-                return
-            end
-            return oldRigBuild(p)
         end
 
         local oldAttempt = RagdollCancelCtrl.Attempt
@@ -437,44 +429,19 @@ pcall(function()
 
         CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
             if isAntiRagdollActive() and char == LocalPlayer.Character then
-                CollectionService:RemoveTag(char, "BG_RagdollActive")
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    hum.PlatformStand = false
-                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                end
-                pcall(function()
-                    Network.Combat.packets.RagdollCancel.send({ Active = true })
+                task.defer(function()
+                    CollectionService:RemoveTag(char, "BG_RagdollActive")
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        hum.PlatformStand = false
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    end
+                    pcall(function()
+                        Network.Combat.packets.RagdollCancel.send({ Active = true })
+                    end)
                 end)
             end
         end)
-
-        local function hookCharRagdollPhysics(char)
-            if not char then return end
-            char.DescendantAdded:Connect(function(desc)
-                if isAntiRagdollActive() then
-                    if desc:IsA("BallSocketConstraint") or desc:IsA("LinearVelocity") or desc:IsA("VectorForce") or desc:IsA("BodyVelocity") or desc:IsA("BodyPosition") or desc:IsA("BodyGyro") or desc.Name:find("BG_Pin") or desc.Name:find("BG_Ragdoll") or desc.Name:find("BG_Socket") then
-                        task.defer(function()
-                            if desc.Parent then
-                                desc:Destroy()
-                            end
-                        end)
-                    elseif desc:IsA("Motor6D") and not desc.Enabled then
-                        desc.Enabled = true
-                    end
-                end
-            end)
-            char:GetAttributeChangedSignal("Tethered"):Connect(function()
-                if isAntiRagdollActive() and char:GetAttribute("Tethered") then
-                    char:SetAttribute("Tethered", false)
-                end
-            end)
-        end
-
-        LocalPlayer.CharacterAdded:Connect(hookCharRagdollPhysics)
-        if LocalPlayer.Character then
-            hookCharRagdollPhysics(LocalPlayer.Character)
-        end
     end
 end)
 
@@ -581,44 +548,6 @@ RunService.Heartbeat:Connect(function()
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
                 end
-                local hState = hum:GetState()
-                if hState == Enum.HumanoidStateType.Physics or hState == Enum.HumanoidStateType.Ragdoll then
-                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                end
-                if char:GetAttribute("Tethered") then
-                    char:SetAttribute("Tethered", false)
-                end
-                for _, item in ipairs(char:GetDescendants()) do
-                    if item:IsA("Motor6D") then
-                        if not item.Enabled then
-                            item.Enabled = true
-                        end
-                    elseif item:IsA("BallSocketConstraint") or item:IsA("LinearVelocity") or item:IsA("VectorForce") or item:IsA("BodyVelocity") or item:IsA("BodyPosition") or item:IsA("BodyGyro") or item.Name:find("BG_Pin") or item.Name:find("BG_Ragdoll") or item.Name:find("BG_Socket") then
-                        item:Destroy()
-                    end
-                end
-                if Camera.CameraSubject and Camera.CameraSubject.Name == "BG_CameraTarget" then
-                    Camera.CameraSubject = hum
-                end
-                local localRagdolls = workspace:FindFirstChild("BG_LocalRagdolls")
-                if localRagdolls then
-                    for _, rag in ipairs(localRagdolls:GetChildren()) do
-                        rag:Destroy()
-                    end
-                end
-                for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") or p:IsA("Decal") then
-                        p.LocalTransparencyModifier = 0
-                    end
-                end
-            end
-
-            if Config.WalkSpeedEnabled then
-                hum.WalkSpeed = Config.WalkSpeed
-                if hum.MoveDirection.Magnitude > 0 then
-                    local dir = hum.MoveDirection
-                    hrp.AssemblyLinearVelocity = Vector3.new(dir.X * Config.WalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * Config.WalkSpeed)
-                end
             end
 
             if isAntiVoidActive() and not isInsideLobby(hrp) then
@@ -629,6 +558,14 @@ RunService.Heartbeat:Connect(function()
                     hrp.AssemblyAngularVelocity = Vector3.zero
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+            end
+
+            if Config.WalkSpeedEnabled then
+                hum.WalkSpeed = Config.WalkSpeed
+                if hum.MoveDirection.Magnitude > 0 then
+                    local dir = hum.MoveDirection
+                    hrp.AssemblyLinearVelocity = Vector3.new(dir.X * Config.WalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * Config.WalkSpeed)
                 end
             end
         end
@@ -875,7 +812,7 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.03)
+        task.wait(0.02)
         if singleTargetChar ~= nil then
             local tHum = singleTargetChar:FindFirstChildOfClass("Humanoid")
             local tHrp = singleTargetChar:FindFirstChild("HumanoidRootPart")
@@ -916,7 +853,7 @@ task.spawn(function()
                 end
             end
         else
-            if Config.AutoAttack and LocalPlayer:GetAttribute("InGame") ~= false and not isUsingSkill() then
+            if Config.AutoAttack and LocalPlayer:GetAttribute("InGame") ~= false then
                 local autoTarget = getAutoAttackTarget()
                 if autoTarget then
                     local tHrp = autoTarget:FindFirstChild("HumanoidRootPart")
@@ -1572,10 +1509,10 @@ Tabs.Main:AddToggle("AutoAttackToggle", {
 Tabs.Main:AddDropdown("MethodAttackDropdown", {
     Title = "Method Attack",
     Values = {"Above", "Under", "Behind"},
-    Default = Config.AttackPosition or "Above",
+    Default = Config.AttackPosition or "Under",
     Multi = false,
     Callback = function(Value)
-        Config.AttackPosition = Value or "Above"
+        Config.AttackPosition = Value or "Under"
         SaveConfig()
     end
 })
