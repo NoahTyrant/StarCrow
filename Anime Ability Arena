@@ -33,8 +33,11 @@ local Config = {
     AimlockEnabled = false,
     AimlockKeybind = "T",
     AimlockFloatVisible = false,
-    AimlockFloatSize = 46,
     AimlockFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = 0 },
+    FloatSize = 46,
+    VoidTPKeybind = "G",
+    VoidTPFloatVisible = false,
+    VoidTPFloatPos = { xs = 0.85, xo = 0, ys = 0.6, yo = 0 },
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -116,10 +119,49 @@ local currentAutoKillChar = nil
 local aimlockTargetChar = nil
 local aimlockFloatBtn = nil
 local aimlockFloatStroke = nil
+local voidTPFloatBtn = nil
+local voidTPFloatStroke = nil
 local getAutoAttackTarget = nil
 local lastSkillUseTick = 0
 local currentSkillEndTime = 0
 local activeSkillTrack = nil
+local voidTargetCF = CFrame.new(-50.93, 397.96, -133.75)
+local susanooVoidCF = CFrame.new(145.42, 325.06, -309.92)
+local voidTPActive = false
+local voidTPSafeCF = nil
+
+local function triggerVoidTP()
+    if voidTPActive then return end
+    task.spawn(function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        voidTPSafeCF = hrp.CFrame
+        voidTPActive = true
+        local startTime = os.clock()
+        while voidTPActive and os.clock() - startTime < 5 do
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChild("HumanoidRootPart")
+            if h then
+                h.CFrame = susanooVoidCF
+                h.AssemblyLinearVelocity = Vector3.zero
+                h.AssemblyAngularVelocity = Vector3.zero
+            end
+            task.wait(0.03)
+        end
+        for i = 1, 10 do
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChild("HumanoidRootPart")
+            if h and voidTPSafeCF then
+                h.CFrame = voidTPSafeCF + Vector3.new(0, 5, 0)
+                h.AssemblyLinearVelocity = Vector3.zero
+                h.AssemblyAngularVelocity = Vector3.zero
+            end
+            task.wait(0.03)
+        end
+        voidTPActive = false
+    end)
+end
 
 local function isUsingSkill()
     local now = os.clock()
@@ -329,11 +371,15 @@ pcall(function()
             if not isPunch then
                 lastSkillUseTick = os.clock()
                 local castDur = 0.8
+                local abName = ""
+                local abKind = ""
                 if RegistryMod and RegistryMod.GetAbilityById then
                     pcall(function()
                         local ab = RegistryMod.GetAbilityById(id)
                         if type(ab) == "table" then
-                            local d = ab.Duration or (ab.Config and ab.Config.Duration) or ab.CastTime or (ab.Config and ab.Config.CastTime) or ab.HoldTime or (ab.Config and ab.HoldTime)
+                            abName = tostring(ab.Name or "")
+                            abKind = tostring(ab.Kind or "")
+                            local d = ab.Duration or (ab.Config and ab.Config.Duration) or ab.CastTime or (ab.Config and ab.Config.CastTime) or ab.HoldTime or (ab.Config and ab.HoldTime) or (ab.Config and ab.Config.MaxDuration)
                             if type(d) == "number" and d > 0 then
                                 castDur = d
                             end
@@ -355,6 +401,9 @@ pcall(function()
                 if os.clock() - lastSkillUseTick > 0.3 then
                     currentSkillEndTime = 0
                     activeSkillTrack = nil
+                    if voidTPActive then
+                        voidTPActive = false
+                    end
                 end
                 return oldRelease(...)
             end
@@ -492,7 +541,6 @@ pcall(function()
     end
 end)
 
-local voidTargetCF = CFrame.new(-50.93, 397.96, -133.75)
 
 local cachedLobby = workspace:FindFirstChild("Lobby")
 
@@ -597,7 +645,7 @@ RunService.Heartbeat:Connect(function()
                 end
             end
 
-            if isAntiVoidActive() and not isInsideLobby(hrp) then
+            if isAntiVoidActive() and not isInsideLobby(hrp) and not voidTPActive then
                 local fallenHeight = workspace.FallenPartsDestroyHeight or -500
                 if hrp.Position.Y <= 323.52 or hrp.Position.Y < fallenHeight + 60 then
                     hrp.CFrame = voidTargetCF
@@ -1193,6 +1241,8 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     activeSkillTrack = nil
     currentSkillEndTime = 0
     lastSkillUseTick = 0
+    voidTPActive = false
+    voidTPSafeCF = nil
     table.clear(punchAbilityCache)
     if Config.DashNoCooldown and DashControllerMod then
         resetDashState(DashControllerMod)
@@ -1398,7 +1448,7 @@ local function toggleAimlock(state)
 end
 
 local fPos = Config.AimlockFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = 0 }
-local fSize = tonumber(Config.AimlockFloatSize) or 46
+local fSize = tonumber(Config.FloatSize) or 46
 aimlockFloatBtn = Instance.new("TextButton")
 aimlockFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
 aimlockFloatBtn.Position = UDim2.new(fPos.xs, fPos.xo, fPos.ys, fPos.yo)
@@ -1479,11 +1529,54 @@ local function getAimlockKey()
     return Enum.KeyCode[name] or Enum.KeyCode.T
 end
 
+local vPos = Config.VoidTPFloatPos or { xs = 0.85, xo = 0, ys = 0.6, yo = 0 }
+local vSize = tonumber(Config.FloatSize) or 46
+voidTPFloatBtn = Instance.new("TextButton")
+voidTPFloatBtn.Size = UDim2.new(0, vSize, 0, vSize)
+voidTPFloatBtn.Position = UDim2.new(vPos.xs, vPos.xo, vPos.ys, vPos.yo)
+voidTPFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+voidTPFloatBtn.BackgroundTransparency = 0.88
+voidTPFloatBtn.BorderSizePixel = 0
+voidTPFloatBtn.Text = "Void"
+voidTPFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+voidTPFloatBtn.TextScaled = false
+voidTPFloatBtn.TextSize = 13
+voidTPFloatBtn.Font = Enum.Font.GothamBold
+voidTPFloatBtn.ZIndex = 15
+voidTPFloatBtn.Visible = Config.VoidTPFloatVisible == true
+voidTPFloatBtn.Parent = LogoGui
+Instance.new("UICorner", voidTPFloatBtn).CornerRadius = UDim.new(0, 8)
+voidTPFloatStroke = Instance.new("UIStroke", voidTPFloatBtn)
+voidTPFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(voidTPFloatStroke, false)
+
+local getVoidFloatMoved, resetVoidFloatMoved = makeDraggableFloat(voidTPFloatBtn, "VoidTPFloatPos")
+
+voidTPFloatBtn.MouseButton1Click:Connect(function()
+    if getVoidFloatMoved() then resetVoidFloatMoved() return end
+    triggerVoidTP()
+end)
+
+local function getVoidTPKey()
+    local k = Config.VoidTPKeybind or "G"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.G
+end
+
+local lastVoidTPPress = 0
 local lastAimlockPress = 0
 UserInputService.InputBegan:Connect(function(input, processed)
     if UserInputService:GetFocusedTextBox() then return end
     if not processed and input.KeyCode == minimizeKey then
         uiVisible = not uiVisible
+    end
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == getVoidTPKey() then
+        local now = tick()
+        if now - lastVoidTPPress >= 0.2 then
+            lastVoidTPPress = now
+            triggerVoidTP()
+        end
     end
     if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == getAimlockKey() then
         local now = tick()
@@ -1595,6 +1688,18 @@ Tabs.Main:AddToggle("AimlockFloatToggle", {
         Config.AimlockFloatVisible = Value
         if aimlockFloatBtn then
             aimlockFloatBtn.Visible = Value
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("VoidTPFloatToggle", {
+    Title = "Float TP Void",
+    Default = Config.VoidTPFloatVisible,
+    Callback = function(Value)
+        Config.VoidTPFloatVisible = Value
+        if voidTPFloatBtn then
+            voidTPFloatBtn.Visible = Value
         end
         SaveConfig()
     end
@@ -1725,7 +1830,7 @@ Tabs.ESP:AddToggle("ESPPlayersToggle", {
     end
 })
 
-Tabs.Settings:AddSection("Menu")
+Tabs.Settings:AddSection("Keybinds")
 
 Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     Title = "Minimize UI Keybind",
@@ -1737,8 +1842,6 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
         Window.MinimizeKey = keyCode
     end
 })
-
-Tabs.Settings:AddSection("Aimlock")
 
 Tabs.Settings:AddKeybind("AimlockKeybind", {
     Title = "Aimlock Keybind",
@@ -1753,17 +1856,35 @@ Tabs.Settings:AddKeybind("AimlockKeybind", {
     end
 })
 
-Tabs.Settings:AddSlider("AimlockFloatSizeSlider", {
+Tabs.Settings:AddKeybind("VoidTPKeybind", {
+    Title = "Void TP Keybind",
+    Mode = "Toggle",
+    Default = Config.VoidTPKeybind or "G",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.VoidTPKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddSection("Float Buttons")
+
+Tabs.Settings:AddSlider("FloatSizeSlider", {
     Title = "Float Size",
     Min = 20,
     Max = 100,
-    Default = Config.AimlockFloatSize or 46,
+    Default = Config.FloatSize or 46,
     Rounding = 0,
     Callback = function(Value)
-        Config.AimlockFloatSize = Value
+        Config.FloatSize = Value
         SaveConfig()
         if aimlockFloatBtn then
             aimlockFloatBtn.Size = UDim2.new(0, Value, 0, Value)
+        end
+        if voidTPFloatBtn then
+            voidTPFloatBtn.Size = UDim2.new(0, Value, 0, Value)
         end
     end
 })
