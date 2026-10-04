@@ -118,23 +118,23 @@ local aimlockFloatBtn = nil
 local aimlockFloatStroke = nil
 local getAutoAttackTarget = nil
 local lastSkillUseTick = 0
+local currentSkillEndTime = 0
+local activeSkillTrack = nil
 
 local function isUsingSkill()
-    if os.clock() - lastSkillUseTick < 0.65 then
+    local now = os.clock()
+    if now - lastSkillUseTick < 0.45 then
         return true
     end
-    if CasterBusyMod then
-        if CasterBusyMod.IsBusy and CasterBusyMod.IsBusy() then
+    if activeSkillTrack and activeSkillTrack.IsPlaying then
+        if now - lastSkillUseTick < 3.5 then
             return true
+        else
+            activeSkillTrack = nil
         end
-        if CasterBusyMod.GetState and CasterBusyMod.GetState() then
-            return true
-        end
-        if CasterBusyMod.Busy then
-            local b = CasterBusyMod.Busy
-            if type(b) == "boolean" and b then return true end
-            if type(b) == "function" and b() then return true end
-        end
+    end
+    if now < currentSkillEndTime then
+        return true
     end
     return false
 end
@@ -157,6 +157,24 @@ local punchAbilityCache = {}
 local cachedAnimator = nil
 local cachedCharacter = nil
 
+local hookedAnimators = {}
+
+local function hookAnimator(anim)
+    if not anim or hookedAnimators[anim] then return end
+    hookedAnimators[anim] = true
+    anim.AnimationPlayed:Connect(function(track)
+        local now = os.clock()
+        if now - lastSkillUseTick < 0.4 then
+            local name = track.Name and track.Name:lower() or ""
+            local aObj = track.Animation
+            local aName = aObj and aObj.Name and aObj.Name:lower() or ""
+            if not name:find("dash") and not aName:find("dash") and not name:find("walk") and not aName:find("run") and not name:find("idle") then
+                activeSkillTrack = track
+            end
+        end
+    end)
+end
+
 local function getAnimator()
     local char = LocalPlayer.Character
     if not char then
@@ -170,6 +188,9 @@ local function getAnimator()
     cachedCharacter = char
     local hum = char:FindFirstChildOfClass("Humanoid")
     cachedAnimator = hum and hum:FindFirstChildOfClass("Animator")
+    if cachedAnimator then
+        hookAnimator(cachedAnimator)
+    end
     return cachedAnimator
 end
 
@@ -213,14 +234,15 @@ local lastAttackTick = 0
 local ATTACK_INTERVAL = 0.01
 
 local function doAttack(aid)
+    if isUsingSkill() then return end
     aid = aid or getPrimaryAbilityId()
     if not (aid and AbilityControllerMod) then return end
     local now = os.clock()
-    local interval = (Config.FastAttack or Config.AutoAttack) and ATTACK_INTERVAL or 0.25
+    local interval = Config.FastAttack and ATTACK_INTERVAL or 0.35
     if now - lastAttackTick < interval then return end
     lastAttackTick = now
     pcall(function()
-        if (Config.FastAttack or Config.AutoAttack) then
+        if Config.FastAttack then
             stopExcessActionTracks()
             if CasterBusyMod then
                 CasterBusyMod.Release()
@@ -303,14 +325,39 @@ pcall(function()
 
         local oldActivate = AbilityController.Activate
         AbilityController.Activate = function(id)
-            if not isPunchAbility(nil, nil, id) then
+            local isPunch = isPunchAbility(nil, nil, id)
+            if not isPunch then
                 lastSkillUseTick = os.clock()
+                local castDur = 0.8
+                if RegistryMod and RegistryMod.GetAbilityById then
+                    pcall(function()
+                        local ab = RegistryMod.GetAbilityById(id)
+                        if type(ab) == "table" then
+                            local d = ab.Duration or (ab.Config and ab.Config.Duration) or ab.CastTime or (ab.Config and ab.Config.CastTime) or ab.HoldTime or (ab.Config and ab.HoldTime)
+                            if type(d) == "number" and d > 0 then
+                                castDur = d
+                            end
+                        end
+                    end)
+                end
+                currentSkillEndTime = os.clock() + castDur
             end
-            if (Config.FastAttack or Config.AutoAttack) and isPunchAbility(nil, nil, id) then
+            if Config.FastAttack and not isUsingSkill() and isPunch then
                 stopExcessActionTracks()
                 pcall(function() CasterBusy.Release() end)
             end
             return oldActivate(id)
+        end
+
+        local oldRelease = CasterBusy.Release
+        if oldRelease then
+            CasterBusy.Release = function(...)
+                if os.clock() - lastSkillUseTick > 0.3 then
+                    currentSkillEndTime = 0
+                    activeSkillTrack = nil
+                end
+                return oldRelease(...)
+            end
         end
 
         local cachedPunchConfig = nil
@@ -319,7 +366,7 @@ pcall(function()
         local oldConfig = Overrides.Config
         Overrides.Config = function(player, ability)
             local res = oldConfig(player, ability)
-            if (Config.FastAttack or Config.AutoAttack) and type(res) == "table" and isPunchAbility(res, ability, nil) then
+            if Config.FastAttack and type(res) == "table" and isPunchAbility(res, ability, nil) then
                 if res ~= lastPunchRes or not cachedPunchConfig then
                     lastPunchRes = res
                     cachedPunchConfig = {}
@@ -755,7 +802,7 @@ local function hookMobileAttackButton()
     btn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
             mobileAttackHolding = true
-            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false and not isUsingSkill() then
                 doAttack()
             end
         end
@@ -779,7 +826,7 @@ UserInputService.InputBegan:Connect(function(input)
             if p.X >= bPos.X and p.X <= (bPos.X + bSize.X) and p.Y >= bPos.Y and p.Y <= (bPos.Y + bSize.Y) then
                 activeAttackTouch = input
                 mobileAttackHolding = true
-                if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
+                if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false and not isUsingSkill() then
                     doAttack()
                 end
             end
@@ -853,7 +900,7 @@ task.spawn(function()
                 end
             end
         else
-            if Config.AutoAttack and LocalPlayer:GetAttribute("InGame") ~= false then
+            if Config.AutoAttack and LocalPlayer:GetAttribute("InGame") ~= false and not isUsingSkill() then
                 local autoTarget = getAutoAttackTarget()
                 if autoTarget then
                     local tHrp = autoTarget:FindFirstChild("HumanoidRootPart")
@@ -865,7 +912,7 @@ task.spawn(function()
                     doAttack()
                 end
             end
-            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false then
+            if Config.FastAttack and LocalPlayer:GetAttribute("InGame") ~= false and not isUsingSkill() then
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
                 if hum and hum.Health > 0 and isAttackButtonPressed() then
@@ -1143,6 +1190,9 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     cachedAttackBtn = nil
     cachedAnimator = nil
     cachedCharacter = nil
+    activeSkillTrack = nil
+    currentSkillEndTime = 0
+    lastSkillUseTick = 0
     table.clear(punchAbilityCache)
     if Config.DashNoCooldown and DashControllerMod then
         resetDashState(DashControllerMod)
