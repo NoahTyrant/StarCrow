@@ -106,7 +106,9 @@ local Config = {
     NoPunchCooldown = false,
     PunchDamage = 10,
     VehicleFly = false,
-    VehicleFlySpeed = 100,
+    VehicleFlySpeed = 300,
+    BringDistance = 1000,
+    AutoLootDistance = 1000,
     VehiclePerformance = false,
     VehicleTopSpeed = 2,
     VehicleAcceleration = 3,
@@ -139,11 +141,139 @@ local function LoadConfig()
             if Config.PunchDamage and (Config.PunchDamage > 2000 or Config.PunchDamage < 10) then
                 Config.PunchDamage = 10
             end
+            if not Config.VehicleFlySpeed or Config.VehicleFlySpeed <= 0 then
+                Config.VehicleFlySpeed = 300
+            end
+            if not Config.BringDistance or Config.BringDistance <= 0 then
+                Config.BringDistance = 1000
+            end
+            if not Config.AutoLootDistance or Config.AutoLootDistance <= 0 then
+                Config.AutoLootDistance = 1000
+            end
         end
     end)
 end
 
 LoadConfig()
+
+local droppedItems = setmetatable({}, { __mode = "k" })
+
+local function markDropped(inst)
+    if not inst then return end
+    droppedItems[inst] = true
+    pcall(function() inst:SetAttribute("PlayerDropped", true) end)
+    local h = inst:FindFirstChild("Handle") or (inst:IsA("BasePart") and inst) or inst:FindFirstChildWhichIsA("BasePart")
+    if h then
+        droppedItems[h] = true
+        pcall(function() h:SetAttribute("PlayerDropped", true) end)
+    end
+end
+
+local function unmarkDropped(inst)
+    if not inst then return end
+    droppedItems[inst] = nil
+    pcall(function() inst:SetAttribute("PlayerDropped", nil) end)
+    local h = inst:FindFirstChild("Handle") or (inst:IsA("BasePart") and inst) or inst:FindFirstChildWhichIsA("BasePart")
+    if h then
+        droppedItems[h] = nil
+        pcall(function() h:SetAttribute("PlayerDropped", nil) end)
+    end
+end
+
+if flow and flow.Loot and type(flow.Loot.LootUnequip) == "function" then
+    local origLootUnequip = flow.Loot.LootUnequip
+    flow.Loot.LootUnequip = function(tool, ...)
+        if tool then
+            markDropped(tool)
+        end
+        local args = { ... }
+        local dropPos = nil
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if args[3] and typeof(args[3]) == "CFrame" then
+            dropPos = args[3].Position
+        elseif tool and tool:FindFirstChild("Handle") and tool.Handle:IsA("BasePart") then
+            dropPos = tool.Handle.Position
+        elseif hrp then
+            dropPos = hrp.Position
+        end
+        local toolName = tool and tool.Name
+        if dropPos and toolName then
+            local dropTime = os.clock()
+            local conn
+            local lootFolder = workspace:FindFirstChild("Loot")
+            if lootFolder then
+                conn = lootFolder.ChildAdded:Connect(function(child)
+                    if os.clock() - dropTime > 2.5 then
+                        if conn then conn:Disconnect() end
+                        return
+                    end
+                    if child.Name == toolName or (child:IsA("Model") and child.Name:find(toolName)) then
+                        local chPart = child:FindFirstChild("Handle") or (child:IsA("BasePart") and child) or child:FindFirstChildWhichIsA("BasePart")
+                        if chPart and (chPart.Position - dropPos).Magnitude <= 15 then
+                            markDropped(child)
+                            markDropped(chPart)
+                        end
+                    end
+                end)
+                task.delay(2.5, function()
+                    if conn then conn:Disconnect() end
+                end)
+            end
+        end
+        return origLootUnequip(tool, ...)
+    end
+end
+
+local function onToolExitedPlayer(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    task.defer(function()
+        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+        local char = LocalPlayer.Character
+        if tool.Parent ~= bp and tool.Parent ~= char and not tool:IsDescendantOf(LocalPlayer) then
+            markDropped(tool)
+        end
+    end)
+end
+
+local function bindInventoryTracking(char)
+    if not char then return end
+    char.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") then
+            onToolExitedPlayer(child)
+        end
+    end)
+    char.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            unmarkDropped(child)
+        end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(bindInventoryTracking)
+if LocalPlayer.Character then
+    bindInventoryTracking(LocalPlayer.Character)
+end
+
+local function hookBackpack(bp)
+    if not bp then return end
+    bp.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") then
+            onToolExitedPlayer(child)
+        end
+    end)
+    bp.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            unmarkDropped(child)
+        end
+    end)
+end
+
+local initialBp = LocalPlayer:FindFirstChildOfClass("Backpack")
+if initialBp then hookBackpack(initialBp) end
+LocalPlayer.ChildAdded:Connect(function(c)
+    if c:IsA("Backpack") then hookBackpack(c) end
+end)
 
 local breakableCache = {}
 
@@ -584,7 +714,7 @@ local function bringAllItems(loopMode)
             for _, item in ipairs(items) do
                 if not isBringingItems or stopBringItems then break end
                 if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
-                if broughtHistory[item] or item:GetAttribute("StarCrowBrought") then continue end
+                if broughtHistory[item] or item:GetAttribute("StarCrowBrought") or droppedItems[item] or item:GetAttribute("PlayerDropped") then continue end
                 local curHrp = LocalPlayer.Character.HumanoidRootPart
                 local part = getPickupPart(item)
                 if not part and item:IsA("Model") then
@@ -596,7 +726,9 @@ local function bringAllItems(loopMode)
                     part = getPickupPart(item)
                 end
                 if part and part.Parent then
+                    if droppedItems[part] or part:GetAttribute("PlayerDropped") then continue end
                     local dist = (part.Position - origCFrame.Position).Magnitude
+                    if dist > (Config.BringDistance or 1000) then continue end
                     if dist <= 15 then
                         pcall(function()
                             curChar:PivotTo(CFrame.new(part.Position + Vector3.new(0, 3, 0)))
@@ -807,7 +939,7 @@ local function runAutoLoot()
         end)
         for _, item in ipairs(items) do
             if not Config.AutoLoot then break end
-            if lootedItems[item] then continue end
+            if lootedItems[item] or droppedItems[item] or item:GetAttribute("PlayerDropped") then continue end
             local curChar = LocalPlayer.Character
             local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
             local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
@@ -815,6 +947,9 @@ local function runAutoLoot()
 
             local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
             if handle and handle.Parent then
+                if droppedItems[handle] or handle:GetAttribute("PlayerDropped") then continue end
+                local dist = (handle.Position - startPivot.Position).Magnitude
+                if dist > (Config.AutoLootDistance or 1000) then continue end
                 curChar:PivotTo(CFrame.new(handle.Position + Vector3.new(0, 3, 0)))
                 curHrp.AssemblyLinearVelocity = Vector3.zero
                 curHrp.AssemblyAngularVelocity = Vector3.zero
@@ -3004,9 +3139,9 @@ Tabs.Vehicle:AddToggle("VehicleFlyToggle", {
 
 Tabs.Vehicle:AddSlider("VehicleFlySpeedSlider", {
     Title = "Fly speed",
-    Default = Config.VehicleFlySpeed,
+    Default = Config.VehicleFlySpeed or 300,
     Min = 20,
-    Max = 300,
+    Max = 1000,
     Rounding = 1,
     Callback = function(Value)
         Config.VehicleFlySpeed = Value
@@ -3206,32 +3341,18 @@ local function getEndPromptDestination(prompt, direction)
     return CFrame.lookAt(pos, Vector3.new(holderCFrame.Position.X, pos.Y, holderCFrame.Position.Z), Vector3.yAxis)
 end
 
-local function parkEndVehicle(veh, endZ, direction)
-    local seat = veh:FindFirstChildWhichIsA("VehicleSeat", true)
-    local chassis = (veh:FindFirstChild("system") and veh.system:FindFirstChild("chassis")) or veh.PrimaryPart or (seat and seat.Parent)
-    if not chassis then return end
-    local road = nil
-    local map = workspace:FindFirstChild("Map")
-    if map then
-        for _, part in ipairs(map:GetDescendants()) do
-            if part:IsA("BasePart") and (part.Name:lower() == "road" or part.Name:lower() == "sideroad") and math.abs(part.Position.Z - endZ) < 200 then
-                road = part
-                break
-            end
-        end
-    end
-    local pos
-    if road then
-        pos = Vector3.new(road.Position.X, road.Position.Y + road.Size.Y * 0.5 + 4.5, endZ - direction * 28)
-    else
-        pos = Vector3.new(chassis.Position.X, chassis.Position.Y + 5, endZ - direction * 28)
-    end
-    veh:PivotTo(CFrame.new(pos))
-    for _, p in ipairs(veh:GetDescendants()) do
-        if p:IsA("BasePart") then
-            p.AssemblyLinearVelocity = Vector3.zero
-            p.AssemblyAngularVelocity = Vector3.zero
-        end
+
+local function exitCurrentSeat()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hum and hum.SeatPart then
+        local seat = hum.SeatPart
+        hum.Sit = false
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        local weld = seat:FindFirstChild("SeatWeld") or (hrp and hrp:FindFirstChild("SeatWeld"))
+        if weld then pcall(function() weld:Destroy() end) end
+        task.wait(0.15)
     end
 end
 
@@ -3241,10 +3362,7 @@ local function moveCharacter(targetCF)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return false end
-    if hum.SeatPart then
-        hum.Sit = false
-        task.wait(0.1)
-    end
+    exitCurrentSeat()
     char:PivotTo(targetCF)
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
@@ -3313,20 +3431,11 @@ local function teleportToEndGate()
 
     local start = workspace:FindFirstChildOfClass("SpawnLocation")
     local direction = (not start or not start.Enabled or endZ >= start.Position.Z) and 1 or -1
-    local vehicle
-    if humanoid.SeatPart then
-        vehicle = humanoid.SeatPart:FindFirstAncestorWhichIsA("Model")
-    end
 
     local prompt = getEndPrompt()
     if prompt then
         local destination = getEndPromptDestination(prompt, direction)
         if destination then
-            if vehicle then
-                parkEndVehicle(vehicle, endZ, direction)
-                humanoid.Sit = false
-                task.wait(0.1)
-            end
             moveCharacter(destination)
             return true, prompt, direction, endZ
         end
@@ -3338,11 +3447,6 @@ local function teleportToEndGate()
     if prompt then
         local destination = getEndPromptDestination(prompt, direction)
         if destination then
-            if vehicle then
-                parkEndVehicle(vehicle, endZ, direction)
-                humanoid.Sit = false
-                task.wait(0.1)
-            end
             moveCharacter(destination)
             return true, prompt, direction, endZ
         end
@@ -3363,11 +3467,6 @@ local function teleportToEndGate()
         position = Vector3.new(road.Position.X, road.Position.Y + road.Size.Y * 0.5 + 8, endZ - direction * 35)
     end
 
-    if vehicle then
-        parkEndVehicle(vehicle, endZ, direction)
-        humanoid.Sit = false
-        task.wait(0.1)
-    end
     moveCharacter(CFrame.lookAt(position, position + Vector3.new(0, 0, direction), Vector3.yAxis))
 
     local expires = os.clock() + 12
@@ -4022,6 +4121,18 @@ bringToggleElement = Tabs.Item:AddToggle("BringItemsToggle", {
     end
 })
 
+Tabs.Item:AddSlider("BringDistanceSlider", {
+    Title = "Distance",
+    Default = Config.BringDistance or 1000,
+    Min = 50,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.BringDistance = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Item:AddToggle("AuraLootToggle", {
     Title = "Aura Loot",
     Default = Config.AuraLoot or Config.AutoPickupItem,
@@ -4043,6 +4154,18 @@ Tabs.Item:AddToggle("AutoLootToggle", {
         elseif stopAutoLoot then
             pcall(stopAutoLoot)
         end
+    end
+})
+
+Tabs.Item:AddSlider("AutoLootDistanceSlider", {
+    Title = "Distance",
+    Default = Config.AutoLootDistance or 1000,
+    Min = 50,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.AutoLootDistance = Value
+        SaveConfig()
     end
 })
 
@@ -4415,8 +4538,10 @@ task.spawn(function()
             if Config.AuraLoot or Config.AutoPickupItem then
                 local items = getAllItems()
                 for _, item in ipairs(items) do
+                    if droppedItems[item] or item:GetAttribute("PlayerDropped") then continue end
                     local handle = item:FindFirstChild("Handle") or (item:IsA("BasePart") and item) or item:FindFirstChildWhichIsA("BasePart")
                     if handle and handle.Parent then
+                        if droppedItems[handle] or handle:GetAttribute("PlayerDropped") then continue end
                         if (myHrp.Position - handle.Position).Magnitude <= 50 then
                             pcall(function()
                                 FlowFunction:InvokeServer("Loot", "LootEquip", handle)
@@ -4856,7 +4981,7 @@ local function handleVehicleFly(seat, veh, dt)
     local fwdDir = camLook
     local rightDir = camCFrame.RightVector
 
-    local speed = Config.VehicleFlySpeed or 100
+    local speed = Config.VehicleFlySpeed or 300
     local moveDir = Vector3.zero
 
     local isMovingFwd = false
@@ -4864,7 +4989,6 @@ local function handleVehicleFly(seat, veh, dt)
     local isMovingLeft = false
     local isMovingRight = false
     local isMovingUp = false
-    local isMovingDown = false
 
     if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
         isMovingFwd = true
@@ -4880,9 +5004,6 @@ local function handleVehicleFly(seat, veh, dt)
     end
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
         isMovingUp = true
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then
-        isMovingDown = true
     end
     if UserInputService:IsKeyDown(Enum.KeyCode.E) then
         isMovingUp = true
@@ -4918,7 +5039,6 @@ local function handleVehicleFly(seat, veh, dt)
     if isMovingRight then moveDir = moveDir + rightDir end
     if isMovingLeft then moveDir = moveDir - rightDir end
     if isMovingUp then moveDir = moveDir + Vector3.new(0, 1, 0) end
-    if isMovingDown then moveDir = moveDir + Vector3.new(0, -1, 0) end
 
     local targetVel = Vector3.zero
     if moveDir.Magnitude > 0.001 then
