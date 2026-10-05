@@ -1,1 +1,913 @@
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local targetPlaceId = 89744231770777
+
+if game.PlaceId ~= targetPlaceId then
+    return
+end
+
+local queueTeleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+if queueTeleport then
+    pcall(function()
+        queueTeleport('repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character; if game.PlaceId == ' .. tostring(targetPlaceId) .. ' then loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Auto%20Win"))() end')
+    end)
+end
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+pcall(function()
+    LocalPlayer.CameraMaxZoomDistance = 99999
+    LocalPlayer.CameraMinZoomDistance = 0.5
+    LocalPlayer.CameraMode = Enum.CameraMode.Classic
+    Camera.CameraType = Enum.CameraType.Custom
+    LocalPlayer:GetPropertyChangedSignal("CameraMaxZoomDistance"):Connect(function()
+        if LocalPlayer.CameraMaxZoomDistance < 1000 then
+            LocalPlayer.CameraMaxZoomDistance = 99999
+        end
+    end)
+end)
+
+pcall(function()
+    local lighting = game:GetService("Lighting")
+    lighting.GlobalShadows = false
+    lighting.FogEnd = 9e9
+    lighting.Brightness = 1
+    for _, v in ipairs(lighting:GetDescendants()) do
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
+            v.Enabled = false
+        end
+    end
+    if settings and settings().Rendering then
+        settings().Rendering.QualityLevel = 1
+    end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+            v.Enabled = false
+        elseif v:IsA("BasePart") then
+            v.Material = Enum.Material.SmoothPlastic
+            v.CastShadow = false
+        elseif v:IsA("Decal") or v:IsA("Texture") then
+            v.Transparency = 1
+        end
+    end
+    workspace.DescendantAdded:Connect(function(v)
+        if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+            v.Enabled = false
+        elseif v:IsA("BasePart") then
+            v.Material = Enum.Material.SmoothPlastic
+            v.CastShadow = false
+        end
+    end)
+end)
+
+pcall(function()
+    if getconnections then
+        for _, conn in ipairs(getconnections(LocalPlayer.Idled)) do
+            if conn.Disable then
+                conn:Disable()
+            elseif conn.Disconnect then
+                conn:Disconnect()
+            end
+        end
+    end
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.zero)
+    end)
+end)
+
+local function applyInstantPrompt(p)
+    if p:IsA("ProximityPrompt") then
+        p.HoldDuration = 0
+    end
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+    applyInstantPrompt(v)
+end
+
+workspace.DescendantAdded:Connect(applyInstantPrompt)
+
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
+    if fireproximityprompt then
+        fireproximityprompt(prompt)
+    end
+end)
+
+local function triggerPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return end
+    pcall(function()
+        prompt.HoldDuration = 0
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        end
+        prompt:InputHoldBegin()
+        task.wait(0.02)
+        prompt:InputHoldEnd()
+    end)
+end
+
+pcall(function()
+    local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
+    local oldMeleeHitBox = ToolShared.meleeHitBox
+    ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
+        return oldMeleeHitBox(p1, p2, 1000, 1000, 1000, p6, p7, p8)
+    end
+end)
+
+pcall(function()
+    local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+    local originalMeleeHit
+    originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
+        local args = {...}
+        task.spawn(function()
+            for i = 1, 199 do
+                task.wait(0.03)
+                originalMeleeHit(unpack(args))
+            end
+        end)
+        return originalMeleeHit(...)
+    end)
+
+    local originalLaserHit
+    originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
+        local args = {...}
+        task.spawn(function()
+            for i = 1, 199 do
+                task.wait(0.03)
+                originalLaserHit(unpack(args))
+            end
+        end)
+        return originalLaserHit(...)
+    end)
+end)
+
+local function isMelee(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local cfg = tool:FindFirstChildOfClass("Configuration")
+    return cfg and cfg:GetAttribute("Type") == "Melee"
+end
+
+local function equipAllMelee()
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if char and backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if isMelee(tool) then
+                tool.Parent = char
+            end
+        end
+    end
+end
+
+local function activateMelee()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") and isMelee(tool) then
+            pcall(function()
+                tool:Activate()
+                for _, obj in ipairs(tool:GetDescendants()) do
+                    if obj:IsA("Sound") then
+                        obj.Volume = 0
+                        obj:Stop()
+                    end
+                end
+            end)
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        equipAllMelee()
+        activateMelee()
+    end
+end)
+
+local targetItems = { ["Burger"] = true, ["GoldenBurger"] = true, ["DiamondBurger"] = true }
+local itemQueue = {}
+local collectedBurgerCount = 0
+
+local function hookBurgerNotification(obj)
+    if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+        local function checkText()
+            local text = string.lower(obj.Text or "")
+            if string.find(text, "burger") and (string.find(text, "gain") or string.find(text, "+")) then
+                local gain = string.match(text, "%+(%d+)")
+                local num = tonumber(gain) or 1
+                collectedBurgerCount = collectedBurgerCount + num
+            end
+        end
+        checkText()
+        obj:GetPropertyChangedSignal("Text"):Connect(checkText)
+    end
+end
+
+local function hookGuiContainer(container)
+    if not container then return end
+    for _, desc in ipairs(container:GetDescendants()) do
+        hookBurgerNotification(desc)
+    end
+    container.DescendantAdded:Connect(hookBurgerNotification)
+end
+
+pcall(function() hookGuiContainer(CoreGui) end)
+pcall(function() hookGuiContainer(LocalPlayer:WaitForChild("PlayerGui")) end)
+
+local function isItemEquipped(obj)
+    local ancestor = obj.Parent
+    while ancestor and ancestor ~= workspace do
+        if ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
+
+local function isValidBurger(obj)
+    if not (obj and obj.Parent and targetItems[obj.Name]) then return false end
+    if obj:FindFirstAncestor("Spawners") or obj:FindFirstAncestor("Spawner") then return false end
+    if obj:FindFirstAncestor("FloatingCastle") then return false end
+    local map = workspace:FindFirstChild("Map")
+    if map and obj:IsDescendantOf(map) then return false end
+    if isItemEquipped(obj) then return false end
+    local p = obj.Parent
+    if p and string.find(string.lower(p.Name), "spawn") then return false end
+    return true
+end
+
+local function addToQueue(obj)
+    if isValidBurger(obj) then
+        for _, v in ipairs(itemQueue) do if v == obj then return end end
+        table.insert(itemQueue, obj)
+    end
+end
+
+for _, obj in ipairs(workspace:GetDescendants()) do addToQueue(obj) end
+workspace.DescendantAdded:Connect(addToQueue)
+
+task.spawn(function()
+    while task.wait(1.5) do
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if targetItems[obj.Name] then addToQueue(obj) end
+        end
+        local m = workspace:FindFirstChild("Models")
+        if m then
+            for _, obj in ipairs(m:GetChildren()) do
+                if targetItems[obj.Name] then addToQueue(obj) end
+            end
+        end
+    end
+end)
+
+local lastBurgerInteract = 0
+RunService.RenderStepped:Connect(function()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -2)
+    local camPos = Camera.CFrame.Position
+    local hasBurgersNearby = false
+
+    for i = #itemQueue, 1, -1 do
+        local item = itemQueue[i]
+        if not isValidBurger(item) then
+            table.remove(itemQueue, i)
+        else
+            local targetPart = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or (item:IsA("BasePart") and item)
+            if targetPart and (camPos - targetPart.Position).Magnitude <= 1000 then
+                hasBurgersNearby = true
+                if item:IsA("Model") then
+                    item:PivotTo(targetCFrame)
+                    for _, p in ipairs(item:GetChildren()) do
+                        if p:IsA("BasePart") then
+                            p.CanCollide = false
+                            p.AssemblyLinearVelocity = Vector3.zero
+                            p.AssemblyAngularVelocity = Vector3.zero
+                            if hrp and firetouchinterest then
+                                firetouchinterest(hrp, p, 0)
+                                firetouchinterest(hrp, p, 1)
+                            end
+                        elseif p:IsA("ProximityPrompt") then
+                            if fireproximityprompt then
+                                fireproximityprompt(p)
+                            end
+                        end
+                    end
+                elseif item:IsA("BasePart") then
+                    item.CFrame = targetCFrame
+                    item.CanCollide = false
+                    item.AssemblyLinearVelocity = Vector3.zero
+                    item.AssemblyAngularVelocity = Vector3.zero
+                    if hrp and firetouchinterest then
+                        firetouchinterest(hrp, item, 0)
+                        firetouchinterest(hrp, item, 1)
+                    end
+                end
+                for _, prompt in ipairs(item:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        if fireproximityprompt then
+                            fireproximityprompt(prompt)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if hasBurgersNearby and tick() - lastBurgerInteract > 0.15 then
+        lastBurgerInteract = tick()
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+    end
+end)
+
+local currentHoverCFrame = nil
+local activeBossTarget = nil
+local noCollideCache = setmetatable({}, {__mode = "k"})
+
+local targetBossNames = {
+    ["commanderviridian"] = true,
+    ["commandercerulean"] = true,
+    ["commandercrimson"] = true,
+    ["nocturnecastellan"] = true,
+    ["voidreaper"] = true
+}
+
+local function bringBoss(b)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not (hrp and b and b.Parent) then return end
+    local targetCFrame = hrp.CFrame * CFrame.new(0, 0, -4)
+    pcall(function()
+        if not noCollideCache[b] then
+            noCollideCache[b] = true
+            for _, p in ipairs(b:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.CanCollide = false
+                end
+            end
+        end
+        local root = b:IsA("Model") and (b.PrimaryPart or b:FindFirstChild("HumanoidRootPart") or b:FindFirstChildWhichIsA("BasePart")) or (b:IsA("BasePart") and b)
+        if root then
+            root.CFrame = targetCFrame
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local containers = {workspace:FindFirstChild("Models"), workspace:FindFirstChild("Island"), workspace}
+            for _, container in ipairs(containers) do
+                if container then
+                    for _, obj in ipairs(container:GetChildren()) do
+                        if obj:IsA("Model") then
+                            local clean = string.gsub(string.lower(obj.Name), "%s+", "")
+                            if targetBossNames[clean] then
+                                local hum = obj:FindFirstChildOfClass("Humanoid")
+                                if hum and hum.Health > 0 then
+                                    bringBoss(obj)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and currentHoverCFrame then
+        hrp.CFrame = currentHoverCFrame
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end)
+
+local function isPlayerAlive()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if char:GetAttribute("Downed") or char:GetAttribute("Knocked") or char:GetAttribute("Dead") then return false end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        for _, g in ipairs(pg:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, t in ipairs(g:GetDescendants()) do
+                    if (t:IsA("TextLabel") or t:IsA("TextButton")) and string.find(string.lower(t.Text), "revive") then
+                        return false
+                    end
+                end
+            end
+        end
+    end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and string.find(string.lower(p.ActionText), "revive") then
+            return false
+        end
+    end
+    return true
+end
+
+local function findSafeArenaPoint(currentPos)
+    local activeMeteors = {}
+    for _, m in ipairs(workspace:GetChildren()) do
+        if m.Name == "Meteor" then
+            local p = m:IsA("BasePart") and m or (m:IsA("Model") and (m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)))
+            if p then
+                table.insert(activeMeteors, Vector3.new(p.Position.X, 0, p.Position.Z))
+            end
+        end
+    end
+
+    local flatCurrent = Vector3.new(currentPos.X, 0, currentPos.Z)
+    local isThreatened = false
+    for _, mPos in ipairs(activeMeteors) do
+        if (flatCurrent - mPos).Magnitude < 25 then
+            isThreatened = true
+            break
+        end
+    end
+    if not isThreatened then return nil end
+
+    local bestPos = nil
+    local maxMinDist = -1
+    for angle = 0, 330, 30 do
+        local rad = math.rad(angle)
+        local candX = currentPos.X + math.cos(rad) * 25
+        local candZ = currentPos.Z + math.sin(rad) * 25
+        local flatCand = Vector3.new(candX, 0, candZ)
+        local nearest = math.huge
+        for _, mPos in ipairs(activeMeteors) do
+            local d = (flatCand - mPos).Magnitude
+            if d < nearest then nearest = d end
+        end
+        if nearest > maxMinDist then
+            maxMinDist = nearest
+            bestPos = Vector3.new(candX, currentPos.Y, candZ)
+        end
+    end
+
+    return bestPos
+end
+
+local clickedPlayAgain = false
+task.spawn(function()
+    while task.wait(0.3) do
+        local found = false
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, v in ipairs(pg:GetDescendants()) do
+                if v:IsA("TextLabel") or v:IsA("TextButton") then
+                    local t = string.lower(v.Text or "")
+                    if string.find(t, "play again") then
+                        local btn = v:IsA("TextButton") and v or v.Parent
+                        if btn and btn:IsA("GuiButton") and btn.Visible then
+                            found = true
+                            if not clickedPlayAgain then
+                                clickedPlayAgain = true
+                                pcall(function()
+                                    if getconnections then
+                                        for _, e in ipairs(getconnections(btn.Activated)) do e:Fire() end
+                                        for _, e in ipairs(getconnections(btn.MouseButton1Click)) do e:Fire() end
+                                        for _, e in ipairs(getconnections(btn.MouseButton1Down)) do e:Fire() end
+                                    end
+                                    if firesignal then
+                                        firesignal(btn.Activated)
+                                        firesignal(btn.MouseButton1Click)
+                                        firesignal(btn.MouseButton1Down)
+                                    end
+                                    local absPos = btn.AbsolutePosition
+                                    local absSize = btn.AbsoluteSize
+                                    local inset = GuiService:GetGuiInset()
+                                    local cx = absPos.X + absSize.X / 2
+                                    local cy = absPos.Y + absSize.Y / 2 + inset.Y
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+                                    task.wait(0.05)
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+                                end)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        for _, p in ipairs(workspace:GetDescendants()) do
+            if p:IsA("BasePart") and ((p.Position - Vector3.new(8.5, 522.7, -52885.0)).Magnitude < 15 or (p.Position - Vector3.new(21.61, 1074.70, -52704.68)).Magnitude < 25) then
+                local cd = p:FindFirstChildOfClass("ClickDetector")
+                if cd and fireclickdetector then
+                    fireclickdetector(cd)
+                end
+            end
+        end
+        if not found then
+            clickedPlayAgain = false
+        end
+    end
+end)
+
+local statusText = "Init"
+local altarTimeText = "03:00"
+local currentCountdownVal = 180
+local altarActive = true
+
+local FloatGui = Instance.new("ScreenGui")
+FloatGui.Name = "AutoFarmBurgerGui"
+FloatGui.ResetOnSpawn = false
+FloatGui.DisplayOrder = 10000
+pcall(function() FloatGui.Parent = CoreGui end)
+if not FloatGui.Parent then FloatGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 190, 0, 0)
+MainFrame.AutomaticSize = Enum.AutomaticSize.Y
+MainFrame.Position = UDim2.new(0.5, -95, 0.1, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = FloatGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+local MainStroke = Instance.new("UIStroke", MainFrame)
+MainStroke.Thickness = 1.5
+MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+MainStroke.Color = Color3.fromRGB(160, 50, 255)
+
+local StrokeGrad = Instance.new("UIGradient", MainStroke)
+StrokeGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 50, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 0, 230)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
+})
+
+task.spawn(function()
+    TweenService:Create(StrokeGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
+end)
+
+local UIPadding = Instance.new("UIPadding", MainFrame)
+UIPadding.PaddingTop = UDim.new(0, 6)
+UIPadding.PaddingBottom = UDim.new(0, 6)
+UIPadding.PaddingLeft = UDim.new(0, 10)
+UIPadding.PaddingRight = UDim.new(0, 10)
+
+local UIList = Instance.new("UIListLayout", MainFrame)
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
+UIList.Padding = UDim.new(0, 4)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.LayoutOrder = 1
+TitleLabel.Size = UDim2.new(1, 0, 0, 16)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "Auto Win"
+TitleLabel.TextColor3 = Color3.fromRGB(225, 135, 255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 12
+TitleLabel.Parent = MainFrame
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.LayoutOrder = 2
+StatusLabel.Size = UDim2.new(1, 0, 0, 15)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Status: Init"
+StatusLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextSize = 10
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Parent = MainFrame
+
+local CounterLabel = Instance.new("TextLabel")
+CounterLabel.LayoutOrder = 3
+CounterLabel.Size = UDim2.new(1, 0, 0, 15)
+CounterLabel.BackgroundTransparency = 1
+CounterLabel.Text = "Burgers: 0"
+CounterLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+CounterLabel.Font = Enum.Font.GothamMedium
+CounterLabel.TextSize = 10
+CounterLabel.TextXAlignment = Enum.TextXAlignment.Left
+CounterLabel.Parent = MainFrame
+
+local AltarTimerLabel = Instance.new("TextLabel")
+AltarTimerLabel.LayoutOrder = 4
+AltarTimerLabel.Size = UDim2.new(1, 0, 0, 20)
+AltarTimerLabel.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
+AltarTimerLabel.BorderSizePixel = 0
+AltarTimerLabel.Text = "Countdown: 03:00"
+AltarTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+AltarTimerLabel.Font = Enum.Font.GothamBold
+AltarTimerLabel.TextSize = 11
+AltarTimerLabel.Parent = MainFrame
+Instance.new("UICorner", AltarTimerLabel).CornerRadius = UDim.new(0, 4)
+
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if not isPlayerAlive() then
+            StatusLabel.Text = "Status: Died"
+        else
+            StatusLabel.Text = "Status: " .. statusText
+        end
+        CounterLabel.Text = "Burgers: " .. tostring(collectedBurgerCount)
+        if altarActive and currentCountdownVal > 0 then
+            AltarTimerLabel.Visible = true
+            AltarTimerLabel.Text = "Countdown: " .. altarTimeText
+        else
+            AltarTimerLabel.Visible = false
+        end
+    end
+end)
+
+local function getPartCountdown()
+    local altar = workspace:FindFirstChild("AltarAndForcefield", true)
+    if altar then
+        for _, desc in ipairs(altar:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Text ~= "" then
+                local txt = desc.Text
+                local m, s = string.match(txt, "(%d+)%s*:%s*(%d+)")
+                if m and s then
+                    return tonumber(m) * 60 + tonumber(s)
+                end
+                local m2 = string.match(txt, "(%d+)%s*min")
+                local s2 = string.match(txt, "(%d+)%s*s")
+                if m2 or s2 then
+                    return (tonumber(m2) or 0) * 60 + (tonumber(s2) or 0)
+                end
+            end
+        end
+    end
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BillboardGui") or desc:IsA("SurfaceGui") then
+            for _, lbl in ipairs(desc:GetDescendants()) do
+                if lbl:IsA("TextLabel") and lbl.Text ~= "" then
+                    local m, s = string.match(lbl.Text, "(%d+)%s*:%s*(%d+)")
+                    if m and s then
+                        local sec = tonumber(m) * 60 + tonumber(s)
+                        if sec <= 300 and sec > 0 then
+                            return sec
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function killCommander(name, pos)
+    statusText = name
+    currentHoverCFrame = CFrame.new(pos)
+    local start = tick()
+    local spawned = false
+    while tick() - start < 35 do
+        if not isPlayerAlive() then
+            activeBossTarget = nil
+            return
+        end
+        local b = nil
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Model") and string.lower(v.Name) == string.lower(name) then
+                b = v
+                break
+            end
+        end
+        if b and b.Parent then
+            local hum = b:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                spawned = true
+                activeBossTarget = b
+                bringBoss(b)
+            elseif spawned and (not hum or hum.Health <= 0) then
+                break
+            end
+        elseif spawned then
+            break
+        end
+        task.wait(0.05)
+    end
+    activeBossTarget = nil
+end
+
+task.spawn(function()
+    statusText = "Safe Zone"
+    currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+    task.wait(1.5)
+
+    statusText = "Waiting Forcefield"
+    local forcePart = nil
+    while not forcePart do
+        if not isPlayerAlive() then return end
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "Forcefield" and obj:IsA("BasePart") then
+                forcePart = obj
+                break
+            end
+            if obj:IsA("ProximityPrompt") and string.find(string.lower(obj.ActionText), "break") then
+                forcePart = obj.Parent
+                break
+            end
+        end
+        task.wait(0.4)
+    end
+
+    statusText = "Break & Activate"
+    currentHoverCFrame = CFrame.new(0.0, 4.0, 47077.1)
+    task.wait(0.4)
+
+    for i = 1, 8 do
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") then
+                local act = string.lower(obj.ActionText)
+                local ob = string.lower(obj.ObjectText)
+                if string.find(act, "break") or string.find(ob, "force") or string.find(act, "activate") or string.find(ob, "relic") then
+                    triggerPrompt(obj)
+                end
+            end
+        end
+        task.wait(0.15)
+    end
+
+    statusText = "Safe Zone"
+    currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+
+    local targetCountdown = 180
+    local timerStart = tick()
+    while true do
+        if not isPlayerAlive() then return end
+        local partTime = getPartCountdown()
+        if partTime then
+            targetCountdown = partTime
+            timerStart = tick()
+        else
+            local elapsed = tick() - timerStart
+            targetCountdown = math.max(0, targetCountdown - elapsed)
+            timerStart = tick()
+        end
+        currentCountdownVal = targetCountdown
+        local min = math.floor(targetCountdown / 60)
+        local sec = math.floor(targetCountdown % 60)
+        altarTimeText = string.format("%02d:%02d", min, sec)
+
+        if targetCountdown <= 179 then
+            currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+        end
+
+        if targetCountdown <= 0 then
+            break
+        end
+        task.wait(0.2)
+    end
+
+    altarActive = false
+    currentCountdownVal = 0
+
+    task.wait(6)
+
+    killCommander("CommanderViridian", Vector3.new(-11.48, 97.65, -59369.35))
+    if not isPlayerAlive() then return end
+
+    killCommander("CommanderCerulean", Vector3.new(-4.90, 75.29, -57446.75))
+    if not isPlayerAlive() then return end
+
+    killCommander("CommanderCrimson", Vector3.new(2.63, 72.58, -55369.46))
+    if not isPlayerAlive() then return end
+
+    statusText = "Arena Portal"
+    currentHoverCFrame = nil
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = CFrame.new(0.0, 15.8, -53100.4)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    local arenaPortal = workspace:FindFirstChild("ArenaPortal", true)
+    if arenaPortal and arenaPortal:IsA("BasePart") and hrp then
+        if firetouchinterest then
+            firetouchinterest(hrp, arenaPortal, 0)
+            firetouchinterest(hrp, arenaPortal, 1)
+        end
+    end
+
+    task.wait(2)
+
+    statusText = "VoidReaper"
+    currentHoverCFrame = nil
+    local island = workspace:FindFirstChild("Island")
+
+    local reaperVerified = false
+    local rStart = tick()
+
+    while tick() - rStart < 180 do
+        if not isPlayerAlive() then return end
+
+        local reaper = nil
+        local models = workspace:FindFirstChild("Models")
+        if models then
+            reaper = models:FindFirstChild("VoidReaper")
+        end
+        if not reaper then
+            for _, v in ipairs(workspace:GetDescendants()) do
+                if v:IsA("Model") and string.lower(v.Name) == "voidreaper" then
+                    reaper = v
+                    break
+                end
+            end
+        end
+
+        local hum = reaper and reaper:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            reaperVerified = true
+            activeBossTarget = reaper
+            bringBoss(reaper)
+        end
+
+        local endPortal = island and island:FindFirstChild("EndPortal")
+        local isPortalUnlocked = endPortal and endPortal:GetAttribute("BlockPortal") == false
+
+        if reaperVerified and (not reaper or not reaper.Parent or (hum and hum.Health <= 0)) then
+            break
+        end
+
+        if reaperVerified and isPortalUnlocked then
+            break
+        end
+
+        char = LocalPlayer.Character
+        hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local safePos = findSafeArenaPoint(hrp.Position)
+            if safePos then
+                hrp.CFrame = CFrame.new(safePos)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+
+        task.wait(0.08)
+    end
+    activeBossTarget = nil
+
+    if not isPlayerAlive() then return end
+
+    statusText = "Final Portal"
+    currentHoverCFrame = nil
+    local finalPos = Vector3.new(21.61, 1074.70, -52704.68)
+    for i = 1, 15 do
+        char = LocalPlayer.Character
+        hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(finalPos)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+            if firetouchinterest then
+                for _, p in ipairs(workspace:GetDescendants()) do
+                    if p:IsA("BasePart") and (p.Position - finalPos).Magnitude < 30 then
+                        firetouchinterest(hrp, p, 0)
+                        firetouchinterest(hrp, p, 1)
+                    end
+                end
+            end
+        end
+        task.wait(0.15)
+    end
+
+    statusText = "Victory"
+    while not clickedPlayAgain do
+        if not isPlayerAlive() then return end
+        task.wait(0.5)
+    end
+
+    statusText = "Done"
+end)
 
