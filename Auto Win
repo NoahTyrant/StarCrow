@@ -761,9 +761,9 @@ task.spawn(function()
 
     statusText = "Break & Activate"
     currentHoverCFrame = CFrame.new(0.0, 4.0, 47077.1)
-    task.wait(0.4)
+    task.wait(0.5)
 
-    for i = 1, 8 do
+    for i = 1, 2 do
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("ProximityPrompt") then
                 local act = string.lower(obj.ActionText)
@@ -773,7 +773,7 @@ task.spawn(function()
                 end
             end
         end
-        task.wait(0.15)
+        task.wait(0.5)
     end
 
     statusText = "Safe Zone"
@@ -796,10 +796,6 @@ task.spawn(function()
         local min = math.floor(targetCountdown / 60)
         local sec = math.floor(targetCountdown % 60)
         altarTimeText = string.format("%02d:%02d", min, sec)
-
-        if targetCountdown <= 179 then
-            currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
-        end
 
         if targetCountdown <= 0 then
             break
