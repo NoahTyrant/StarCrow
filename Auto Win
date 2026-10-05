@@ -812,13 +812,13 @@ task.spawn(function()
 
     task.wait(6)
 
-    killCommander("CommanderViridian", Vector3.new(-11.48, 97.65, -59369.35))
+    killCommander("CommanderViridian", Vector3.new(-0.36, 132.56, -59349.80))
     if not isPlayerAlive() then return end
 
-    killCommander("CommanderCerulean", Vector3.new(-4.90, 75.29, -57446.75))
+    killCommander("CommanderCerulean", Vector3.new(3.36, 72.74, -57509.14))
     if not isPlayerAlive() then return end
 
-    killCommander("CommanderCrimson", Vector3.new(2.63, 72.58, -55369.46))
+    killCommander("CommanderCrimson", Vector3.new(14.65, 81.10, -55359.38))
     if not isPlayerAlive() then return end
 
     statusText = "Arena Portal"
