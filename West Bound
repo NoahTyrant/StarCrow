@@ -1156,38 +1156,145 @@ local function IsBagFull()
     return false
 end
 
-local function TriggerRob()
-    local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    for i = 1, 10 do
-        if not getgenv().StarCrowAutoBank then break end
-        if IsBagFull() then break end
-        local myPos = root.Position
-        local targets = GetRobTargets()
-        for _, target in ipairs(targets) do
-            if target.part and target.part.Parent and (myPos - target.part.Position).Magnitude <= 30 then
-                pcall(function()
-                    if target.isSafe then
-                        local r = target.obj:FindFirstChild("OpenSafe")
-                        if r and r:IsA("RemoteEvent") then r:FireServer("Complete") end
-                        robRemote:FireServer("Safe", target.obj)
-                    else
-                        robRemote:FireServer("Register", target.obj)
-                    end
-                end)
+local function GetBankSafes(centerPos)
+    local safes = {}
+    if not centerPos then
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        centerPos = root and root.Position or Vector3.new(872.05, 24.67, 198.21)
+    end
+    local cs = game:GetService("CollectionService")
+    local tagged = cs:GetTagged("Safe")
+    for _, item in ipairs(tagged) do
+        local model = item:IsA("Model") and item or item.Parent
+        if model and model:IsA("Model") and model:FindFirstChild("OpenSafe") and model:FindFirstChild("Amount") then
+            local part = model:FindFirstChild("SafePart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+            if part and (part.Position - centerPos).Magnitude <= 150 then
+                local exists = false
+                for _, s in ipairs(safes) do
+                    if s.model == model then exists = true break end
+                end
+                if not exists then
+                    table.insert(safes, {
+                        model = model,
+                        part = part,
+                        amount = model:FindFirstChild("Amount"),
+                        open = model:FindFirstChild("Open"),
+                        openSafe = model:FindFirstChild("OpenSafe")
+                    })
+                end
             end
         end
-        task.wait(0.1)
+    end
+    if #safes == 0 then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "Safe" and obj:IsA("Model") and obj:FindFirstChild("OpenSafe") and obj:FindFirstChild("Amount") then
+                local part = obj:FindFirstChild("SafePart") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                if part and (part.Position - centerPos).Magnitude <= 150 then
+                    local exists = false
+                    for _, s in ipairs(safes) do
+                        if s.model == obj then exists = true break end
+                    end
+                    if not exists then
+                        table.insert(safes, {
+                            model = obj,
+                            part = part,
+                            amount = obj:FindFirstChild("Amount"),
+                            open = obj:FindFirstChild("Open"),
+                            openSafe = obj:FindFirstChild("OpenSafe")
+                        })
+                    end
+                end
+            end
+        end
+    end
+    table.sort(safes, function(a, b)
+        return (a.part.Position - centerPos).Magnitude < (b.part.Position - centerPos).Magnitude
+    end)
+    return safes
+end
+
+local function RobBankSafes(centerPos)
+    if not getgenv().StarCrowAutoBank then return end
+    if IsBagFull() then return end
+
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not root or not hum then return end
+
+    local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
+    local safes = GetBankSafes(centerPos)
+
+    local currentTargetCF = nil
+    local noclipConn = RunService.Stepped:Connect(function()
+        if not char or not char.Parent then return end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+            end
+        end
+        if root and currentTargetCF then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            char:PivotTo(currentTargetCF)
+        end
+    end)
+
+    for _, safeData in ipairs(safes) do
+        if not getgenv().StarCrowAutoBank then break end
+        if IsBagFull() then break end
+
+        local amountObj = safeData.amount
+        if amountObj and amountObj.Value > 0 then
+            local part = safeData.part
+            if part and part.Parent then
+                pcall(function()
+                    part.CanCollide = false
+                    for _, ch in ipairs(safeData.model:GetChildren()) do
+                        if ch:IsA("BasePart") then
+                            ch.CanCollide = false
+                        end
+                    end
+                end)
+
+                currentTargetCF = part.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+                hum.PlatformStand = true
+                hum.AutoRotate = false
+
+                task.wait(0.2)
+
+                if safeData.open and safeData.open.Value == false and safeData.openSafe then
+                    safeData.openSafe:FireServer("Complete")
+                    task.wait(0.25)
+                end
+
+                while getgenv().StarCrowAutoBank and not IsBagFull() and amountObj.Value > 0 do
+                    robRemote:FireServer("Safe", safeData.model)
+                    task.wait(0.25)
+                end
+            end
+        end
+    end
+
+    if root then
+        pcall(function() root.Anchored = true end)
+    end
+    if noclipConn then
+        noclipConn:Disconnect()
     end
 end
 
-local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
+local function SpawnAt(spawnName, arg2, tpPos)
     if not getgenv().StarCrowAutoBank then return end
 
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChild("Humanoid")
+    local oldRoot = char and char:FindFirstChild("HumanoidRootPart")
+    if oldRoot then
+        pcall(function() oldRoot.Anchored = true end)
+    end
+
     if hum and hum.Health <= 0 then
         task.wait(math.max(0, getgenv().StarCrowSpawnDelay or 3))
     end
@@ -1202,8 +1309,11 @@ local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
     ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Spawn", 9e9):InvokeServer(unpack(spawnArgs))
 
     if oldChar then
-        repeat task.wait(0.05)
-        until (LocalPlayer.Character ~= oldChar and LocalPlayer.Character ~= nil) or not getgenv().StarCrowAutoBank
+        local waited = 0
+        repeat
+            task.wait(0.05)
+            waited = waited + 0.05
+        until (LocalPlayer.Character ~= oldChar and LocalPlayer.Character ~= nil) or waited >= 4 or not getgenv().StarCrowAutoBank
     end
 
     if not getgenv().StarCrowAutoBank then return end
@@ -1212,36 +1322,17 @@ local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
     local root = char:WaitForChild("HumanoidRootPart", 9e9)
     hum = char:WaitForChild("Humanoid", 9e9)
 
-    if root and hum then
-        if not prePos and not tpPos1 and not tpPos2 then return end
-
+    if root and hum and tpPos then
         task.wait(1.5)
-
-        if prePos then
-            if not getgenv().StarCrowAutoBank then return end
-            char:PivotTo(CFrame.new(prePos))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.5)
-        end
-
-        if tpPos1 then
-            if not getgenv().StarCrowAutoBank then return end
-            char:PivotTo(CFrame.new(tpPos1))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            TriggerRob()
-        end
-
-        if tpPos2 then
-            if not getgenv().StarCrowAutoBank then return end
-            if IsBagFull() then return end
-            char:PivotTo(CFrame.new(tpPos2))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            TriggerRob()
-        end
+        if not getgenv().StarCrowAutoBank then return end
+        char:PivotTo(CFrame.new(tpPos))
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.5)
+    else
+        task.wait(1.5)
     end
+    return char, root, hum
 end
 
 local Window = Fluent:CreateWindow({ Title = "StarCrowHub", SubTitle = "West Bound", TabWidth = 130, Size = UDim2.fromOffset(460, 400), Acrylic = false, Theme = S.Config.UITheme or "Amethyst", MinimizeKey = Enum.KeyCode.LeftControl })
@@ -1523,27 +1614,44 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
 
             task.spawn(function()
                 local Banks = {
-                    {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
-                    {Name = "Grayridge",  arg2 = false, prePos = Vector3.new(1546.87, 120.09, 1603.42), p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
-                    {Name = "Plainview",  arg2 = false, prePos = Vector3.new(60.15, 51.20, 2931.69), p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
-                    {Name = "Silverton",  arg2 = false, prePos = Vector3.new(2022.95, 160.92, 3410.41), p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
-                    {Name = "StoneCreek", arg2 = false, prePos = nil, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
+                    {Name = "Tumbleweed", arg2 = false, p1 = Vector3.new(-339.12, 12.35, -85.14), safePos = Vector3.new(-260.32, 13.35, -172.18)},
+                    {Name = "Grayridge",  arg2 = false, p1 = Vector3.new(1539.44, 120.35, 1619.48), safePos = Vector3.new(1576.47, 121.35, 1674.85)},
+                    {Name = "Plainview",  arg2 = false, p1 = Vector3.new(52.75, 51.20, 2929.41),  safePos = Vector3.new(-0.88, 51.79, 3024.17)},
+                    {Name = "Silverton",  arg2 = false, p1 = Vector3.new(1997.52, 165.03, 3458.83), safePos = Vector3.new(1907.59, 170.08, 3459.57)},
+                    {Name = "StoneCreek", arg2 = false, p1 = nil, safePos = Vector3.new(872.05, 24.67, 198.21)}
                 }
 
                 local i = 1
                 while getgenv().StarCrowAutoBank do
                     local bank = Banks[i]
 
-                    SpawnAndTP(bank.Name, bank.arg2, bank.prePos, bank.p1, bank.p2)
+                    while getgenv().StarCrowAutoBank do
+                        SpawnAt(bank.Name, bank.arg2, bank.p1)
+                        if not getgenv().StarCrowAutoBank then break end
 
-                    if IsBagFull() then
-                        SpawnAndTP("FortCassidy", true, nil, nil, nil)
+                        RobBankSafes(bank.safePos or bank.p1)
 
+                        local stillHasMoney = false
+                        local safes = GetBankSafes(bank.safePos or bank.p1)
+                        for _, s in ipairs(safes) do
+                            if s.amount and s.amount.Value > 0 then
+                                stillHasMoney = true
+                                break
+                            end
+                        end
+
+                        SpawnAt("FortCassidy", true, nil)
                         local timeout = 0
                         repeat
                             task.wait(0.5)
                             timeout = timeout + 0.5
-                        until not IsBagFull() or timeout >= 5 or not getgenv().StarCrowAutoBank
+                        until not IsBagFull() or timeout >= 3 or not getgenv().StarCrowAutoBank
+
+                        if not stillHasMoney then
+                            break
+                        end
+
+                        task.wait(0.5)
                     end
 
                     i = i + 1
