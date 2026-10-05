@@ -41,6 +41,25 @@ pcall(function()
     end)
 end)
 
+task.spawn(function()
+    local lighting = game:GetService("Lighting")
+    while task.wait(1) do
+        pcall(function()
+            lighting.Brightness = 2
+            lighting.ClockTime = 14
+            lighting.FogEnd = 9e9
+            lighting.FogStart = 9e9
+            lighting.GlobalShadows = false
+            lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            local atm = lighting:FindFirstChildWhichIsA("Atmosphere")
+            if atm then
+                atm.Density = 0
+            end
+        end)
+    end
+end)
+
 pcall(function()
     local lighting = game:GetService("Lighting")
     lighting.GlobalShadows = false
@@ -406,7 +425,8 @@ RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp and currentHoverCFrame then
-        hrp.CFrame = currentHoverCFrame
+        local pos = currentHoverCFrame.Position
+        hrp.CFrame = CFrame.new(pos) * hrp.CFrame.Rotation
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
@@ -719,7 +739,7 @@ end
 
 task.spawn(function()
     statusText = "Safe Zone"
-    currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+    currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
     task.wait(1.5)
 
     statusText = "Waiting Forcefield"
@@ -757,7 +777,7 @@ task.spawn(function()
     end
 
     statusText = "Safe Zone"
-    currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+    currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
 
     local targetCountdown = 180
     local timerStart = tick()
@@ -778,7 +798,7 @@ task.spawn(function()
         altarTimeText = string.format("%02d:%02d", min, sec)
 
         if targetCountdown <= 179 then
-            currentHoverCFrame = CFrame.new(-0.35, 86.03, 46989.41)
+            currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
         end
 
         if targetCountdown <= 0 then
@@ -910,4 +930,3 @@ task.spawn(function()
 
     statusText = "Done"
 end)
-
