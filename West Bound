@@ -1250,7 +1250,6 @@ local Tabs = {
     AutoFarm  = Window:AddTab({ Title = "Auto Farm", Icon = "gem" }),
     Teleport  = Window:AddTab({ Title = "Teleport",  Icon = "map" }),
     Aim       = Window:AddTab({ Title = "Combat",    Icon = "crosshair" }),
-    GunMod    = Window:AddTab({ Title = "Gun Mod",   Icon = "swords" }),
     ESP       = Window:AddTab({ Title = "ESP",       Icon = "eye" }),
     Player    = Window:AddTab({ Title = "Player",    Icon = "user" }),
     Horse     = Window:AddTab({ Title = "Horse",     Icon = "wind" }),
@@ -1280,11 +1279,6 @@ Tabs.Teleport:AddButton({ Title = "RedRocks", Callback = function() spawnTP("Red
 Tabs.Teleport:AddButton({ Title = "FortCassidy", Callback = function() spawnTP("FortCassidy", true) end })
 Tabs.Teleport:AddButton({ Title = "FortArthur", Callback = function() spawnTP("FortArthur", true) end })
 Tabs.Teleport:AddButton({ Title = "CoyotesRest", Callback = function() spawnTP("CoyotesRest", true) end })
-
-Tabs.AutoFarm:AddParagraph({
-    Title = "Auto Bank Robbery",
-    Content = "Auto Farm might glitch, rejoin if it errors."
-})
 
 Tabs.AutoFarm:AddButton({
     Title = "FPS Boost",
@@ -1332,6 +1326,157 @@ Tabs.AutoFarm:AddButton({
     end
 })
 
+local totalFarmedTime = 0
+local sessionStartTime = nil
+local totalCollectedMoney = 0
+local lastLeaderboardMoney = nil
+local cachedMoneyObj = nil
+
+local function getLeaderboardMoney()
+    if cachedMoneyObj and cachedMoneyObj.Parent then
+        local v = cachedMoneyObj.Value
+        if type(v) == "number" then return v end
+        local n = tonumber(v)
+        if n then return n end
+        return tonumber((tostring(v):gsub("%D", ""))) or 0
+    end
+    local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Stats") or LocalPlayer:FindFirstChild("Data")
+    if ls then
+        for _, name in ipairs({"$$", "Cash", "Money", "Dollars", "Wallet"}) do
+            local v = ls:FindFirstChild(name)
+            if v and v:IsA("ValueBase") then
+                cachedMoneyObj = v
+                local num = tonumber(v.Value)
+                if not num then
+                    num = tonumber((tostring(v.Value):gsub("%D", "")))
+                end
+                if num then return num end
+            end
+        end
+        for _, v in ipairs(ls:GetChildren()) do
+            if v:IsA("ValueBase") then
+                cachedMoneyObj = v
+                local num = tonumber(v.Value)
+                if not num then
+                    num = tonumber((tostring(v.Value):gsub("%D", "")))
+                end
+                if num then return num end
+            end
+        end
+    end
+    return 0
+end
+
+local function formatMoney(amount)
+    local val = math.floor(math.max(0, amount or 0))
+    local str = tostring(val)
+    local k
+    repeat
+        str, k = str:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+    until k == 0
+    return str
+end
+
+local function formatTime(s)
+    s = math.floor(math.max(0, s or 0))
+    local hours = math.floor(s / 3600)
+    local mins = math.floor((s % 3600) / 60)
+    local secs = s % 60
+    if hours > 0 then
+        return string.format("%02d:%02d:%02d", hours, mins, secs)
+    else
+        return string.format("%02d:%02d", mins, secs)
+    end
+end
+
+local FarmGui = Instance.new("ScreenGui")
+FarmGui.Name = "StarCrowFarmGui"
+FarmGui.ResetOnSpawn = false
+FarmGui.DisplayOrder = 10001
+pcall(function()
+    local old = game:GetService("CoreGui"):FindFirstChild("StarCrowFarmGui")
+    if old then old:Destroy() end
+    FarmGui.Parent = game:GetService("CoreGui")
+end)
+if not FarmGui.Parent then FarmGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local FarmFrame = Instance.new("Frame")
+FarmFrame.Size = UDim2.new(0, 190, 0, 85)
+FarmFrame.Position = UDim2.new(0.5, -95, 0.08, 0)
+FarmFrame.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
+FarmFrame.BorderSizePixel = 0
+FarmFrame.Active = true
+FarmFrame.Draggable = true
+FarmFrame.Visible = false
+FarmFrame.Parent = FarmGui
+Instance.new("UICorner", FarmFrame).CornerRadius = UDim.new(0, 8)
+
+local FarmStroke = Instance.new("UIStroke", FarmFrame)
+FarmStroke.Thickness = 1.5
+FarmStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+FarmStroke.Color = Color3.fromRGB(160, 50, 255)
+
+local FarmStrokeGrad = Instance.new("UIGradient", FarmStroke)
+FarmStrokeGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 50, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 0, 230)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
+})
+FarmStrokeGrad.Rotation = 45
+
+local FarmPadding = Instance.new("UIPadding", FarmFrame)
+FarmPadding.PaddingTop = UDim.new(0, 6)
+FarmPadding.PaddingBottom = UDim.new(0, 6)
+FarmPadding.PaddingLeft = UDim.new(0, 10)
+FarmPadding.PaddingRight = UDim.new(0, 10)
+
+local FarmUIList = Instance.new("UIListLayout", FarmFrame)
+FarmUIList.SortOrder = Enum.SortOrder.LayoutOrder
+FarmUIList.Padding = UDim.new(0, 4)
+
+local FarmTitle = Instance.new("TextLabel")
+FarmTitle.LayoutOrder = 1
+FarmTitle.Size = UDim2.new(1, 0, 0, 16)
+FarmTitle.BackgroundTransparency = 1
+FarmTitle.Text = "Auto Farm"
+FarmTitle.TextColor3 = Color3.fromRGB(225, 135, 255)
+FarmTitle.Font = Enum.Font.GothamBold
+FarmTitle.TextSize = 12
+FarmTitle.Parent = FarmFrame
+
+local FarmTimeLabel = Instance.new("TextLabel")
+FarmTimeLabel.LayoutOrder = 2
+FarmTimeLabel.Size = UDim2.new(1, 0, 0, 15)
+FarmTimeLabel.BackgroundTransparency = 1
+FarmTimeLabel.Text = "Time: 00:00"
+FarmTimeLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+FarmTimeLabel.Font = Enum.Font.Gotham
+FarmTimeLabel.TextSize = 10
+FarmTimeLabel.TextXAlignment = Enum.TextXAlignment.Left
+FarmTimeLabel.Parent = FarmFrame
+
+local FarmCollectedLabel = Instance.new("TextLabel")
+FarmCollectedLabel.LayoutOrder = 3
+FarmCollectedLabel.Size = UDim2.new(1, 0, 0, 15)
+FarmCollectedLabel.BackgroundTransparency = 1
+FarmCollectedLabel.Text = "Earned: $0"
+FarmCollectedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+FarmCollectedLabel.Font = Enum.Font.GothamMedium
+FarmCollectedLabel.TextSize = 10
+FarmCollectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+FarmCollectedLabel.Parent = FarmFrame
+
+local FarmTotalLabel = Instance.new("TextLabel")
+FarmTotalLabel.LayoutOrder = 4
+FarmTotalLabel.Size = UDim2.new(1, 0, 0, 15)
+FarmTotalLabel.BackgroundTransparency = 1
+FarmTotalLabel.Text = "Total: $0"
+FarmTotalLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+FarmTotalLabel.Font = Enum.Font.GothamMedium
+FarmTotalLabel.TextSize = 10
+FarmTotalLabel.TextXAlignment = Enum.TextXAlignment.Left
+FarmTotalLabel.Parent = FarmFrame
+
 Tabs.AutoFarm:AddToggle("AutoBankToggle", {
     Title   = "Auto Farm Banks",
     Default = S.Config.AutoBankEnabled,
@@ -1340,6 +1485,31 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
         S.Config.AutoBankEnabled = v
         SaveConfig()
         if v then
+            sessionStartTime = tick()
+            local initTotal = getLeaderboardMoney()
+            if initTotal > 0 then lastLeaderboardMoney = initTotal end
+            FarmFrame.Visible = true
+            FarmTimeLabel.Text = "Time: " .. formatTime(totalFarmedTime)
+            FarmCollectedLabel.Text = "Earned: $" .. formatMoney(totalCollectedMoney)
+            FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or 0)
+
+            task.spawn(function()
+                while getgenv().StarCrowAutoBank do
+                    local curTotal = getLeaderboardMoney()
+                    if curTotal > 0 then
+                        if lastLeaderboardMoney and lastLeaderboardMoney > 0 and curTotal > lastLeaderboardMoney then
+                            totalCollectedMoney = totalCollectedMoney + (curTotal - lastLeaderboardMoney)
+                        end
+                        lastLeaderboardMoney = curTotal
+                    end
+                    local curElapsed = totalFarmedTime + (sessionStartTime and (tick() - sessionStartTime) or 0)
+                    FarmTimeLabel.Text = "Time: " .. formatTime(curElapsed)
+                    FarmCollectedLabel.Text = "Earned: $" .. formatMoney(totalCollectedMoney)
+                    FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or curTotal)
+                    task.wait(1)
+                end
+            end)
+
             task.spawn(function()
                 local Banks = {
                     {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
@@ -1371,6 +1541,12 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                     task.wait(0.5)
                 end
             end)
+        else
+            if sessionStartTime then
+                totalFarmedTime = totalFarmedTime + (tick() - sessionStartTime)
+                sessionStartTime = nil
+            end
+            FarmFrame.Visible = false
         end
     end
 })
@@ -1395,6 +1571,133 @@ Tabs.AutoFarm:AddInput("SpawnDelay", {
 
 Tabs.Aim:AddSection("Silent Aim")
 Tabs.Aim:AddToggle("AimPlayer", { Title = "Silent Aim Player", Default = S.Config.AimPlayer, Callback = function(v) S.Config.AimPlayer = v if v then InitSilentAimHook() end SaveConfig() end })
+Tabs.Aim:AddButton({
+    Title = "Gun Mods",
+    Callback = function()
+        local function isJoalland(stat, name)
+            if name and type(name) == "string" and name:lower():find("joal") then
+                return true
+            end
+            if type(stat) == "table" then
+                if rawget(stat, "__isJoalland") then return true end
+                for k, v in pairs(stat) do
+                    if type(k) == "string" and k:lower():find("joal") then return true end
+                    if type(v) == "string" and v:lower():find("joal") then return true end
+                end
+            end
+            return false
+        end
+
+        local function shouldPatch(stat)
+            local t = rawget(stat, "GunType")
+            return t == "Pistol" or t == "Rifle" or isJoalland(stat)
+        end
+
+        local function isSniper(stat)
+            return rawget(stat, "GunType") == "Sniper"
+        end
+
+        local function patchAll(stat)
+            if type(stat) ~= "table" then return end
+            pcall(function()
+                if setreadonly then pcall(setreadonly, stat, false) end
+
+                if isJoalland(stat) then
+                    stat.ReloadSpeed = 1.2
+                    stat.ReloadAnimationSpeed = 2.4
+                else
+                    stat.FullReload = true
+                    stat.ReloadSpeed = 0.01
+                    stat.ReloadAnimationSpeed = 10
+                end
+
+                stat.prepTime   = 0.04
+                stat.equipTime  = 0.2
+                stat.EquipDelay = 0.1
+
+                if stat.FireRate   ~= nil then stat.FireRate   = 0.3 end
+                if stat.fireRate   ~= nil then stat.fireRate   = 0.3 end
+                if stat.FireDelay  ~= nil then stat.FireDelay  = 0.3 end
+                if stat.RateOfFire ~= nil then stat.RateOfFire = 0.3 end
+
+                stat.Spread = 0
+                stat.HipFireAccuracy = 0
+                stat.ZoomAccuracy = 0
+
+                for key, value in pairs(stat) do
+                    local lk = string.lower(key)
+                    if lk ~= "camshakeresist" and (lk:find("recoil") or lk:find("kick") or lk:find("sway") or lk:find("shake")) then
+                        if type(value) == "number" then stat[key] = 0
+                        elseif type(value) == "boolean" then stat[key] = false end
+                    end
+                end
+
+                stat.camShakeResist = math.huge
+            end)
+        end
+
+        local function patchSniper(stat)
+            if type(stat) ~= "table" then return end
+            pcall(function()
+                if setreadonly then pcall(setreadonly, stat, false) end
+
+                stat.EquipDelay = 0.1
+                stat.equipTime  = 0.2
+                stat.ReloadSpeed = 1.2
+                stat.ReloadAnimationSpeed = 2.4
+
+                stat.ZoomAccuracy    = 0
+                stat.HipFireAccuracy = 0
+
+                for key, value in pairs(stat) do
+                    local lk = string.lower(key)
+                    if lk ~= "camshakeresist" and (lk:find("recoil") or lk:find("kick") or lk:find("sway") or lk:find("shake")) then
+                        if type(value) == "number" then stat[key] = 0
+                        elseif type(value) == "boolean" then stat[key] = false end
+                    end
+                end
+
+                stat.camShakeResist = math.huge
+            end)
+        end
+
+        pcall(function()
+            local GunStats = require(ReplicatedStorage:WaitForChild("GunScripts"):WaitForChild("GunStats"))
+            if GunStats.FanFirePrepTime ~= nil then
+                if setreadonly then pcall(setreadonly, GunStats, false) end
+                GunStats.FanFirePrepTime = 0.06
+                if setreadonly then pcall(setreadonly, GunStats, true) end
+            end
+            for gunName, stat in pairs(GunStats) do
+                if type(stat) == "table" then
+                    if isJoalland(stat, gunName) then
+                        pcall(function()
+                            if setreadonly then pcall(setreadonly, stat, false) end
+                            stat.__isJoalland = true
+                        end)
+                    end
+                    if shouldPatch(stat) then
+                        patchAll(stat)
+                    elseif isSniper(stat) then
+                        patchSniper(stat)
+                    end
+                end
+            end
+        end)
+
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "table" then
+                if shouldPatch(v) then
+                    patchAll(v)
+                elseif isSniper(v) then
+                    patchSniper(v)
+                end
+            end
+        end
+
+        Fluent:Notify({ Title = "Gun Mods", Content = "No Recoil  |  Fast Fire  |  Fast Reload  |  Fast Equip", Duration = 6 })
+    end
+})
 Tabs.Aim:AddToggle("AimNPC", { Title = "Silent Aim Animals", Default = S.Config.AimNPC, Callback = function(v) S.Config.AimNPC = v if aimNPCStroke then setFloatStrokeActive(aimNPCStroke, v) end if v then InitSilentAimHook() end SaveConfig() end })
 Tabs.Aim:AddToggle("AimLasso", { Title = "Silent Aim Lasso", Default = S.Config.AimLasso, Callback = function(v) S.Config.AimLasso = v SaveConfig() end })
 Tabs.Aim:AddSlider("FOVRadius", { Title = "FOV Radius", Default = S.Config.FOVRadius, Min = 50, Max = 600, Rounding = 0, Callback = function(v) S.Config.FOVRadius = v SaveConfig() end })
@@ -1517,111 +1820,6 @@ Tabs.Aim:AddSection("Dynamite Target")
 Tabs.Aim:AddToggle("DynamiteTargetToggle", { Title = "Dynamite Target", Default = S.Config.DynamiteTargetEnabled, Callback = function(v) S.Config.DynamiteTargetEnabled = v SaveConfig() end })
 Tabs.Aim:AddToggle("DynamiteTeamCheckToggle", { Title = "Team Check Dynamite", Default = S.Config.DynamiteTeamCheck, Callback = function(v) S.Config.DynamiteTeamCheck = v SaveConfig() end })
 Tabs.Aim:AddToggle("DynamiteFriendCheckToggle", { Title = "Friend Check Dynamite", Default = S.Config.DynamiteFriendCheck, Callback = function(v) S.Config.DynamiteFriendCheck = v SaveConfig() end })
-
-Tabs.GunMod:AddButton({
-    Title = "Gun Mods",
-    Callback = function()
-        local function shouldPatch(stat)
-            local t = rawget(stat, "GunType")
-            return t == "Pistol" or t == "Rifle"
-        end
-
-        local function isSniper(stat)
-            return rawget(stat, "GunType") == "Sniper"
-        end
-
-        local function patchAll(stat)
-            if type(stat) ~= "table" then return end
-            pcall(function()
-                if setreadonly then pcall(setreadonly, stat, false) end
-
-                stat.FullReload = true
-                stat.ReloadSpeed = 0.01
-                stat.ReloadAnimationSpeed = 10
-
-                stat.prepTime   = 0.04
-                stat.equipTime  = 0.2
-                stat.EquipDelay = 0.1
-
-                if stat.FireRate   ~= nil then stat.FireRate   = 0.3 end
-                if stat.fireRate   ~= nil then stat.fireRate   = 0.3 end
-                if stat.FireDelay  ~= nil then stat.FireDelay  = 0.3 end
-                if stat.RateOfFire ~= nil then stat.RateOfFire = 0.3 end
-
-                stat.Spread = 0
-                stat.HipFireAccuracy = 0
-                stat.ZoomAccuracy = 0
-
-                for key, value in pairs(stat) do
-                    local lk = string.lower(key)
-                    if lk ~= "camshakeresist" and (lk:find("recoil") or lk:find("kick") or lk:find("sway") or lk:find("shake")) then
-                        if type(value) == "number" then stat[key] = 0
-                        elseif type(value) == "boolean" then stat[key] = false end
-                    end
-                end
-
-                stat.camShakeResist = math.huge
-            end)
-        end
-
-        local function patchSniper(stat)
-            if type(stat) ~= "table" then return end
-            pcall(function()
-                if setreadonly then pcall(setreadonly, stat, false) end
-
-                stat.EquipDelay = 0.1
-                stat.equipTime  = 0.2
-                stat.ReloadSpeed = 1.2
-                stat.ReloadAnimationSpeed = 2.4
-
-                stat.ZoomAccuracy    = 0
-                stat.HipFireAccuracy = 0
-
-                for key, value in pairs(stat) do
-                    local lk = string.lower(key)
-                    if lk ~= "camshakeresist" and (lk:find("recoil") or lk:find("kick") or lk:find("sway") or lk:find("shake")) then
-                        if type(value) == "number" then stat[key] = 0
-                        elseif type(value) == "boolean" then stat[key] = false end
-                    end
-                end
-
-                stat.camShakeResist = math.huge
-            end)
-        end
-
-        pcall(function()
-            local GunStats = require(ReplicatedStorage:WaitForChild("GunScripts"):WaitForChild("GunStats"))
-            if GunStats.FanFirePrepTime ~= nil then
-                if setreadonly then pcall(setreadonly, GunStats, false) end
-                GunStats.FanFirePrepTime = 0.06
-                if setreadonly then pcall(setreadonly, GunStats, true) end
-            end
-            for _, stat in pairs(GunStats) do
-                if type(stat) == "table" then
-                    if shouldPatch(stat) then
-                        patchAll(stat)
-                    elseif isSniper(stat) then
-                        patchSniper(stat)
-                    end
-                end
-            end
-        end)
-
-        for _, v in pairs(getgc(true)) do
-            if type(v) == "table" then
-                if shouldPatch(v) then
-                    patchAll(v)
-                elseif isSniper(v) then
-                    patchSniper(v)
-                end
-            end
-        end
-
-        Fluent:Notify({ Title = "Gun Mods", Content = "No Recoil  |  Fast Fire  |  Fast Reload  |  Fast Equip", Duration = 6 })
-    end
-})
-
-Tabs.GunMod:AddParagraph({ Title = "Warning", Content = "Note: Using Gun Mods may cause damage registration issues Please avoid spamming shots to reduce the chance of errors." })
 
 Tabs.ESP:AddToggle("ESPPlayers", { Title = "ESP Players", Default = S.Config.ESPEnabled, Callback = function(v) S.Config.ESPEnabled = v if not v then clearPlayerESP() end SaveConfig() end })
 Tabs.ESP:AddToggle("ESPAnimals", { Title = "ESP Animals", Default = S.Config.ESPAnimals, Callback = function(v) ESPAnimalsEnabled = v S.Config.ESPAnimals = v if not v then clearAnimalESP() end SaveConfig() end })
