@@ -690,6 +690,35 @@ local function getPlayerNames()
     return list
 end
 
+local npcCache = setmetatable({}, { __mode = "k" })
+
+local function registerNPC(model)
+    if not model or not model:IsA("Model") then return end
+    if model == LocalPlayer.Character then return end
+    if Players:GetPlayerFromCharacter(model) then return end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso")
+    if hum and hrp then
+        npcCache[model] = true
+    end
+end
+
+for _, desc in ipairs(workspace:GetDescendants()) do
+    if desc:IsA("Humanoid") and desc.Parent and desc.Parent:IsA("Model") then
+        registerNPC(desc.Parent)
+    end
+end
+
+workspace.DescendantAdded:Connect(function(desc)
+    if desc:IsA("Humanoid") and desc.Parent and desc.Parent:IsA("Model") then
+        registerNPC(desc.Parent)
+    elseif desc:IsA("Model") then
+        task.defer(function()
+            registerNPC(desc)
+        end)
+    end
+end)
+
 local function getAutoKillTarget()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -698,22 +727,30 @@ local function getAutoKillTarget()
     local bestTarget = nil
     local bestDist = math.huge
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local tChar = player.Character
-            if tChar then
-                local tHum = tChar:FindFirstChildOfClass("Humanoid")
-                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
-                if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
-                    local dist = (tHrp.Position - hrp.Position).Magnitude
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestTarget = tChar
-                    end
+    local function checkTarget(tChar)
+        if tChar and tChar ~= char and tChar.Parent then
+            local tHum = tChar:FindFirstChildOfClass("Humanoid")
+            local tHrp = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso")
+            if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
+                local dist = (tHrp.Position - hrp.Position).Magnitude
+                if dist < bestDist then
+                    bestDist = dist
+                    bestTarget = tChar
                 end
             end
         end
     end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            checkTarget(player.Character)
+        end
+    end
+
+    for npc in pairs(npcCache) do
+        checkTarget(npc)
+    end
+
     return bestTarget
 end
 
@@ -726,22 +763,30 @@ getAutoAttackTarget = function(customRange)
     local bestTarget = nil
     local bestDist = maxRange
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local tChar = player.Character
-            if tChar and tChar ~= char then
-                local tHum = tChar:FindFirstChildOfClass("Humanoid")
-                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
-                if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
-                    local dist = (tHrp.Position - hrp.Position).Magnitude
-                    if dist <= bestDist then
-                        bestDist = dist
-                        bestTarget = tChar
-                    end
+    local function checkTarget(tChar)
+        if tChar and tChar ~= char and tChar.Parent then
+            local tHum = tChar:FindFirstChildOfClass("Humanoid")
+            local tHrp = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso")
+            if tHum and tHrp and tHum.Health > 0 and not isInsideLobby(tHrp) then
+                local dist = (tHrp.Position - hrp.Position).Magnitude
+                if dist <= bestDist then
+                    bestDist = dist
+                    bestTarget = tChar
                 end
             end
         end
     end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            checkTarget(player.Character)
+        end
+    end
+
+    for npc in pairs(npcCache) do
+        checkTarget(npc)
+    end
+
     return bestTarget
 end
 
@@ -794,14 +839,11 @@ UserInputService.InputBegan:Connect(function(input, processed)
         if target then
             local model = target:FindFirstAncestorOfClass("Model")
             if model and model ~= LocalPlayer.Character then
-                local player = Players:GetPlayerFromCharacter(model)
-                if player then
-                    local hum = model:FindFirstChildOfClass("Humanoid")
-                    local hrp = model:FindFirstChild("HumanoidRootPart")
-                    if hum and hrp and hum.Health > 0 and not isInsideLobby(hrp) then
-                        singleTargetChar = model
-                        executeAttackUnder(model)
-                    end
+                local hum = model:FindFirstChildOfClass("Humanoid")
+                local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso")
+                if hum and hrp and hum.Health > 0 and not isInsideLobby(hrp) then
+                    singleTargetChar = model
+                    executeAttackUnder(model)
                 end
             end
         end
@@ -1399,29 +1441,38 @@ local function getAimlockTarget()
     local camLook = Camera.CFrame.LookVector
     local bestTarget = nil
     local bestScore = -math.huge
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local tChar = player.Character
-            if tChar and not isInsideLobby(tChar) then
-                local tHum = tChar:FindFirstChildOfClass("Humanoid")
-                local tHrp = tChar:FindFirstChild("HumanoidRootPart")
-                if tHum and tHrp and tHum.Health > 0 then
-                    local offset = tHrp.Position - camPos
-                    local dist = offset.Magnitude
-                    if dist > 0 and dist < 2000 then
-                        local dot = camLook:Dot(offset.Unit)
-                        if dot > 0 then
-                            local score = dot * 1000 - dist
-                            if score > bestScore then
-                                bestScore = score
-                                bestTarget = tChar
-                            end
+
+    local function checkTarget(tChar)
+        if tChar and tChar ~= LocalPlayer.Character and tChar.Parent and not isInsideLobby(tChar) then
+            local tHum = tChar:FindFirstChildOfClass("Humanoid")
+            local tHrp = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso")
+            if tHum and tHrp and tHum.Health > 0 then
+                local offset = tHrp.Position - camPos
+                local dist = offset.Magnitude
+                if dist > 0 and dist < 2000 then
+                    local dot = camLook:Dot(offset.Unit)
+                    if dot > 0 then
+                        local score = dot * 1000 - dist
+                        if score > bestScore then
+                            bestScore = score
+                            bestTarget = tChar
                         end
                     end
                 end
             end
         end
     end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            checkTarget(player.Character)
+        end
+    end
+
+    for npc in pairs(npcCache) do
+        checkTarget(npc)
+    end
+
     return bestTarget
 end
 
