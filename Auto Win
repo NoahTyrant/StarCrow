@@ -65,31 +65,96 @@ pcall(function()
     lighting.GlobalShadows = false
     lighting.FogEnd = 9e9
     lighting.Brightness = 1
+
+    local function cleanLightingChild(v)
+        pcall(function()
+            if v:IsA("Sky") then
+                v:Destroy()
+            elseif v:IsA("Atmosphere") then
+                v.Density = 0
+            elseif v:IsA("PostEffect") or v:IsA("Clouds") then
+                v.Enabled = false
+            end
+        end)
+    end
+
     for _, v in ipairs(lighting:GetDescendants()) do
-        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
-            v.Enabled = false
-        end
+        cleanLightingChild(v)
     end
+    lighting.DescendantAdded:Connect(cleanLightingChild)
+
+    local blur = lighting:FindFirstChildOfClass("BlurEffect") or Instance.new("BlurEffect", lighting)
+    blur.Size = 10
+    blur.Enabled = true
+
     if settings and settings().Rendering then
-        settings().Rendering.QualityLevel = 1
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
     end
+    if setfpscap then
+        pcall(function() setfpscap(999) end)
+    end
+
+    local terrain = workspace:FindFirstChildOfClass("Terrain")
+    if terrain then
+        pcall(function()
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 1
+            terrain.Decoration = false
+            sethiddenproperty(terrain, "Decoration", false)
+        end)
+    end
+
+    local function optimizeObject(v)
+        pcall(function()
+            if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Beam") or v:IsA("Highlight") then
+                v.Enabled = false
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v.Transparency = 1
+            elseif v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+                v:Destroy()
+            elseif v:IsA("SpecialMesh") then
+                v.TextureId = ""
+            elseif v:IsA("BasePart") then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+                v.CastShadow = false
+                pcall(function()
+                    if v:IsA("MeshPart") then
+                        v.TextureID = ""
+                    end
+                end)
+            end
+        end)
+    end
+
     for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
-            v.Enabled = false
-        elseif v:IsA("BasePart") then
-            v.Material = Enum.Material.SmoothPlastic
-            v.CastShadow = false
-        elseif v:IsA("Decal") or v:IsA("Texture") then
-            v.Transparency = 1
-        end
+        optimizeObject(v)
     end
-    workspace.DescendantAdded:Connect(function(v)
-        if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
-            v.Enabled = false
-        elseif v:IsA("BasePart") then
-            v.Material = Enum.Material.SmoothPlastic
-            v.CastShadow = false
-        end
+    workspace.DescendantAdded:Connect(optimizeObject)
+
+    local function optimizeChar(c)
+        if not c then return end
+        pcall(function()
+            for _, desc in ipairs(c:GetDescendants()) do
+                optimizeObject(desc)
+            end
+            c.DescendantAdded:Connect(optimizeObject)
+        end)
+    end
+
+    if LocalPlayer.Character then
+        optimizeChar(LocalPlayer.Character)
+    end
+    LocalPlayer.CharacterAdded:Connect(optimizeChar)
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then optimizeChar(plr.Character) end
+        plr.CharacterAdded:Connect(optimizeChar)
+    end
+    Players.PlayerAdded:Connect(function(plr)
+        plr.CharacterAdded:Connect(optimizeChar)
     end)
 end)
 
@@ -362,22 +427,18 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local currentHoverCFrame = nil
-local activeBossTarget = nil
 local noCollideCache = setmetatable({}, {__mode = "k"})
 
-local targetBossNames = {
-    ["commanderviridian"] = true,
-    ["commandercerulean"] = true,
-    ["commandercrimson"] = true,
-    ["nocturnecastellan"] = true,
-    ["voidreaper"] = true
-}
+local function getModelRoot(model)
+    if not model then return nil end
+    return model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or model:FindFirstChildWhichIsA("BasePart")
+end
 
-local function bringBoss(b)
+local function bringBoss(b, offset)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not (hrp and b and b.Parent) then return end
-    local targetCFrame = hrp.CFrame * CFrame.new(0, 0, -4)
+    local targetCFrame = hrp.CFrame * (offset or CFrame.new(0, -20, 0))
     pcall(function()
         if not noCollideCache[b] then
             noCollideCache[b] = true
@@ -387,7 +448,7 @@ local function bringBoss(b)
                 end
             end
         end
-        local root = b:IsA("Model") and (b.PrimaryPart or b:FindFirstChild("HumanoidRootPart") or b:FindFirstChildWhichIsA("BasePart")) or (b:IsA("BasePart") and b)
+        local root = getModelRoot(b)
         if root then
             root.CFrame = targetCFrame
             root.AssemblyLinearVelocity = Vector3.zero
@@ -396,35 +457,11 @@ local function bringBoss(b)
     end)
 end
 
-task.spawn(function()
-    while task.wait(0.1) do
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            local containers = {workspace:FindFirstChild("Models"), workspace:FindFirstChild("Island"), workspace}
-            for _, container in ipairs(containers) do
-                if container then
-                    for _, obj in ipairs(container:GetChildren()) do
-                        if obj:IsA("Model") then
-                            local clean = string.gsub(string.lower(obj.Name), "%s+", "")
-                            if targetBossNames[clean] then
-                                local hum = obj:FindFirstChildOfClass("Humanoid")
-                                if hum and hum.Health > 0 then
-                                    bringBoss(obj)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
 RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp and currentHoverCFrame then
+    if not hrp then return end
+    if currentHoverCFrame then
         local pos = currentHoverCFrame.Position
         hrp.CFrame = CFrame.new(pos) * hrp.CFrame.Rotation
         hrp.AssemblyLinearVelocity = Vector3.zero
@@ -710,7 +747,6 @@ local function killCommander(name, pos)
     local spawned = false
     while tick() - start < 35 do
         if not isPlayerAlive() then
-            activeBossTarget = nil
             return
         end
         local b = nil
@@ -724,8 +760,7 @@ local function killCommander(name, pos)
             local hum = b:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 spawned = true
-                activeBossTarget = b
-                bringBoss(b)
+                bringBoss(b, CFrame.new(0, -20, 0))
             elseif spawned and (not hum or hum.Health <= 0) then
                 break
             end
@@ -734,7 +769,6 @@ local function killCommander(name, pos)
         end
         task.wait(0.05)
     end
-    activeBossTarget = nil
 end
 
 task.spawn(function()
@@ -777,7 +811,8 @@ task.spawn(function()
     end
 
     statusText = "Safe Zone"
-    currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
+    local safeZoneCFrame = CFrame.new(-0.08, 145.29, 47059.89)
+    currentHoverCFrame = safeZoneCFrame
 
     local targetCountdown = 180
     local timerStart = tick()
@@ -800,6 +835,34 @@ task.spawn(function()
         if targetCountdown <= 0 then
             break
         end
+
+        local safeBoss = nil
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Model") then
+                local clean = string.gsub(string.lower(v.Name), "%s+", "")
+                if clean == "nocturnecastellan" then
+                    local hum = v:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        safeBoss = v
+                        break
+                    end
+                end
+            end
+        end
+
+        if safeBoss then
+            statusText = "NocturneCastellan"
+            while isPlayerAlive() and safeBoss.Parent do
+                local hum = safeBoss:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then
+                    break
+                end
+                bringBoss(safeBoss, CFrame.new(0, -20, 0))
+                task.wait(0.05)
+            end
+            statusText = "Safe Zone"
+        end
+
         task.wait(0.2)
     end
 
@@ -864,19 +927,6 @@ task.spawn(function()
         local hum = reaper and reaper:FindFirstChildOfClass("Humanoid")
         if hum and hum.Health > 0 then
             reaperVerified = true
-            activeBossTarget = reaper
-            bringBoss(reaper)
-        end
-
-        local endPortal = island and island:FindFirstChild("EndPortal")
-        local isPortalUnlocked = endPortal and endPortal:GetAttribute("BlockPortal") == false
-
-        if reaperVerified and (not reaper or not reaper.Parent or (hum and hum.Health <= 0)) then
-            break
-        end
-
-        if reaperVerified and isPortalUnlocked then
-            break
         end
 
         char = LocalPlayer.Character
@@ -890,9 +940,46 @@ task.spawn(function()
             end
         end
 
-        task.wait(0.08)
+        local priorityFound = false
+        if hrp then
+            for _, v in ipairs(workspace:GetDescendants()) do
+                if v:IsA("Model") and v ~= char then
+                    local clean = string.gsub(string.lower(v.Name), "%s+", "")
+                    if clean == "voidreaper" or string.find(clean, "nec") or clean == "commanderviridian" or clean == "commandercerulean" or clean == "commandercrimson" or clean == "nocturnecastellan" or string.find(clean, "void") or string.find(clean, "minion") then
+                        local vHum = v:FindFirstChildOfClass("Humanoid")
+                        if vHum and vHum.Health > 0 then
+                            local vRoot = getModelRoot(v)
+                            if vRoot and (vRoot.Position - hrp.Position).Magnitude < 1500 then
+                                if clean ~= "voidreaper" then
+                                    priorityFound = true
+                                end
+                                bringBoss(v, CFrame.new(0, -20, 0))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if priorityFound then
+            statusText = "Void Mobs"
+        elseif reaperVerified then
+            statusText = "VoidReaper"
+        end
+
+        local endPortal = island and island:FindFirstChild("EndPortal")
+        local isPortalUnlocked = endPortal and endPortal:GetAttribute("BlockPortal") == false
+
+        if reaperVerified and (not reaper or not reaper.Parent or (hum and hum.Health <= 0)) then
+            break
+        end
+
+        if reaperVerified and isPortalUnlocked then
+            break
+        end
+
+        task.wait(0.06)
     end
-    activeBossTarget = nil
 
     if not isPlayerAlive() then return end
 
