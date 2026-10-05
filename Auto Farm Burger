@@ -28,6 +28,18 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+pcall(function()
+    LocalPlayer.CameraMaxZoomDistance = 99999
+    LocalPlayer.CameraMinZoomDistance = 0.5
+    LocalPlayer.CameraMode = Enum.CameraMode.Classic
+    Camera.CameraType = Enum.CameraType.Custom
+    LocalPlayer:GetPropertyChangedSignal("CameraMaxZoomDistance"):Connect(function()
+        if LocalPlayer.CameraMaxZoomDistance < 1000 then
+            LocalPlayer.CameraMaxZoomDistance = 99999
+        end
+    end)
+end)
+
 local Config = {
     FastAttackEnabled = true,
     FastAttackMultiplier = 200,
@@ -727,7 +739,7 @@ if not FloatGui.Parent then FloatGui.Parent = LocalPlayer:WaitForChild("PlayerGu
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 200, 0, 72)
 MainFrame.Position = UDim2.new(0.5, -100, 0.1, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = FloatGui
@@ -737,11 +749,13 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 local MainStroke = Instance.new("UIStroke", MainFrame)
 MainStroke.Thickness = 1.5
 MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+MainStroke.Color = Color3.fromRGB(160, 50, 255)
+
 local StrokeGrad = Instance.new("UIGradient", MainStroke)
 StrokeGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 0)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 215, 0)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 140, 0)),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 50, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 0, 230)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
 })
 task.spawn(function()
     TweenService:Create(StrokeGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
@@ -752,7 +766,7 @@ TitleLabel.Size = UDim2.new(1, 0, 0, 20)
 TitleLabel.Position = UDim2.new(0, 0, 0, 2)
 TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "Auto Farm Burger"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+TitleLabel.TextColor3 = Color3.fromRGB(225, 135, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 12
 TitleLabel.Parent = MainFrame
@@ -768,20 +782,21 @@ CounterLabel.TextSize = 11
 CounterLabel.Parent = MainFrame
 
 local ResetTimerLabel = Instance.new("TextLabel")
-ResetTimerLabel.Size = UDim2.new(0, 130, 0, 22)
-ResetTimerLabel.Position = UDim2.new(0, 8, 0, 44)
-ResetTimerLabel.BackgroundTransparency = 1
+ResetTimerLabel.Size = UDim2.new(0, 126, 0, 20)
+ResetTimerLabel.Position = UDim2.new(0, 8, 0, 45)
+ResetTimerLabel.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
+ResetTimerLabel.BorderSizePixel = 0
 ResetTimerLabel.Text = "Reset in: 05:00"
-ResetTimerLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
-ResetTimerLabel.Font = Enum.Font.Gotham
-ResetTimerLabel.TextSize = 10
-ResetTimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+ResetTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResetTimerLabel.Font = Enum.Font.GothamBold
+ResetTimerLabel.TextSize = 11
 ResetTimerLabel.Parent = MainFrame
+Instance.new("UICorner", ResetTimerLabel).CornerRadius = UDim.new(0, 4)
 
 local MinusBtn = Instance.new("TextButton")
 MinusBtn.Size = UDim2.new(0, 24, 0, 20)
 MinusBtn.Position = UDim2.new(1, -56, 0, 45)
-MinusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+MinusBtn.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
 MinusBtn.Text = "-"
 MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 MinusBtn.Font = Enum.Font.GothamBold
@@ -792,7 +807,7 @@ Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
 local PlusBtn = Instance.new("TextButton")
 PlusBtn.Size = UDim2.new(0, 24, 0, 20)
 PlusBtn.Position = UDim2.new(1, -28, 0, 45)
-PlusBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+PlusBtn.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
 PlusBtn.Text = "+"
 PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 PlusBtn.Font = Enum.Font.GothamBold
