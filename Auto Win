@@ -107,11 +107,40 @@ local function triggerPrompt(prompt)
     end)
 end
 
+local function isPlayerAlive()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if char:GetAttribute("Downed") or char:GetAttribute("Knocked") or char:GetAttribute("Dead") then return false end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        for _, g in ipairs(pg:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, t in ipairs(g:GetDescendants()) do
+                    if (t:IsA("TextLabel") or t:IsA("TextButton")) and string.find(string.lower(t.Text), "revive") then
+                        return false
+                    end
+                end
+            end
+        end
+    end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and string.find(string.lower(p.ActionText), "revive") then
+            return false
+        end
+    end
+    return true
+end
+
 pcall(function()
     local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
     local oldMeleeHitBox = ToolShared.meleeHitBox
     ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
-        return oldMeleeHitBox(p1, p2, 1000, 1000, 1000, p6, p7, p8)
+        if isPlayerAlive() then
+            return oldMeleeHitBox(p1, p2, 1000, 1000, 1000, p6, p7, p8)
+        end
+        return oldMeleeHitBox(p1, p2, p3, p4, p5, p6, p7, p8)
     end
 end)
 
@@ -120,24 +149,32 @@ pcall(function()
     local originalMeleeHit
     originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
         local args = {...}
-        task.spawn(function()
-            for i = 1, 199 do
-                task.wait(0.03)
-                originalMeleeHit(unpack(args))
-            end
-        end)
+        if isPlayerAlive() then
+            task.spawn(function()
+                for i = 1, 199 do
+                    if not isPlayerAlive() then break end
+                    task.wait(0.03)
+                    originalMeleeHit(unpack(args))
+                end
+            end)
+            return originalMeleeHit(...)
+        end
         return originalMeleeHit(...)
     end)
 
     local originalLaserHit
     originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
         local args = {...}
-        task.spawn(function()
-            for i = 1, 199 do
-                task.wait(0.03)
-                originalLaserHit(unpack(args))
-            end
-        end)
+        if isPlayerAlive() then
+            task.spawn(function()
+                for i = 1, 199 do
+                    if not isPlayerAlive() then break end
+                    task.wait(0.03)
+                    originalLaserHit(unpack(args))
+                end
+            end)
+            return originalLaserHit(...)
+        end
         return originalLaserHit(...)
     end)
 end)
@@ -149,6 +186,7 @@ local function isMelee(tool)
 end
 
 local function equipAllMelee()
+    if not isPlayerAlive() then return end
     local char = LocalPlayer.Character
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if char and backpack then
@@ -161,6 +199,7 @@ local function equipAllMelee()
 end
 
 local function activateMelee()
+    if not isPlayerAlive() then return end
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -183,8 +222,10 @@ end
 task.spawn(function()
     while true do
         task.wait(0.1)
-        equipAllMelee()
-        activateMelee()
+        if isPlayerAlive() then
+            equipAllMelee()
+            activateMelee()
+        end
     end
 end)
 
@@ -370,32 +411,6 @@ RunService.Heartbeat:Connect(function()
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
 end)
-
-local function isPlayerAlive()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-    if char:GetAttribute("Downed") or char:GetAttribute("Knocked") or char:GetAttribute("Dead") then return false end
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if pg then
-        for _, g in ipairs(pg:GetChildren()) do
-            if g:IsA("ScreenGui") and g.Enabled then
-                for _, t in ipairs(g:GetDescendants()) do
-                    if (t:IsA("TextLabel") or t:IsA("TextButton")) and string.find(string.lower(t.Text), "revive") then
-                        return false
-                    end
-                end
-            end
-        end
-    end
-    for _, p in ipairs(char:GetDescendants()) do
-        if p:IsA("ProximityPrompt") and string.find(string.lower(p.ActionText), "revive") then
-            return false
-        end
-    end
-    return true
-end
 
 local function findSafeArenaPoint(currentPos)
     local activeMeteors = {}
