@@ -58,6 +58,7 @@ local S = {
         InstantInteract  = false,
         UITheme = "Amethyst",
         AutoBankEnabled  = false,
+        FarmMethod       = "Slow",
         SpawnDelay       = 5
     }
 }
@@ -1335,6 +1336,94 @@ local function SpawnAt(spawnName, arg2, tpPos)
     return char, root, hum
 end
 
+local function TriggerRob()
+    local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    for i = 1, 10 do
+        if not getgenv().StarCrowAutoBank then break end
+        if IsBagFull() then break end
+        local myPos = root.Position
+        local targets = GetRobTargets()
+        for _, target in ipairs(targets) do
+            if target.part and target.part.Parent and (myPos - target.part.Position).Magnitude <= 30 then
+                pcall(function()
+                    if target.isSafe then
+                        local r = target.obj:FindFirstChild("OpenSafe")
+                        if r and r:IsA("RemoteEvent") then r:FireServer("Complete") end
+                        robRemote:FireServer("Safe", target.obj)
+                    else
+                        robRemote:FireServer("Register", target.obj)
+                    end
+                end)
+            end
+        end
+        task.wait(0.1)
+    end
+end
+
+local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
+    if not getgenv().StarCrowAutoBank then return end
+
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    if hum and hum.Health <= 0 then
+        task.wait(math.max(0, getgenv().StarCrowSpawnDelay or 3))
+    end
+
+    local oldChar = LocalPlayer.Character
+    local spawnArgs = {
+        [1] = spawnName,
+        [2] = arg2,
+        [3] = false
+    }
+
+    ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Spawn", 9e9):InvokeServer(unpack(spawnArgs))
+
+    if oldChar then
+        repeat task.wait(0.05)
+        until (LocalPlayer.Character ~= oldChar and LocalPlayer.Character ~= nil) or not getgenv().StarCrowAutoBank
+    end
+
+    if not getgenv().StarCrowAutoBank then return end
+
+    char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart", 9e9)
+    hum = char:WaitForChild("Humanoid", 9e9)
+
+    if root and hum then
+        if not prePos and not tpPos1 and not tpPos2 then return end
+
+        task.wait(1.5)
+
+        if prePos then
+            if not getgenv().StarCrowAutoBank then return end
+            char:PivotTo(CFrame.new(prePos))
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            task.wait(0.5)
+        end
+
+        if tpPos1 then
+            if not getgenv().StarCrowAutoBank then return end
+            char:PivotTo(CFrame.new(tpPos1))
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            TriggerRob()
+        end
+
+        if tpPos2 then
+            if not getgenv().StarCrowAutoBank then return end
+            if IsBagFull() then return end
+            char:PivotTo(CFrame.new(tpPos2))
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            TriggerRob()
+        end
+    end
+end
+
 local Window = Fluent:CreateWindow({ Title = "StarCrowHub", SubTitle = "West Bound", TabWidth = 130, Size = UDim2.fromOffset(460, 400), Acrylic = false, Theme = S.Config.UITheme or "Amethyst", MinimizeKey = Enum.KeyCode.LeftControl })
 
 local Tabs = {
@@ -1613,7 +1702,7 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
             end)
 
             task.spawn(function()
-                local Banks = {
+                local SlowBanks = {
                     {Name = "Tumbleweed", arg2 = false, p1 = Vector3.new(-339.12, 12.35, -85.14), safePos = Vector3.new(-260.32, 13.35, -172.18)},
                     {Name = "Grayridge",  arg2 = false, p1 = Vector3.new(1539.44, 120.35, 1619.48), safePos = Vector3.new(1576.47, 121.35, 1674.85)},
                     {Name = "Plainview",  arg2 = false, p1 = Vector3.new(52.75, 51.20, 2929.41),  safePos = Vector3.new(-0.88, 51.79, 3024.17)},
@@ -1621,43 +1710,73 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                     {Name = "StoneCreek", arg2 = false, p1 = nil, safePos = Vector3.new(872.05, 24.67, 198.21)}
                 }
 
-                local i = 1
+                local FastBanks = {
+                    {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
+                    {Name = "Grayridge",  arg2 = false, prePos = Vector3.new(1546.87, 120.09, 1603.42), p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
+                    {Name = "Plainview",  arg2 = false, prePos = Vector3.new(60.15, 51.20, 2931.69), p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
+                    {Name = "Silverton",  arg2 = false, prePos = Vector3.new(2022.95, 160.92, 3410.41), p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
+                    {Name = "StoneCreek", arg2 = false, prePos = nil, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
+                }
+
+                local slowIndex = 1
+                local fastIndex = 1
                 while getgenv().StarCrowAutoBank do
-                    local bank = Banks[i]
+                    if S.Config.FarmMethod == "Fast" then
+                        local bank = FastBanks[fastIndex]
 
-                    while getgenv().StarCrowAutoBank do
-                        SpawnAt(bank.Name, bank.arg2, bank.p1)
-                        if not getgenv().StarCrowAutoBank then break end
+                        SpawnAndTP(bank.Name, bank.arg2, bank.prePos, bank.p1, bank.p2)
 
-                        RobBankSafes(bank.safePos or bank.p1)
+                        if IsBagFull() then
+                            SpawnAndTP("FortCassidy", true, nil, nil, nil)
 
-                        local stillHasMoney = false
-                        local safes = GetBankSafes(bank.safePos or bank.p1)
-                        for _, s in ipairs(safes) do
-                            if s.amount and s.amount.Value > 0 then
-                                stillHasMoney = true
+                            local timeout = 0
+                            repeat
+                                task.wait(0.5)
+                                timeout = timeout + 0.5
+                            until not IsBagFull() or timeout >= 5 or not getgenv().StarCrowAutoBank
+                        end
+
+                        fastIndex = fastIndex + 1
+                        if fastIndex > #FastBanks then fastIndex = 1 end
+
+                        task.wait(0.5)
+                    else
+                        local bank = SlowBanks[slowIndex]
+
+                        while getgenv().StarCrowAutoBank and S.Config.FarmMethod ~= "Fast" do
+                            SpawnAt(bank.Name, bank.arg2, bank.p1)
+                            if not getgenv().StarCrowAutoBank or S.Config.FarmMethod == "Fast" then break end
+
+                            RobBankSafes(bank.safePos or bank.p1)
+
+                            local stillHasMoney = false
+                            local safes = GetBankSafes(bank.safePos or bank.p1)
+                            for _, s in ipairs(safes) do
+                                if s.amount and s.amount.Value > 0 then
+                                    stillHasMoney = true
+                                    break
+                                end
+                            end
+
+                            SpawnAt("FortCassidy", true, nil)
+                            local timeout = 0
+                            repeat
+                                task.wait(0.5)
+                                timeout = timeout + 0.5
+                            until not IsBagFull() or timeout >= 3 or not getgenv().StarCrowAutoBank
+
+                            if not stillHasMoney then
                                 break
                             end
-                        end
 
-                        SpawnAt("FortCassidy", true, nil)
-                        local timeout = 0
-                        repeat
                             task.wait(0.5)
-                            timeout = timeout + 0.5
-                        until not IsBagFull() or timeout >= 3 or not getgenv().StarCrowAutoBank
-
-                        if not stillHasMoney then
-                            break
                         end
+
+                        slowIndex = slowIndex + 1
+                        if slowIndex > #SlowBanks then slowIndex = 1 end
 
                         task.wait(0.5)
                     end
-
-                    i = i + 1
-                    if i > #Banks then i = 1 end
-
-                    task.wait(0.5)
                 end
             end)
         else
@@ -1669,6 +1788,16 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
             FarmCollectedLabel.Text = "Earned: $0"
             FarmFrame.Visible = false
         end
+    end
+})
+
+Tabs.AutoFarm:AddDropdown("FarmMethod", {
+    Title = "Method",
+    Values = {"Slow", "Fast"},
+    Default = S.Config.FarmMethod or "Slow",
+    Callback = function(v)
+        S.Config.FarmMethod = v
+        SaveConfig()
     end
 })
 
