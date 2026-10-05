@@ -1333,37 +1333,46 @@ local lastLeaderboardMoney = nil
 local cachedMoneyObj = nil
 
 local function getLeaderboardMoney()
-    if cachedMoneyObj and cachedMoneyObj.Parent then
-        local v = cachedMoneyObj.Value
-        if type(v) == "number" then return v end
-        local n = tonumber(v)
-        if n then return n end
-        return tonumber((tostring(v):gsub("%D", ""))) or 0
-    end
-    local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Stats") or LocalPlayer:FindFirstChild("Data")
-    if ls then
-        for _, name in ipairs({"$$", "Cash", "Money", "Dollars", "Wallet"}) do
-            local v = ls:FindFirstChild(name)
-            if v and v:IsA("ValueBase") then
-                cachedMoneyObj = v
-                local num = tonumber(v.Value)
-                if not num then
-                    num = tonumber((tostring(v.Value):gsub("%D", "")))
+    local success, result = pcall(function()
+        if cachedMoneyObj and cachedMoneyObj.Parent then
+            local v = cachedMoneyObj.Value
+            if type(v) == "number" then return v end
+            local n = tonumber(v)
+            if n then return n end
+            return tonumber((tostring(v):gsub("%D", ""))) or 0
+        end
+        local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Stats") or LocalPlayer:FindFirstChild("Data")
+        if ls then
+            for _, name in ipairs({"$$", "Cash", "Money", "Dollars", "Wallet"}) do
+                local v = ls:FindFirstChild(name)
+                if v and v:IsA("ValueBase") and v.Value ~= nil then
+                    cachedMoneyObj = v
+                    local num = tonumber(v.Value) or tonumber((tostring(v.Value):gsub("%D", "")))
+                    if num then return num end
                 end
-                if num then return num end
+            end
+            for _, v in ipairs(ls:GetChildren()) do
+                if v:IsA("ValueBase") and v.Value ~= nil then
+                    local num = tonumber(v.Value) or tonumber((tostring(v.Value):gsub("%D", "")))
+                    if num then
+                        cachedMoneyObj = v
+                        return num
+                    end
+                end
             end
         end
-        for _, v in ipairs(ls:GetChildren()) do
-            if v:IsA("ValueBase") then
-                cachedMoneyObj = v
-                local num = tonumber(v.Value)
-                if not num then
-                    num = tonumber((tostring(v.Value):gsub("%D", "")))
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, d in ipairs(pg:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible and (d.Text:find("%$") or d.Name:lower():find("cash") or d.Name:lower():find("money")) and not d.Text:find("Bag:") then
+                    local num = tonumber((d.Text:gsub("%D", "")))
+                    if num and num > 0 then return num end
                 end
-                if num then return num end
             end
         end
-    end
+        return 0
+    end)
+    if success and result then return result end
     return 0
 end
 
@@ -1485,12 +1494,14 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
         S.Config.AutoBankEnabled = v
         SaveConfig()
         if v then
+            totalFarmedTime = 0
+            totalCollectedMoney = 0
             sessionStartTime = tick()
             local initTotal = getLeaderboardMoney()
-            if initTotal > 0 then lastLeaderboardMoney = initTotal end
+            lastLeaderboardMoney = initTotal > 0 and initTotal or nil
             FarmFrame.Visible = true
-            FarmTimeLabel.Text = "Time: " .. formatTime(totalFarmedTime)
-            FarmCollectedLabel.Text = "Earned: $" .. formatMoney(totalCollectedMoney)
+            FarmTimeLabel.Text = "Time: 00:00"
+            FarmCollectedLabel.Text = "Earned: $0"
             FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or 0)
 
             task.spawn(function()
@@ -1502,7 +1513,7 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                         end
                         lastLeaderboardMoney = curTotal
                     end
-                    local curElapsed = totalFarmedTime + (sessionStartTime and (tick() - sessionStartTime) or 0)
+                    local curElapsed = sessionStartTime and (tick() - sessionStartTime) or 0
                     FarmTimeLabel.Text = "Time: " .. formatTime(curElapsed)
                     FarmCollectedLabel.Text = "Earned: $" .. formatMoney(totalCollectedMoney)
                     FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or curTotal)
@@ -1542,10 +1553,12 @@ Tabs.AutoFarm:AddToggle("AutoBankToggle", {
                 end
             end)
         else
-            if sessionStartTime then
-                totalFarmedTime = totalFarmedTime + (tick() - sessionStartTime)
-                sessionStartTime = nil
-            end
+            totalFarmedTime = 0
+            sessionStartTime = nil
+            totalCollectedMoney = 0
+            lastLeaderboardMoney = nil
+            FarmTimeLabel.Text = "Time: 00:00"
+            FarmCollectedLabel.Text = "Earned: $0"
             FarmFrame.Visible = false
         end
     end
