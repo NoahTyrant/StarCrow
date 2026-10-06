@@ -145,13 +145,18 @@ local collectedBurgerCount = 0
 local updateBurgerCounterGui = nil
 local scriptStartTick = tick()
 local nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+local lastBossBroughtTick = 0
+
+local function isAuraActive()
+    return Config.KillAuraEnabled and not isResetting and (tick() - lastBossBroughtTick <= 1)
+end
 
 pcall(function()
     local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
     local oldMeleeHitBox = ToolShared.meleeHitBox
 
     ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
-        if Config.KillAuraEnabled and not isResetting then
+        if isAuraActive() then
             local hackLength = Config.KillAuraDistance
             local hackWidth = Config.KillAuraDistance
             local hackHeight = Config.KillAuraDistance
@@ -167,10 +172,10 @@ pcall(function()
     local originalMeleeHit
     originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
         local args = {...}
-        if Config.FastAttackEnabled and not isResetting then
+        if Config.FastAttackEnabled and isAuraActive() then
             task.spawn(function()
                 for i = 1, Config.FastAttackMultiplier - 1 do
-                    if isResetting then break end
+                    if not isAuraActive() then break end
                     task.wait(0.03)
                     originalMeleeHit(unpack(args))
                 end
@@ -182,10 +187,10 @@ pcall(function()
     local originalLaserHit
     originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
         local args = {...}
-        if Config.FastAttackEnabled and not isResetting then
+        if Config.FastAttackEnabled and isAuraActive() then
             task.spawn(function()
                 for i = 1, Config.FastAttackMultiplier - 1 do
-                    if isResetting then break end
+                    if not isAuraActive() then break end
                     task.wait(0.03)
                     originalLaserHit(unpack(args))
                 end
@@ -305,7 +310,7 @@ LocalPlayer.CharacterAdded:Connect(hookCharAnimations)
 task.spawn(function()
     while true do
         task.wait(0.12)
-        if Config.KillAuraEnabled and not isResetting then
+        if isAuraActive() then
             local char = LocalPlayer.Character
             if char then
                 local tool = char:FindFirstChildOfClass("Tool")
@@ -592,7 +597,7 @@ task.spawn(function()
         if not Config.AutoFarmEnabled then continue end
 
         local char = LocalPlayer.Character
-        if char and not isResetting then
+        if char and isAuraActive() then
             local tool = char:FindFirstChildOfClass("Tool")
             if not tool or not isMelee(tool) then
                 for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do
@@ -759,22 +764,22 @@ task.spawn(function()
 
                 if bHrp and bHum and bHum.Health > 0 then
                     if not visited then
-                        hoverPos = nil
                         requestStreamTeleport(info.pos)
+                        hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
                         hrp.Anchored = true
                         task.wait(2)
                         hrp.Anchored = false
                         visited = true
                     end
                     engaged = true
+                    lastBossBroughtTick = tick()
                     bHrp.CFrame = CFrame.new(info.pos.Position)
                     bHrp.Velocity = Vector3.new(0, 0, 0)
-                    hoverPos = CFrame.lookAt(info.pos.Position + Vector3.new(0, 15, 0), info.pos.Position)
+                    hoverPos = CFrame.lookAt(info.pos.Position + Vector3.new(0, 30, 0), info.pos.Position)
                 elseif bHum and bHum.Health <= 0 then
                     waitForBurgersCollected(4)
                     engaged = false
                     visited = false
-                    hoverPos = nil
                     currentIdx = currentIdx + 1
                 end
             else
@@ -782,18 +787,17 @@ task.spawn(function()
                     waitForBurgersCollected(4)
                     engaged = false
                     visited = false
-                    hoverPos = nil
                     currentIdx = currentIdx + 1
                 else
                     if not visited then
-                        hoverPos = nil
                         requestStreamTeleport(info.pos)
+                        hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
                         hrp.Anchored = true
                         task.wait(2)
                         hrp.Anchored = false
                         visited = true
                     end
-                    hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 15, 0))
+                    hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
                 end
             end
         else
