@@ -40,11 +40,76 @@ pcall(function()
     end)
 end)
 
+pcall(function()
+    if setfpscap then setfpscap(999) end
+end)
+
+local Terrain = workspace:FindFirstChildOfClass("Terrain")
+if Terrain then
+    Terrain.WaterWaveSize = 0
+    Terrain.WaterWaveSpeed = 0
+    Terrain.WaterReflectance = 0
+    Terrain.WaterTransparency = 0
+end
+
+local function applyPotato(v)
+    if v:IsA("BasePart") then
+        v.Material = Enum.Material.SmoothPlastic
+        v.Reflectance = 0
+        v.CastShadow = false
+    elseif v:IsA("Decal") or v:IsA("Texture") then
+        v.Transparency = 1
+    elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+        v.Enabled = false
+    elseif v:IsA("MeshPart") then
+        v.Material = Enum.Material.SmoothPlastic
+        v.Reflectance = 0
+        v.CastShadow = false
+        v.TextureID = ""
+    elseif v:IsA("SpecialMesh") then
+        v.TextureId = ""
+    elseif v:IsA("Explosion") then
+        v.Visible = false
+    elseif v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+        v:Destroy()
+    end
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+    applyPotato(v)
+end
+workspace.DescendantAdded:Connect(applyPotato)
+
+task.spawn(function()
+    local lighting = game:GetService("Lighting")
+    for _, v in ipairs(lighting:GetChildren()) do
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+            v:Destroy()
+        end
+    end
+    lighting.ChildAdded:Connect(function(v)
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+            v:Destroy()
+        end
+    end)
+    while task.wait(1) do
+        pcall(function()
+            lighting.Brightness = 2
+            lighting.ClockTime = 14
+            lighting.FogEnd = 9e9
+            lighting.FogStart = 9e9
+            lighting.GlobalShadows = false
+            lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        end)
+    end
+end)
+
 local Config = {
     FastAttackEnabled = true,
     FastAttackMultiplier = 200,
     KillAuraEnabled = true,
-    KillAuraDistance = 1000,
+    KillAuraDistance = 500,
     AutoFarmEnabled = true,
     BringBurger = true,
     AutoResetMinutes = 5
@@ -491,6 +556,18 @@ local bosses = {
     { n = "kingice", pos = CFrame.new(24.27, 3.00, 45907.91) },
 }
 
+local function requestStreamTeleport(cf)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function()
+        LocalPlayer:RequestStreamAroundAsync(cf.Position, 5)
+    end)
+    hrp.CFrame = cf
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
 local currentIdx = 1
 local hoverPos = nil
 local visited = false
@@ -683,7 +760,7 @@ task.spawn(function()
                 if bHrp and bHum and bHum.Health > 0 then
                     if not visited then
                         hoverPos = nil
-                        hrp.CFrame = info.pos
+                        requestStreamTeleport(info.pos)
                         hrp.Anchored = true
                         task.wait(2)
                         hrp.Anchored = false
@@ -710,7 +787,7 @@ task.spawn(function()
                 else
                     if not visited then
                         hoverPos = nil
-                        hrp.CFrame = info.pos
+                        requestStreamTeleport(info.pos)
                         hrp.Anchored = true
                         task.wait(2)
                         hrp.Anchored = false
