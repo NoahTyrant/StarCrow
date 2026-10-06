@@ -42,6 +42,9 @@ end)
 
 pcall(function()
     if setfpscap then setfpscap(999) end
+    workspace.StreamingMinRadius = 128
+    workspace.StreamingTargetRadius = 1024
+    workspace.InterpolationThrottling = Enum.InterpolationThrottlingMode.Disabled
 end)
 
 local Terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -566,12 +569,22 @@ local function requestStreamTeleport(cf)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     pcall(function()
-        LocalPlayer:RequestStreamAroundAsync(cf.Position, 5)
+        LocalPlayer:RequestStreamAroundAsync(cf.Position, 10)
     end)
     hrp.CFrame = cf
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 end
+
+task.spawn(function()
+    for _, bInfo in ipairs(bosses) do
+        task.spawn(function()
+            pcall(function()
+                LocalPlayer:RequestStreamAroundAsync(bInfo.pos.Position, 10)
+            end)
+        end)
+    end
+end)
 
 local currentIdx = 1
 local hoverPos = nil
