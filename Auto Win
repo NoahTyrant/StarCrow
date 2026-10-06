@@ -41,8 +41,58 @@ pcall(function()
     end)
 end)
 
+pcall(function()
+    if setfpscap then setfpscap(999) end
+end)
+
+local Terrain = workspace:FindFirstChildOfClass("Terrain")
+if Terrain then
+    Terrain.WaterWaveSize = 0
+    Terrain.WaterWaveSpeed = 0
+    Terrain.WaterReflectance = 0
+    Terrain.WaterTransparency = 0
+end
+
+local function applyPotato(v)
+    if v:IsA("BasePart") then
+        v.Material = Enum.Material.SmoothPlastic
+        v.Reflectance = 0
+        v.CastShadow = false
+    elseif v:IsA("Decal") or v:IsA("Texture") then
+        v.Transparency = 1
+    elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+        v.Enabled = false
+    elseif v:IsA("MeshPart") then
+        v.Material = Enum.Material.SmoothPlastic
+        v.Reflectance = 0
+        v.CastShadow = false
+        v.TextureID = ""
+    elseif v:IsA("SpecialMesh") then
+        v.TextureId = ""
+    elseif v:IsA("Explosion") then
+        v.Visible = false
+    elseif v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+        v:Destroy()
+    end
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+    applyPotato(v)
+end
+workspace.DescendantAdded:Connect(applyPotato)
+
 task.spawn(function()
     local lighting = game:GetService("Lighting")
+    for _, v in ipairs(lighting:GetChildren()) do
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+            v:Destroy()
+        end
+    end
+    lighting.ChildAdded:Connect(function(v)
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+            v:Destroy()
+        end
+    end)
     while task.wait(1) do
         pcall(function()
             lighting.Brightness = 2
@@ -52,10 +102,6 @@ task.spawn(function()
             lighting.GlobalShadows = false
             lighting.Ambient = Color3.fromRGB(255, 255, 255)
             lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-            local atm = lighting:FindFirstChildWhichIsA("Atmosphere")
-            if atm then
-                atm.Density = 0
-            end
         end)
     end
 end)
@@ -138,7 +184,7 @@ pcall(function()
     local oldMeleeHitBox = ToolShared.meleeHitBox
     ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
         if isPlayerAlive() then
-            return oldMeleeHitBox(p1, p2, 1000, 1000, 1000, p6, p7, p8)
+            return oldMeleeHitBox(p1, p2, 500, 500, 500, p6, p7, p8)
         end
         return oldMeleeHitBox(p1, p2, p3, p4, p5, p6, p7, p8)
     end
@@ -400,6 +446,18 @@ local function bringBoss(b, offset)
     end)
 end
 
+local function requestStreamTeleport(cf)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function()
+        LocalPlayer:RequestStreamAroundAsync(cf.Position, 5)
+    end)
+    hrp.CFrame = cf
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
 RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -659,6 +717,7 @@ end
 
 local function killCommander(name, pos)
     statusText = name
+    requestStreamTeleport(CFrame.new(pos))
     currentHoverCFrame = CFrame.new(pos)
     local start = tick()
     local spawned = false
@@ -799,13 +858,9 @@ task.spawn(function()
 
     statusText = "Arena Portal"
     currentHoverCFrame = nil
+    requestStreamTeleport(CFrame.new(0.0, 15.8, -53100.4))
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(0.0, 15.8, -53100.4)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end
 
     local arenaPortal = workspace:FindFirstChild("ArenaPortal", true)
     if arenaPortal and arenaPortal:IsA("BasePart") and hrp then
@@ -903,6 +958,7 @@ task.spawn(function()
     statusText = "Final Portal"
     currentHoverCFrame = nil
     local finalPos = Vector3.new(21.61, 1074.70, -52704.68)
+    requestStreamTeleport(CFrame.new(finalPos))
     for i = 1, 15 do
         char = LocalPlayer.Character
         hrp = char and char:FindFirstChild("HumanoidRootPart")
