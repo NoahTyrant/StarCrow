@@ -25,6 +25,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -106,6 +107,100 @@ task.spawn(function()
     end
 end)
 
+local Config = {
+    AutoResetMinutes = 10
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/AutoWinConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+
+local isResetting = false
+local scriptStartTick = tick()
+local nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+
+local function forceResetUntilDead()
+    isResetting = true
+    local dead = false
+    local startTime = tick()
+    while tick() - startTime < 10 do
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if not h or h.Health <= 0 then
+            dead = true
+            break
+        end
+        pcall(function()
+            local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+            Remotes.Reset.fireServer()
+        end)
+        task.wait(0.5)
+        local cAfter = LocalPlayer.Character
+        local hAfter = cAfter and cAfter:FindFirstChildOfClass("Humanoid")
+        if not hAfter or hAfter.Health <= 0 then
+            dead = true
+            break
+        end
+    end
+    if not dead then
+        while true do
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if not h or h.Health <= 0 then break end
+            pcall(function()
+                local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+                Remotes.Reset.fireServer()
+            end)
+            task.wait(0.5)
+        end
+    end
+    repeat task.wait(0.2) until LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Health > 0 and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    task.wait(1)
+    isResetting = false
+end
+
+local function executeResetCycle(count)
+    local totalResets = count or 3
+    isResetting = true
+    for i = 1, totalResets do
+        forceResetUntilDead()
+        if i < totalResets then
+            task.wait(1.5)
+        end
+    end
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    isResetting = false
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        if not isResetting and tick() >= nextResetTick then
+            executeResetCycle(3)
+        end
+    end
+end)
+
 pcall(function()
     if getconnections then
         for _, conn in ipairs(getconnections(LocalPlayer.Idled)) do
@@ -154,6 +249,7 @@ local function triggerPrompt(prompt)
 end
 
 local function isPlayerAlive()
+    if isResetting then return false end
     local char = LocalPlayer.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -179,11 +275,19 @@ local function isPlayerAlive()
     return true
 end
 
+local lastBossBroughtTick = 0
+local singleAttackBurstTick = 0
+local voidAuraEnabled = false
+
+local function isAuraActive()
+    return isPlayerAlive() and (voidAuraEnabled or (tick() - lastBossBroughtTick <= 1) or (tick() - singleAttackBurstTick <= 0.3))
+end
+
 pcall(function()
     local ToolShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ToolShared"))
     local oldMeleeHitBox = ToolShared.meleeHitBox
     ToolShared.meleeHitBox = function(p1, p2, p3, p4, p5, p6, p7, p8)
-        if isPlayerAlive() then
+        if isAuraActive() then
             return oldMeleeHitBox(p1, p2, 500, 500, 500, p6, p7, p8)
         end
         return oldMeleeHitBox(p1, p2, p3, p4, p5, p6, p7, p8)
@@ -195,10 +299,10 @@ pcall(function()
     local originalMeleeHit
     originalMeleeHit = hookfunction(Remotes.RegisterMeleeHit.fireServer, function(...)
         local args = {...}
-        if isPlayerAlive() then
+        if isAuraActive() then
             task.spawn(function()
                 for i = 1, 199 do
-                    if not isPlayerAlive() then break end
+                    if not isAuraActive() then break end
                     task.wait(0.03)
                     originalMeleeHit(unpack(args))
                 end
@@ -211,10 +315,10 @@ pcall(function()
     local originalLaserHit
     originalLaserHit = hookfunction(Remotes.RegisterLaser.fireServer, function(...)
         local args = {...}
-        if isPlayerAlive() then
+        if isAuraActive() then
             task.spawn(function()
                 for i = 1, 199 do
-                    if not isPlayerAlive() then break end
+                    if not isAuraActive() then break end
                     task.wait(0.03)
                     originalLaserHit(unpack(args))
                 end
@@ -232,7 +336,7 @@ local function isMelee(tool)
 end
 
 local function equipAllMelee()
-    if not isPlayerAlive() then return end
+    if not isAuraActive() then return end
     local char = LocalPlayer.Character
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if char and backpack then
@@ -245,7 +349,7 @@ local function equipAllMelee()
 end
 
 local function activateMelee()
-    if not isPlayerAlive() then return end
+    if not isAuraActive() then return end
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -268,7 +372,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if isPlayerAlive() then
+        if isAuraActive() then
             equipAllMelee()
             activateMelee()
         end
@@ -354,6 +458,7 @@ end)
 
 local lastBurgerInteract = 0
 RunService.RenderStepped:Connect(function()
+    if isResetting then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local targetCFrame = Camera.CFrame * CFrame.new(0, 0, -2)
@@ -439,6 +544,7 @@ local function bringBoss(b, offset)
         end
         local root = getModelRoot(b)
         if root then
+            lastBossBroughtTick = tick()
             root.CFrame = targetCFrame
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
@@ -459,6 +565,7 @@ local function requestStreamTeleport(cf)
 end
 
 RunService.Heartbeat:Connect(function()
+    if isResetting then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
@@ -661,6 +768,78 @@ AltarTimerLabel.TextSize = 11
 AltarTimerLabel.Parent = MainFrame
 Instance.new("UICorner", AltarTimerLabel).CornerRadius = UDim.new(0, 4)
 
+local ResetTimerRow = Instance.new("Frame")
+ResetTimerRow.LayoutOrder = 5
+ResetTimerRow.Size = UDim2.new(1, 0, 0, 20)
+ResetTimerRow.BackgroundTransparency = 1
+ResetTimerRow.Parent = MainFrame
+
+local ResetTimerLabel = Instance.new("TextLabel")
+ResetTimerLabel.Size = UDim2.new(1, -56, 1, 0)
+ResetTimerLabel.Position = UDim2.new(0, 0, 0, 0)
+ResetTimerLabel.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
+ResetTimerLabel.BorderSizePixel = 0
+ResetTimerLabel.Text = "Reset in: 10:00"
+ResetTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResetTimerLabel.Font = Enum.Font.GothamBold
+ResetTimerLabel.TextSize = 11
+ResetTimerLabel.Parent = ResetTimerRow
+Instance.new("UICorner", ResetTimerLabel).CornerRadius = UDim.new(0, 4)
+
+local MinusBtn = Instance.new("TextButton")
+MinusBtn.Size = UDim2.new(0, 24, 1, 0)
+MinusBtn.Position = UDim2.new(1, -50, 0, 0)
+MinusBtn.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
+MinusBtn.Text = "-"
+MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinusBtn.Font = Enum.Font.GothamBold
+MinusBtn.TextSize = 14
+MinusBtn.Parent = ResetTimerRow
+Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
+
+local PlusBtn = Instance.new("TextButton")
+PlusBtn.Size = UDim2.new(0, 24, 1, 0)
+PlusBtn.Position = UDim2.new(1, -24, 0, 0)
+PlusBtn.BackgroundColor3 = Color3.fromRGB(35, 25, 55)
+PlusBtn.Text = "+"
+PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlusBtn.Font = Enum.Font.GothamBold
+PlusBtn.TextSize = 14
+PlusBtn.Parent = ResetTimerRow
+Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
+
+local function updateTimerLabel()
+    local remaining = math.max(0, math.floor(nextResetTick - tick()))
+    local mins = math.floor(remaining / 60)
+    local secs = remaining % 60
+    if isResetting then
+        ResetTimerLabel.Text = "Auto Reset..."
+    else
+        ResetTimerLabel.Text = string.format("Reset in: %02d:%02d", mins, secs)
+    end
+end
+
+MinusBtn.MouseButton1Click:Connect(function()
+    Config.AutoResetMinutes = math.max(1, Config.AutoResetMinutes - 1)
+    SaveConfig()
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    updateTimerLabel()
+end)
+
+PlusBtn.MouseButton1Click:Connect(function()
+    Config.AutoResetMinutes = Config.AutoResetMinutes + 1
+    SaveConfig()
+    nextResetTick = tick() + (Config.AutoResetMinutes * 60)
+    updateTimerLabel()
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        updateTimerLabel()
+    end
+end)
+
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -792,6 +971,7 @@ task.spawn(function()
 
     local targetCountdown = 180
     local timerStart = tick()
+    local lastSafeAttackTick = tick()
     while true do
         if not isPlayerAlive() then return end
         local partTime = getPartCountdown()
@@ -839,6 +1019,13 @@ task.spawn(function()
             statusText = "Safe Zone"
         end
 
+        if tick() - lastSafeAttackTick >= 10 then
+            lastSafeAttackTick = tick()
+            singleAttackBurstTick = tick()
+            equipAllMelee()
+            activateMelee()
+        end
+
         task.wait(0.2)
     end
 
@@ -857,6 +1044,7 @@ task.spawn(function()
     if not isPlayerAlive() then return end
 
     statusText = "Arena Portal"
+    voidAuraEnabled = true
     currentHoverCFrame = nil
     requestStreamTeleport(CFrame.new(0.0, 15.8, -53100.4))
     local char = LocalPlayer.Character
@@ -979,9 +1167,16 @@ task.spawn(function()
     end
 
     statusText = "Victory"
+    local lastFinalAttackTick = 0
     while not clickedPlayAgain do
         if not isPlayerAlive() then return end
-        task.wait(0.5)
+        if tick() - lastFinalAttackTick >= 5 then
+            lastFinalAttackTick = tick()
+            singleAttackBurstTick = tick()
+            equipAllMelee()
+            activateMelee()
+        end
+        task.wait(0.2)
     end
 
     statusText = "Done"
