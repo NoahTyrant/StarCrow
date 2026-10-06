@@ -57,7 +57,7 @@ local Config = {
     DashPower = 80,
     DashKeybind = "Q",
     DashKeybindEnabled = true,
-    BringItemRange = 100,
+    BringItemRange = 1000,
     ItemESPRarities = {
         Common = true,
         Uncommon = true,
@@ -951,6 +951,10 @@ local function isValidDroppedItem(obj)
     if not obj.Parent then return false end
     if isItemEquipped(obj) then return false end
     if targetItems[obj.Name] then return false end
+    local nameLower = string.lower(obj.Name)
+    if string.find(nameLower, "bush") or string.find(nameLower, "tree") or string.find(nameLower, "rock") or string.find(nameLower, "grass") or string.find(nameLower, "plant") or string.find(nameLower, "ruins") then
+        return false
+    end
     local mapFolder = workspace:FindFirstChild("Map")
     if mapFolder and obj:IsDescendantOf(mapFolder) then return false end
     if obj:FindFirstChildOfClass("Humanoid") then return false end
@@ -2094,14 +2098,8 @@ Tabs.Player:AddSlider("AutoHealSlider", {
 
 Tabs.Item:AddSection("Bring Item")
 
-Tabs.Item:AddParagraph({
-    Title = "Bring Items Note",
-    Content = "You must equip the Sack and put the items into it to prevent errors!"
-})
-
 Tabs.Item:AddButton({
     Title = "Bring Nearby Items",
-    Description = "Requires Sack equipped",
     Callback = function()
         local char = LocalPlayer.Character
         if not char then return end
@@ -2128,11 +2126,20 @@ Tabs.Item:AddButton({
                             Vector3.new(0, -1000, 0),
                             rayParams
                         )
-                        local groundY = rayResult and rayResult.Position.Y or root.Position.Y
-                        part.CFrame = CFrame.new(Vector3.new(xz.X, groundY + 1, xz.Z))
-                        if not part.Anchored then
-                            part.Velocity = Vector3.new(0, 0, 0)
-                            part.RotVelocity = Vector3.new(0, 0, 0)
+                        local groundY = (rayResult and rayResult.Position and rayResult.Position.Y) or root.Position.Y
+                        local targetPos = Vector3.new(xz.X, groundY + 3, xz.Z)
+                        for _, p in ipairs(obj:GetDescendants()) do
+                            if p:IsA("BasePart") then
+                                p.Anchored = false
+                                p.CanCollide = true
+                                p.AssemblyLinearVelocity = Vector3.new(0, -5, 0)
+                                p.AssemblyAngularVelocity = Vector3.zero
+                            end
+                        end
+                        if obj:IsA("Model") then
+                            obj:PivotTo(CFrame.new(targetPos))
+                        else
+                            part.CFrame = CFrame.new(targetPos)
                         end
                     end
                 end
@@ -2144,8 +2151,8 @@ Tabs.Item:AddButton({
 Tabs.Item:AddSlider("BringItemRangeSlider", {
     Title = "Bring Range",
     Default = Config.BringItemRange,
-    Min = 10,
-    Max = 1000,
+    Min = 1000,
+    Max = 5000,
     Rounding = 0,
     Callback = function(Value)
         Config.BringItemRange = Value
@@ -2355,6 +2362,60 @@ Tabs.Misc:AddButton({
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
         LocalPlayer.CameraMinZoomDistance = 0.5
         LocalPlayer.CameraMaxZoomDistance = 1000
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "FPS Boost",
+    Callback = function()
+        pcall(function()
+            if setfpscap then setfpscap(999) end
+        end)
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
+        end
+        local function applyPotato(v)
+            if v:IsA("BasePart") then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+                v.CastShadow = false
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v.Transparency = 1
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") then
+                v.Enabled = false
+            elseif v:IsA("MeshPart") then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+                v.CastShadow = false
+                v.TextureID = ""
+            elseif v:IsA("SpecialMesh") then
+                v.TextureId = ""
+            elseif v:IsA("Explosion") then
+                v.Visible = false
+            elseif v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+                v:Destroy()
+            end
+        end
+        for _, v in ipairs(workspace:GetDescendants()) do
+            applyPotato(v)
+        end
+        workspace.DescendantAdded:Connect(applyPotato)
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+                v:Destroy()
+            end
+        end
+        Lighting.ChildAdded:Connect(function(v)
+            if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") or v:IsA("Clouds") then
+                v:Destroy()
+            end
+        end)
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
     end
 })
 
@@ -2631,6 +2692,19 @@ local function _stopFreeze()
     end
 end
 
+local function _requestStreamTeleport(targetPos)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function()
+        LocalPlayer:RequestStreamAroundAsync(targetPos, 5)
+    end)
+    hrp.CFrame = CFrame.new(targetPos)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
 Tabs.Teleport:AddSection("Stations")
 
 local _stationOptions = {}
@@ -2652,22 +2726,17 @@ Tabs.Teleport:AddButton({
     Title = "Teleport to Station",
     Callback = function()
         if not _selectedTpStation then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(_selectedTpStation.pos)
-            task.wait(0.1)
-            _doFreeze()
-            for npc in pairs(activeNPCESP) do
-                cleanupNPCESP(npc)
-            end
-            if Config.NPCESPEnabled then
-                task.delay(0.5, function()
-                    scanNPCESP()
-                    updateNPCESP()
-                end)
-            end
+        _requestStreamTeleport(_selectedTpStation.pos)
+        task.wait(0.1)
+        _doFreeze()
+        for npc in pairs(activeNPCESP) do
+            cleanupNPCESP(npc)
+        end
+        if Config.NPCESPEnabled then
+            task.delay(0.5, function()
+                scanNPCESP()
+                updateNPCESP()
+            end)
         end
     end
 })
@@ -2693,22 +2762,17 @@ Tabs.Teleport:AddButton({
     Title = "Teleport to Boss",
     Callback = function()
         if not _selectedTpBoss then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(_selectedTpBoss.pos)
-            task.wait(0.1)
-            _doFreeze()
-            for npc in pairs(activeNPCESP) do
-                cleanupNPCESP(npc)
-            end
-            if Config.NPCESPEnabled then
-                task.delay(0.5, function()
-                    scanNPCESP()
-                    updateNPCESP()
-                end)
-            end
+        _requestStreamTeleport(_selectedTpBoss.pos)
+        task.wait(0.1)
+        _doFreeze()
+        for npc in pairs(activeNPCESP) do
+            cleanupNPCESP(npc)
+        end
+        if Config.NPCESPEnabled then
+            task.delay(0.5, function()
+                scanNPCESP()
+                updateNPCESP()
+            end)
         end
     end
 })
