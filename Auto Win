@@ -532,7 +532,7 @@ local function bringBoss(b, offset)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not (hrp and b and b.Parent) then return end
-    local targetCFrame = hrp.CFrame * (offset or CFrame.new(0, -20, 0))
+    local targetCFrame = hrp.CFrame * (offset or CFrame.new(0, -35, 0))
     pcall(function()
         if not noCollideCache[b] then
             noCollideCache[b] = true
@@ -915,7 +915,7 @@ local function killCommander(name, pos)
             local hum = b:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 spawned = true
-                bringBoss(b, CFrame.new(0, -20, 0))
+                bringBoss(b, CFrame.new(0, -35, 0))
             elseif spawned and (not hum or hum.Health <= 0) then
                 break
             end
@@ -1013,7 +1013,7 @@ task.spawn(function()
                 if not hum or hum.Health <= 0 then
                     break
                 end
-                bringBoss(safeBoss, CFrame.new(0, -20, 0))
+                bringBoss(safeBoss, CFrame.new(0, -35, 0))
                 task.wait(0.05)
             end
             statusText = "Safe Zone"
@@ -1021,9 +1021,15 @@ task.spawn(function()
 
         if tick() - lastSafeAttackTick >= 10 then
             lastSafeAttackTick = tick()
-            singleAttackBurstTick = tick()
-            equipAllMelee()
-            activateMelee()
+            task.spawn(function()
+                for i = 1, 5 do
+                    if not isPlayerAlive() then break end
+                    singleAttackBurstTick = tick()
+                    equipAllMelee()
+                    activateMelee()
+                    task.wait(0.15)
+                end
+            end)
         end
 
         task.wait(0.2)
@@ -1102,6 +1108,7 @@ task.spawn(function()
 
         local priorityFound = false
         if hrp then
+            local broughtCount = 0
             for _, v in ipairs(workspace:GetDescendants()) do
                 if v:IsA("Model") and v ~= char then
                     local clean = string.gsub(string.lower(v.Name), "%s+", "")
@@ -1113,7 +1120,11 @@ task.spawn(function()
                                 if clean ~= "voidreaper" then
                                     priorityFound = true
                                 end
-                                bringBoss(v, CFrame.new(0, -20, 0))
+                                bringBoss(v, CFrame.new(0, -35, 0))
+                                broughtCount = broughtCount + 1
+                                if broughtCount >= 4 then
+                                    break
+                                end
                             end
                         end
                     end
