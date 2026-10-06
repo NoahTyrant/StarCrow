@@ -2100,6 +2100,7 @@ Tabs.Item:AddSection("Bring Item")
 
 Tabs.Item:AddButton({
     Title = "Bring Nearby Items",
+    Description = "Use a sack to put items in if it glitches or bugs",
     Callback = function()
         local char = LocalPlayer.Character
         if not char then return end
