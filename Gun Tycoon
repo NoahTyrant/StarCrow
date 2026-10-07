@@ -52,6 +52,8 @@ local Config = {
     NoclipKey = "J",
     InvisKey = "C",
     AutoFarm = false,
+    AutoFarmPC = false,
+    AutoFarmMobile = false,
     AutoRebirth = false,
     AntiAFK = true,
     KeybindsEnabled = true,
@@ -1186,17 +1188,21 @@ local cachedShopUI = nil
 local function initShopSuppressor()
     local pGui = LocalPlayer:FindFirstChild("PlayerGui")
     if pGui then
+        local function isFarmingActive()
+            return Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm
+        end
+
         local shop = pGui:FindFirstChild("Shop")
         if shop and shop:FindFirstChild("UI") then
             cachedShopUI = shop.UI
             cachedShopUI:GetPropertyChangedSignal("Visible"):Connect(function()
-                if Config.AutoFarm and cachedShopUI.Visible then
+                if isFarmingActive() and cachedShopUI.Visible then
                     cachedShopUI.Visible = false
                 end
             end)
         end
         pGui.DescendantAdded:Connect(function(desc)
-            if Config.AutoFarm and (desc:IsA("ScreenGui") or desc:IsA("Frame")) then
+            if isFarmingActive() and (desc:IsA("ScreenGui") or desc:IsA("Frame")) then
                 local n = desc.Name:lower()
                 if n:find("prompt") or n:find("product") or n:find("purchase") or n:find("shop") or n:find("pass") then
                     pcall(function() desc.Visible = false end)
@@ -1209,7 +1215,7 @@ local function initShopSuppressor()
         local CoreGui = game:GetService("CoreGui")
 
         local function suppressPrompts()
-            if not Config.AutoFarm then return end
+            if not (Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm) then return end
             pcall(function()
                 for _, name in ipairs({"PurchasePrompt", "RobloxPurchasePrompt", "PurchasePromptApp"}) do
                     local p = CoreGui:FindFirstChild(name)
@@ -1221,7 +1227,7 @@ local function initShopSuppressor()
         end
 
         CoreGui.ChildAdded:Connect(function(child)
-            if Config.AutoFarm then
+            if Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm then
                 local n = child.Name:lower()
                 if n:find("purchase") or n:find("prompt") then
                     pcall(function()
@@ -1382,7 +1388,39 @@ local function isBuyableButton(button)
     return true
 end
 
-local function buyGreenButtonsRemote(myTycoon)
+local function buyGreenButtonsPC(myTycoon)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local buttons = myTycoon:FindFirstChild("Buttons")
+    if not buttons then return end
+
+    for _, button in ipairs(buttons:GetChildren()) do
+        if not Config.AutoFarmPC then break end
+        local bName = button.Name:lower()
+        if not bName:find("rebirth") and isBuyableButton(button) then
+            local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
+            if head and head:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(hrp, head, 0)
+                    task.wait(0.01)
+                    firetouchinterest(hrp, head, 1)
+                end)
+            end
+            local pad = button:FindFirstChild("Pad")
+            if pad and pad:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(hrp, pad, 0)
+                    task.wait(0.01)
+                    firetouchinterest(hrp, pad, 1)
+                end)
+            end
+        end
+    end
+end
+
+local function buyGreenButtonsMobile(myTycoon)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1394,7 +1432,7 @@ local function buyGreenButtonsRemote(myTycoon)
     local giverPart = getGiverPart(myTycoon)
 
     for _, button in ipairs(buttons:GetChildren()) do
-        if not Config.AutoFarm then break end
+        if not Config.AutoFarmMobile then break end
         local bName = button.Name:lower()
         if not bName:find("rebirth") and isBuyableButton(button) then
             local targetPart = button:FindFirstChild("Head") or button:FindFirstChild("Pad") or button:FindFirstChildWhichIsA("BasePart")
@@ -1558,13 +1596,17 @@ local function deleteAllBaseForcefields()
 end
 
 local autoFarmStartTime = 0
-local lastBuyButtonsTime = 0
+local autoFarmPCStartTime = 0
+local autoFarmMobileStartTime = 0
+local lastBuyButtonsPCTime = 0
+local lastBuyButtonsMobileTime = 0
 local lastRebirthTime = 0
 local lastCollectTime = 0
 
 task.spawn(function()
     while task.wait(0.2) do
-        if Config.AutoFarm then
+        local isFarming = Config.AutoFarmPC or Config.AutoFarmMobile
+        if isFarming then
             pcall(function()
                 local myTycoon = getMyTycoon()
                 if not myTycoon then
@@ -1575,9 +1617,13 @@ task.spawn(function()
                         lastCollectTime = now
                         jitterAtGiver(myTycoon)
                     end
-                    if (now - autoFarmStartTime >= 5) and (now - lastBuyButtonsTime >= 1.2) then
-                        lastBuyButtonsTime = now
-                        buyGreenButtonsRemote(myTycoon)
+                    if Config.AutoFarmPC and (now - autoFarmPCStartTime >= 5) and (now - lastBuyButtonsPCTime >= 0.4) then
+                        lastBuyButtonsPCTime = now
+                        buyGreenButtonsPC(myTycoon)
+                    end
+                    if Config.AutoFarmMobile and (now - autoFarmMobileStartTime >= 5) and (now - lastBuyButtonsMobileTime >= 1.2) then
+                        lastBuyButtonsMobileTime = now
+                        buyGreenButtonsMobile(myTycoon)
                     end
                 end
             end)
@@ -1599,7 +1645,7 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5)
-    if not Config.AutoFarm then
+    if not Config.AutoFarmPC and not Config.AutoFarmMobile then
         unfreezePlayer()
     end
 end)
@@ -1614,15 +1660,42 @@ end)
 
 Tabs.Main:AddSection("Tycoon")
 
-Tabs.Main:AddToggle("AutoFarmT", {
-    Title = "Auto Farm",
-    Default = Config.AutoFarm,
+local AutoFarmPCToggle = nil
+local AutoFarmMobileToggle = nil
+
+AutoFarmPCToggle = Tabs.Main:AddToggle("AutoFarmPCT", {
+    Title = "Auto Farm PC",
+    Default = Config.AutoFarmPC,
     Callback = function(v)
-        Config.AutoFarm = v
+        Config.AutoFarmPC = v
         if v then
-            autoFarmStartTime = os.clock()
+            autoFarmPCStartTime = os.clock()
+            if Config.AutoFarmMobile and AutoFarmMobileToggle then
+                AutoFarmMobileToggle:SetValue(false)
+            end
         else
-            unfreezePlayer()
+            if not Config.AutoFarmMobile then
+                unfreezePlayer()
+            end
+        end
+        SaveConfig()
+    end
+})
+
+AutoFarmMobileToggle = Tabs.Main:AddToggle("AutoFarmMobileT", {
+    Title = "Auto Farm Mobile",
+    Default = Config.AutoFarmMobile,
+    Callback = function(v)
+        Config.AutoFarmMobile = v
+        if v then
+            autoFarmMobileStartTime = os.clock()
+            if Config.AutoFarmPC and AutoFarmPCToggle then
+                AutoFarmPCToggle:SetValue(false)
+            end
+        else
+            if not Config.AutoFarmPC then
+                unfreezePlayer()
+            end
         end
         SaveConfig()
     end
