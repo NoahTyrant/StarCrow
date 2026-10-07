@@ -42,9 +42,12 @@ end)
 
 pcall(function()
     if setfpscap then setfpscap(999) end
-    workspace.StreamingMinRadius = 128
-    workspace.StreamingTargetRadius = 1024
+    workspace.StreamingMinRadius = 8192
+    workspace.StreamingTargetRadius = 16384
     workspace.InterpolationThrottling = Enum.InterpolationThrottlingMode.Disabled
+    if workspace.StreamingIntegrityMode then
+        workspace.StreamingIntegrityMode = Enum.StreamingIntegrityMode.Disabled
+    end
 end)
 
 local Terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -666,20 +669,26 @@ local function requestStreamTeleport(cf)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     pcall(function()
-        LocalPlayer:RequestStreamAroundAsync(cf.Position, 10)
+        LocalPlayer:RequestStreamAroundAsync(cf.Position, 5)
     end)
     hrp.CFrame = cf
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 end
 
-task.spawn(function()
+local function preloadAllBossPositions()
     for _, bInfo in ipairs(bosses) do
         task.spawn(function()
             pcall(function()
                 LocalPlayer:RequestStreamAroundAsync(bInfo.pos.Position, 10)
             end)
         end)
+    end
+end
+preloadAllBossPositions()
+task.spawn(function()
+    while task.wait(3) do
+        preloadAllBossPositions()
     end
 end)
 
@@ -868,50 +877,51 @@ task.spawn(function()
             local info = bosses[currentIdx]
             local targetBoss = cachedBosses[info.n]
 
-            if targetBoss then
+            if not visited then
+                requestStreamTeleport(info.pos)
+                hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
+                visited = true
+            end
+
+            if targetBoss and targetBoss.Parent then
                 local bHrp = targetBoss:FindFirstChild("HumanoidRootPart")
                 local bHum = targetBoss:FindFirstChildOfClass("Humanoid")
 
                 if bHrp and bHum and bHum.Health > 0 then
-                    if not visited then
-                        requestStreamTeleport(info.pos)
-                        hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
-                        hrp.Anchored = true
-                        task.wait(2)
-                        hrp.Anchored = false
-                        visited = true
-                    end
                     engaged = true
                     lastBossBroughtTick = tick()
                     bHrp.CFrame = CFrame.new(info.pos.Position)
                     bHrp.Velocity = Vector3.new(0, 0, 0)
                     hoverPos = CFrame.lookAt(info.pos.Position + Vector3.new(0, 30, 0), info.pos.Position)
-                elseif bHum and bHum.Health <= 0 then
-                    waitForBurgersCollected(4)
-                    engaged = false
-                    visited = false
-                    currentIdx = currentIdx + 1
+                elseif (bHum and bHum.Health <= 0) or not targetBoss.Parent then
+                    if engaged then
+                        repeat
+                            task.wait(0.2)
+                        until getNearbyBurgerCount() == 0
+                        task.wait(0.5)
+                        engaged = false
+                        visited = false
+                        currentIdx = currentIdx + 1
+                    end
                 end
             else
                 if engaged then
-                    waitForBurgersCollected(4)
+                    repeat
+                        task.wait(0.2)
+                    until getNearbyBurgerCount() == 0
+                    task.wait(0.5)
                     engaged = false
                     visited = false
                     currentIdx = currentIdx + 1
                 else
-                    if not visited then
-                        requestStreamTeleport(info.pos)
-                        hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
-                        hrp.Anchored = true
-                        task.wait(2)
-                        hrp.Anchored = false
-                        visited = true
-                    end
                     hoverPos = CFrame.new(info.pos.Position + Vector3.new(0, 30, 0))
                 end
             end
         else
-            waitForBurgersCollected(5)
+            repeat
+                task.wait(0.2)
+            until getNearbyBurgerCount() == 0
+            task.wait(0.5)
             hoverPos = nil
             currentIdx = 1
             executeResetCycle(3)
