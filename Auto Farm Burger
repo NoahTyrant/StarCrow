@@ -482,6 +482,9 @@ end
 local function isValidBurger(obj)
     if not (obj and obj.Parent and targetItems[obj.Name]) then return false end
     if obj:FindFirstAncestor("Spawners") or obj:FindFirstAncestor("Spawner") then return false end
+    if obj:FindFirstAncestor("FloatingCastle") then return false end
+    local map = workspace:FindFirstChild("Map")
+    if map and obj:IsDescendantOf(map) then return false end
     if isItemEquipped(obj) then return false end
     local p = obj.Parent
     if p and string.find(string.lower(p.Name), "spawn") then return false end
