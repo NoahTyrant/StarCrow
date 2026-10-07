@@ -52,11 +52,21 @@ local Config = {
     AutoMineEnabled = false,
     OreESPEnabled = false,
     UITheme = "Amethyst",
+    FloatSize = 46,
     DashFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = 0 },
     DashFloatVisible = false,
+    NoclipFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = -54 },
+    NoclipFloatVisible = false,
+    FlyFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = -108 },
+    FlyFloatVisible = false,
     DashPower = 80,
     DashKeybind = "Q",
     DashKeybindEnabled = true,
+    FlyKeybind = "F",
+    FlyKeybindEnabled = true,
+    NoclipKeybind = "J",
+    NoclipKeybindEnabled = true,
+    DisableAllKeybinds = false,
     BringItemRange = 1000,
     ItemESPRarities = {
         Common = true,
@@ -576,6 +586,34 @@ pcall(function()
         end
         return originalLaserHit(...)
     end)
+end)
+
+local function setupToolKillAuraCD(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    tool:GetAttributeChangedSignal("CooldownTimeLeft"):Connect(function()
+        if Config.KillAuraEnabled and (tool:GetAttribute("CooldownTimeLeft") or 0) > 0 then
+            tool:SetAttribute("CooldownTimeLeft", 0)
+        end
+    end)
+end
+
+local function setupInventoryForKillAura()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do setupToolKillAuraCD(t) end
+        bp.ChildAdded:Connect(setupToolKillAuraCD)
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, t in ipairs(char:GetChildren()) do setupToolKillAuraCD(t) end
+        char.ChildAdded:Connect(setupToolKillAuraCD)
+    end
+end
+
+setupInventoryForKillAura()
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.2)
+    setupInventoryForKillAura()
 end)
 
 local npcs = {}
@@ -1563,6 +1601,7 @@ local function activateHeldTool()
         pcall(function()
             tool:Activate()
             if Config.KillAuraEnabled then
+                tool:SetAttribute("CooldownTimeLeft", 0)
                 silenceAttackSounds(tool)
                 silenceAttackSounds(char)
                 if animator then
@@ -1616,6 +1655,83 @@ if LocalPlayer.Character then
 end
 LocalPlayer.CharacterAdded:Connect(hookCharAnimations)
 
+local function hideHotbarCooldownVisual()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            local n = string.lower(desc.Name)
+            local isCD = string.find(n, "cooldown") or string.find(n, "cd")
+            if not isCD then
+                local p = desc.Parent
+                local depth = 0
+                while p and p ~= pg and depth < 3 do
+                    local pn = string.lower(p.Name)
+                    if string.find(pn, "cooldown") or string.find(pn, "cd") then
+                        isCD = true
+                        break
+                    end
+                    p = p.Parent
+                    depth = depth + 1
+                end
+            end
+            if isCD and desc.Visible then
+                desc.Visible = false
+            end
+        end
+    end
+end
+
+local function restoreHotbarCooldownVisual()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            local n = string.lower(desc.Name)
+            local isCD = string.find(n, "cooldown") or string.find(n, "cd")
+            if not isCD then
+                local p = desc.Parent
+                local depth = 0
+                while p and p ~= pg and depth < 3 do
+                    local pn = string.lower(p.Name)
+                    if string.find(pn, "cooldown") or string.find(pn, "cd") then
+                        isCD = true
+                        break
+                    end
+                    p = p.Parent
+                    depth = depth + 1
+                end
+            end
+            if isCD then
+                pcall(function()
+                    if desc:IsA("TextLabel") then
+                        desc.Visible = true
+                        desc.TextTransparency = 0
+                    else
+                        desc.Visible = false
+                    end
+                end)
+            end
+        end
+    end
+end
+
+local _cdVisualThrottle = 0
+RunService.Heartbeat:Connect(function(dt)
+    if not Config.KillAuraEnabled then return end
+    _cdVisualThrottle = _cdVisualThrottle + dt
+    if _cdVisualThrottle < 0.1 then return end
+    _cdVisualThrottle = 0
+    hideHotbarCooldownVisual()
+end)
+
+if not Config.KillAuraEnabled then
+    task.spawn(function()
+        task.wait(0.2)
+        restoreHotbarCooldownVisual()
+    end)
+end
+
 task.spawn(function()
     while true do
         task.wait(0.12)
@@ -1650,8 +1766,104 @@ local FastAttackToggleObj, FastAttackSliderObj, NPCHitboxToggleObj, NPCHitboxSli
 local KillAuraToggleObj, KillAuraSliderObj
 local BringBurgerToggleObj
 local performDash
-local dashFloatBtn
+local dashFloatBtn, noclipFloatBtn, flyFloatBtn
+local dashFloatStroke, noclipFloatStroke, flyFloatStroke
+local FlyToggleObj, NoclipToggleObj
+local updateFloatButtonsSize
 local oldNamecall_aw = nil
+
+local function makeDraggableFloat(b, posKey)
+    local dragging, moved, startPos, startBtnPos, activeInput = false, false, nil, nil, nil
+    b.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved, startPos, startBtnPos, activeInput = true, false, input.Position, b.Position, input
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    activeInput = nil
+                    if moved and posKey then
+                        local p = b.Position
+                        Config[posKey] = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
+                        SaveConfig()
+                    end
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input == activeInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - startPos
+            if delta.Magnitude > 6 then moved = true end
+            b.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
+        end
+    end)
+    return function() return moved end, function() moved = false end
+end
+
+local function setFloatStrokeActive(stroke, active)
+    if not stroke then return end
+    local oldGradient = stroke:FindFirstChildOfClass("UIGradient")
+    if oldGradient then oldGradient:Destroy() end
+    local gradient = Instance.new("UIGradient")
+    if active then
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 2.2
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
+        end)
+    else
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 1.6
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 180 }):Play()
+        end)
+    end
+end
+
+local lastFlyToggleTime = 0
+local function toggleFly()
+    local now = tick()
+    if now - lastFlyToggleTime < 0.25 then return end
+    lastFlyToggleTime = now
+    if FlyToggleObj then
+        FlyToggleObj:SetValue(not Config.FlyEnabled)
+    else
+        Config.FlyEnabled = not Config.FlyEnabled
+        SaveConfig()
+        if Config.FlyEnabled then startFly() else stopFly() end
+        if flyFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(flyFloatStroke, Config.FlyEnabled)
+        end
+    end
+end
+
+local lastNoclipToggleTime = 0
+local function toggleNoclip()
+    local now = tick()
+    if now - lastNoclipToggleTime < 0.25 then return end
+    lastNoclipToggleTime = now
+    if NoclipToggleObj then
+        NoclipToggleObj:SetValue(not Config.NoclipEnabled)
+    else
+        Config.NoclipEnabled = not Config.NoclipEnabled
+        SaveConfig()
+        if noclipFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(noclipFloatStroke, Config.NoclipEnabled)
+        end
+    end
+end
 
 local MobCache = {}
 
@@ -1712,6 +1924,7 @@ KillAuraToggleObj = Tabs.Main:AddToggle("KillAuraToggle", {
         Config.KillAuraEnabled = Value
         if not Value then
             restoreAllSounds()
+            restoreHotbarCooldownVisual()
         end
         SaveConfig()
     end
@@ -1941,7 +2154,7 @@ Tabs.ESP:AddToggle("ESPOreToggle", {
 })
 
 Tabs.Player:AddToggle("LoopSpeedToggle", {
-    Title = "Enable WalkSpeed",
+    Title = "Walk Speed",
     Default = Config.LoopSpeedEnabled,
     Callback = function(Value)
         Config.LoopSpeedEnabled = Value
@@ -1950,7 +2163,7 @@ Tabs.Player:AddToggle("LoopSpeedToggle", {
 })
 
 Tabs.Player:AddSlider("WalkSpeedSlider", {
-    Title = "Speed Amount",
+    Title = "Speed",
     Default = Config.WalkSpeed,
     Min = 16,
     Max = 250,
@@ -1961,7 +2174,7 @@ Tabs.Player:AddSlider("WalkSpeedSlider", {
     end
 })
 
-Tabs.Player:AddToggle("FlyToggle", {
+FlyToggleObj = Tabs.Player:AddToggle("FlyToggle", {
     Title = "Fly",
     Default = Config.FlyEnabled,
     Callback = function(Value)
@@ -1971,6 +2184,9 @@ Tabs.Player:AddToggle("FlyToggle", {
             startFly()
         else
             stopFly()
+        end
+        if flyFloatStroke then
+            setFloatStrokeActive(flyFloatStroke, Value)
         end
     end
 })
@@ -1987,12 +2203,15 @@ Tabs.Player:AddSlider("FlySpeedSlider", {
     end
 })
 
-Tabs.Player:AddToggle("NoclipToggle", {
+NoclipToggleObj = Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
     Default = Config.NoclipEnabled,
     Callback = function(Value)
         Config.NoclipEnabled = Value
         SaveConfig()
+        if noclipFloatStroke then
+            setFloatStrokeActive(noclipFloatStroke, Value)
+        end
     end
 })
 
@@ -2026,50 +2245,6 @@ Tabs.Player:AddToggle("DashFloatToggle", {
         end
         Config.DashFloatVisible = Value
         SaveConfig()
-    end
-})
-
-Tabs.Player:AddToggle("AirWeldToggle", {
-    Title = "Air Weld",
-    Default = false,
-    Callback = function(Value)
-        if Value then
-            oldNamecall_aw = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                local args = {...}
-                if method == "GetPartsInPart" and self == workspace and not checkcaller() then
-                    local params = args[2]
-                    if params and typeof(params) == "OverlapParams" then
-                        local filter = params.FilterDescendantsInstances
-                        if filter and type(filter) == "table" and filter[1] and filter[1].Name == "Cart" then
-                            local cart = workspace:FindFirstChild("Cart")
-                            if cart then
-                                local wagons = cart:FindFirstChild("Wagons")
-                                if wagons then
-                                    local targetPart = nil
-                                    for _, wagon in ipairs(wagons:GetChildren()) do
-                                        local floor = wagon:FindFirstChild("Floor")
-                                        if floor and floor:FindFirstChildWhichIsA("BasePart") then
-                                            targetPart = floor:FindFirstChildWhichIsA("BasePart")
-                                            break
-                                        end
-                                    end
-                                    if targetPart then
-                                        return {targetPart}
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                return oldNamecall_aw(self, ...)
-            end)
-        else
-            if oldNamecall_aw then
-                hookmetamethod(game, "__namecall", oldNamecall_aw)
-                oldNamecall_aw = nil
-            end
-        end
     end
 })
 
@@ -2348,21 +2523,66 @@ Tabs.Misc:AddToggle("InstantPromptToggle", {
     end
 })
 
-Tabs.Misc:AddButton({
-    Title = "First Person Camera",
-    Callback = function()
-        LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
-        LocalPlayer.CameraMinZoomDistance = 0.5
-        LocalPlayer.CameraMaxZoomDistance = 0.5
+local unlockCamActivated = false
+Tabs.Misc:AddToggle("UnlockCameraToggle", {
+    Title = "Unlock Camera",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            unlockCamActivated = true
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMaxZoomDistance = 1000
+        else
+            if not unlockCamActivated then return end
+            LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMaxZoomDistance = 128
+        end
     end
 })
 
-Tabs.Misc:AddButton({
-    Title = "Third Person Camera",
-    Callback = function()
-        LocalPlayer.CameraMode = Enum.CameraMode.Classic
-        LocalPlayer.CameraMinZoomDistance = 0.5
-        LocalPlayer.CameraMaxZoomDistance = 1000
+Tabs.Misc:AddToggle("AirWeldToggle", {
+    Title = "Air Weld",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            oldNamecall_aw = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                local args = {...}
+                if method == "GetPartsInPart" and self == workspace and not checkcaller() then
+                    local params = args[2]
+                    if params and typeof(params) == "OverlapParams" then
+                        local filter = params.FilterDescendantsInstances
+                        if filter and type(filter) == "table" and filter[1] and filter[1].Name == "Cart" then
+                            local cart = workspace:FindFirstChild("Cart")
+                            if cart then
+                                local wagons = cart:FindFirstChild("Wagons")
+                                if wagons then
+                                    local targetPart = nil
+                                    for _, wagon in ipairs(wagons:GetChildren()) do
+                                        local floor = wagon:FindFirstChild("Floor")
+                                        if floor and floor:FindFirstChildWhichIsA("BasePart") then
+                                            targetPart = floor:FindFirstChildWhichIsA("BasePart")
+                                            break
+                                        end
+                                    end
+                                    if targetPart then
+                                        return {targetPart}
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                return oldNamecall_aw(self, ...)
+            end)
+        else
+            if oldNamecall_aw then
+                hookmetamethod(game, "__namecall", oldNamecall_aw)
+                oldNamecall_aw = nil
+            end
+        end
     end
 })
 
@@ -2431,6 +2651,17 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     end
 })
 
+Tabs.Settings:AddSection("Keybinds")
+
+Tabs.Settings:AddToggle("DisableAllKeybindsToggle", {
+    Title = "Disable Keybinds",
+    Default = Config.DisableAllKeybinds or false,
+    Callback = function(Value)
+        Config.DisableAllKeybinds = Value
+        SaveConfig()
+    end
+})
+
 local function getDashKey()
     local k = Config.DashKeybind or "Q"
     if typeof(k) == "EnumItem" then return k end
@@ -2438,21 +2669,12 @@ local function getDashKey()
     return Enum.KeyCode[name] or Enum.KeyCode.Q
 end
 
-Tabs.Settings:AddToggle("DashKeybindToggle", {
-    Title = "Enable Dash Keybind",
-    Default = Config.DashKeybindEnabled ~= false,
-    Callback = function(Value)
-        Config.DashKeybindEnabled = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Settings:AddKeybind("DashKeybind", {
     Title = "Dash Keybind",
     Mode = "Toggle",
     Default = Config.DashKeybind or "Q",
     Callback = function()
-        if Config.DashKeybindEnabled ~= false and performDash then
+        if not Config.DisableAllKeybinds and Config.DashKeybindEnabled ~= false and performDash then
             performDash()
         end
     end,
@@ -2465,84 +2687,116 @@ Tabs.Settings:AddKeybind("DashKeybind", {
     end
 })
 
+local function getFlyKey()
+    local k = Config.FlyKeybind or "F"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.F
+end
+
+Tabs.Settings:AddKeybind("FlyKeybind", {
+    Title = "Fly Keybind",
+    Mode = "Toggle",
+    Default = Config.FlyKeybind or "F",
+    Callback = function()
+        if not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
+            toggleFly()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.FlyKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+local function getNoclipKey()
+    local k = Config.NoclipKeybind or "J"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.J
+end
+
+Tabs.Settings:AddKeybind("NoclipKeybind", {
+    Title = "Noclip Keybind",
+    Mode = "Toggle",
+    Default = Config.NoclipKeybind or "J",
+    Callback = function()
+        if not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
+            toggleNoclip()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.NoclipKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if Config.DashKeybindEnabled == false then return end
+    if Config.DisableAllKeybinds then return end
     if UserInputService:GetFocusedTextBox() then return end
     if input.UserInputType == Enum.UserInputType.Keyboard then
-        local targetKey = getDashKey()
-        if input.KeyCode == targetKey then
-            if performDash then
-                performDash()
-            end
+        if Config.DashKeybindEnabled ~= false and input.KeyCode == getDashKey() then
+            if performDash then performDash() end
+        elseif Config.FlyKeybindEnabled ~= false and input.KeyCode == getFlyKey() then
+            toggleFly()
+        elseif Config.NoclipKeybindEnabled ~= false and input.KeyCode == getNoclipKey() then
+            toggleNoclip()
         end
     end
 end)
 
+Tabs.Settings:AddSection("Float Buttons")
 
-
-local function makeDraggableFloat(b, posKey)
-    local dragging, moved, startPos, startBtnPos, activeInput = false, false, nil, nil, nil
-    b.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging, moved, startPos, startBtnPos, activeInput = true, false, input.Position, b.Position, input
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    activeInput = nil
-                    if moved and posKey then
-                        local p = b.Position
-                        Config[posKey] = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
-                        SaveConfig()
-                    end
-                end
-            end)
+Tabs.Settings:AddSlider("FloatSizeSlider", {
+    Title = "Float Size",
+    Default = Config.FloatSize or 46,
+    Min = 25,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(Value)
+        if updateFloatButtonsSize then
+            updateFloatButtonsSize(Value)
         end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input == activeInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
-            local delta = input.Position - startPos
-            if delta.Magnitude > 6 then moved = true end
-            b.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
-        end
-    end)
-    return function() return moved end, function() moved = false end
-end
-
-local function setFloatStrokeActive(stroke, active)
-    if not stroke then return end
-    local oldGradient = stroke:FindFirstChildOfClass("UIGradient")
-    if oldGradient then oldGradient:Destroy() end
-    local gradient = Instance.new("UIGradient")
-    if active then
-        stroke.Color = Color3.fromRGB(255, 255, 255)
-        stroke.Thickness = 2.2
-        gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
-        })
-        gradient.Parent = stroke
-        task.spawn(function()
-            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
-        end)
-    else
-        stroke.Color = Color3.fromRGB(255, 255, 255)
-        stroke.Thickness = 1.6
-        gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
-        })
-        gradient.Parent = stroke
-        task.spawn(function()
-            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 180 }):Play()
-        end)
+        SaveConfig()
     end
-end
+})
+
+Tabs.Settings:AddToggle("FloatNoclipToggle", {
+    Title = "Float Noclip",
+    Default = Config.NoclipFloatVisible or false,
+    Callback = function(Value)
+        if noclipFloatBtn then
+            noclipFloatBtn.Visible = Value
+        end
+        Config.NoclipFloatVisible = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddToggle("FloatFlyToggle", {
+    Title = "Float Fly",
+    Default = Config.FlyFloatVisible or false,
+    Callback = function(Value)
+        if flyFloatBtn then
+            flyFloatBtn.Visible = Value
+        end
+        Config.FlyFloatVisible = Value
+        SaveConfig()
+    end
+})
+
+local fSize = Config.FloatSize or 46
+local tSize = math.clamp(math.floor(fSize * 0.28), 10, 18)
 
 dashFloatBtn = Instance.new("TextButton")
-local dp = Config.DashFloatPos
-dashFloatBtn.Size = UDim2.new(0, 46, 0, 46)
+local dp = Config.DashFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = 0 }
+dashFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
 dashFloatBtn.Position = UDim2.new(dp.xs, dp.xo, dp.ys, dp.yo)
 dashFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 dashFloatBtn.BackgroundTransparency = 0.88
@@ -2550,17 +2804,89 @@ dashFloatBtn.BorderSizePixel = 0
 dashFloatBtn.Text = "Dash"
 dashFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 dashFloatBtn.TextScaled = false
-dashFloatBtn.TextSize = 13
+dashFloatBtn.TextSize = tSize
 dashFloatBtn.Font = Enum.Font.GothamBold
 dashFloatBtn.ZIndex = 15
 dashFloatBtn.Visible = Config.DashFloatVisible
 dashFloatBtn.Parent = LogoGui
 Instance.new("UICorner", dashFloatBtn).CornerRadius = UDim.new(0, 8)
-local dashFloatStroke = Instance.new("UIStroke", dashFloatBtn)
+dashFloatStroke = Instance.new("UIStroke", dashFloatBtn)
 dashFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 setFloatStrokeActive(dashFloatStroke, false)
 
 local getMoved, resetMoved = makeDraggableFloat(dashFloatBtn, "DashFloatPos")
+
+noclipFloatBtn = Instance.new("TextButton")
+local np = Config.NoclipFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = -54 }
+noclipFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
+noclipFloatBtn.Position = UDim2.new(np.xs, np.xo, np.ys, np.yo)
+noclipFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+noclipFloatBtn.BackgroundTransparency = 0.88
+noclipFloatBtn.BorderSizePixel = 0
+noclipFloatBtn.Text = "Noclip"
+noclipFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+noclipFloatBtn.TextScaled = false
+noclipFloatBtn.TextSize = tSize
+noclipFloatBtn.Font = Enum.Font.GothamBold
+noclipFloatBtn.ZIndex = 15
+noclipFloatBtn.Visible = Config.NoclipFloatVisible or false
+noclipFloatBtn.Parent = LogoGui
+Instance.new("UICorner", noclipFloatBtn).CornerRadius = UDim.new(0, 8)
+noclipFloatStroke = Instance.new("UIStroke", noclipFloatBtn)
+noclipFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(noclipFloatStroke, Config.NoclipEnabled)
+
+local getNoclipMoved, resetNoclipMoved = makeDraggableFloat(noclipFloatBtn, "NoclipFloatPos")
+
+noclipFloatBtn.MouseButton1Click:Connect(function()
+    if getNoclipMoved() then resetNoclipMoved() return end
+    toggleNoclip()
+end)
+
+flyFloatBtn = Instance.new("TextButton")
+local fp = Config.FlyFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = -108 }
+flyFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
+flyFloatBtn.Position = UDim2.new(fp.xs, fp.xo, fp.ys, fp.yo)
+flyFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+flyFloatBtn.BackgroundTransparency = 0.88
+flyFloatBtn.BorderSizePixel = 0
+flyFloatBtn.Text = "Fly"
+flyFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+flyFloatBtn.TextScaled = false
+flyFloatBtn.TextSize = tSize
+flyFloatBtn.Font = Enum.Font.GothamBold
+flyFloatBtn.ZIndex = 15
+flyFloatBtn.Visible = Config.FlyFloatVisible or false
+flyFloatBtn.Parent = LogoGui
+Instance.new("UICorner", flyFloatBtn).CornerRadius = UDim.new(0, 8)
+flyFloatStroke = Instance.new("UIStroke", flyFloatBtn)
+flyFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(flyFloatStroke, Config.FlyEnabled)
+
+local getFlyMoved, resetFlyMoved = makeDraggableFloat(flyFloatBtn, "FlyFloatPos")
+
+flyFloatBtn.MouseButton1Click:Connect(function()
+    if getFlyMoved() then resetFlyMoved() return end
+    toggleFly()
+end)
+
+updateFloatButtonsSize = function(size)
+    local s = tonumber(size) or 46
+    Config.FloatSize = s
+    local ts = math.clamp(math.floor(s * 0.28), 10, 18)
+    if dashFloatBtn then
+        dashFloatBtn.Size = UDim2.new(0, s, 0, s)
+        dashFloatBtn.TextSize = ts
+    end
+    if noclipFloatBtn then
+        noclipFloatBtn.Size = UDim2.new(0, s, 0, s)
+        noclipFloatBtn.TextSize = ts
+    end
+    if flyFloatBtn then
+        flyFloatBtn.Size = UDim2.new(0, s, 0, s)
+        flyFloatBtn.TextSize = ts
+    end
+end
 
 local lastDash = 0
 
