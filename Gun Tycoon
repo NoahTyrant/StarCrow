@@ -1025,20 +1025,40 @@ local function UpdateGuns()
 end
 
 ScanGuns()
+
+local isScanningGuns = false
+local lastGunScanTime = 0
+
+local function queueGunUpdate()
+    local now = os.clock()
+    if now - lastGunScanTime < 1 then return end
+    lastGunScanTime = now
+    if isScanningGuns then return end
+    isScanningGuns = true
+    task.spawn(function()
+        ScanGuns()
+        UpdateGuns()
+        isScanningGuns = false
+    end)
+end
+
 LocalPlayer.CharacterAdded:Connect(function(char)
     char.ChildAdded:Connect(function(child)
         if child:IsA("Tool") then
-            task.wait(0.1)
-            ScanGuns()
-            UpdateGuns()
+            queueGunUpdate()
         end
     end)
 end)
+if LocalPlayer.Character then
+    LocalPlayer.Character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            queueGunUpdate()
+        end
+    end)
+end
 LocalPlayer.Backpack.ChildAdded:Connect(function(child)
     if child:IsA("Tool") then
-        task.wait(0.1)
-        ScanGuns()
-        UpdateGuns()
+        queueGunUpdate()
     end
 end)
 
@@ -1280,12 +1300,46 @@ end
 
 local function isGreenPad(part)
     if not part or not part:IsA("BasePart") then return false end
+    local p = part.Parent
+    if p then
+        local pName = p.Name:lower()
+        if pName:find("rebirth") or pName:find("gamepass") or pName:find("devproduct") or pName:find("robux") or pName:find("product") or pName:find("invite") or pName:find("potion") then
+            return false
+        end
+        for _, c in ipairs(p:GetDescendants()) do
+            if c:IsA("TextLabel") or c:IsA("BillboardGui") then
+                local t = (c:IsA("TextLabel") and c.Text or ""):lower()
+                if t:find("r$") or t:find("robux") or t:find("invite") or t:find("gamepass") then
+                    return false
+                end
+            end
+        end
+    end
+
     local c = part.Color
-    if c.G > 0.4 and c.G > c.R and c.G > c.B then
+    local r, g, b = c.R, c.G, c.B
+    if r > 0.6 and g > 0.6 and b < 0.3 then
+        return false
+    end
+    if r > 0.4 and b > 0.4 then
+        return false
+    end
+    if b > 0.5 and g > 0.5 and r < 0.3 then
+        return false
+    end
+    if b > 0.6 and b > g then
+        return false
+    end
+
+    local bc = part.BrickColor.Name:lower()
+    if bc:find("yellow") or bc:find("purple") or bc:find("magenta") or bc:find("cyan") or bc:find("blue") or bc:find("teal") then
+        return false
+    end
+
+    if g > 0.35 and g > r * 1.2 and g > b * 1.2 then
         return true
     end
-    local bc = part.BrickColor.Name:lower()
-    if bc:find("green") or bc:find("lime") or bc:find("forest") then
+    if bc:find("green") or bc:find("lime") or bc:find("forest") or bc:find("moss") or bc:find("mint") then
         return true
     end
     return false
@@ -1300,11 +1354,13 @@ local function buyGreenButtonsRemote(myTycoon)
     if not buttons then return end
 
     for _, button in ipairs(buttons:GetChildren()) do
-        local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
-        if head and head:FindFirstChild("TouchInterest") and isGreenPad(head) then
-            firetouchinterest(hrp, head, 0)
-            task.wait(0.02)
-            firetouchinterest(hrp, head, 1)
+        local bName = button.Name:lower()
+        if not bName:find("rebirth") and not bName:find("gamepass") and not bName:find("robux") and not bName:find("devproduct") and not bName:find("invite") then
+            local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
+            if head and head:FindFirstChild("TouchInterest") and isGreenPad(head) then
+                firetouchinterest(hrp, head, 0)
+                firetouchinterest(hrp, head, 1)
+            end
         end
     end
 end
@@ -1463,7 +1519,7 @@ task.spawn(function()
                         lastCollectTime = now
                         jitterAtGiver(myTycoon)
                     end
-                    if (now - autoFarmStartTime >= 5) and (now - lastBuyButtonsTime >= 1.5) then
+                    if now - lastBuyButtonsTime >= 0.4 then
                         lastBuyButtonsTime = now
                         buyGreenButtonsRemote(myTycoon)
                     end
@@ -1527,17 +1583,19 @@ Tabs.Main:AddToggle("AutoRebirthT", {
 
 local lastHealNotifyTime = 0
 
+local cachedArmor300 = nil
 local cachedArmor150 = nil
 local cachedArmor125 = nil
 local lastArmorScan = 0
 
 local function getEquipArmorParts()
     local now = os.clock()
-    if cachedArmor150 and cachedArmor125 and (now - lastArmorScan < 15) then
-        return cachedArmor150, cachedArmor125
+    if cachedArmor300 and cachedArmor150 and cachedArmor125 and (now - lastArmorScan < 15) then
+        return cachedArmor300, cachedArmor150, cachedArmor125
     end
     lastArmorScan = now
 
+    local armors300 = {}
     local armors150 = {}
     local armors125 = {}
 
@@ -1548,11 +1606,12 @@ local function getEquipArmorParts()
             local pName = desc.Parent and desc.Parent.Name:lower() or ""
             local mName = desc.Parent and desc.Parent.Parent and desc.Parent.Parent.Name:lower() or ""
 
-            local isArmor = (n == "accessory equip" or n:find("armor") or n:find("vest") or n == "handle" or n == "torso") and
+            local isArmor = (n == "giver" or n == "accessory equip" or n:find("armor") or n:find("vest") or n == "handle" or n == "torso") and
                             (pName:find("armor") or pName:find("morph") or pName:find("hat") or pName:find("model") or pName:find("vest") or
                              mName:find("dropper") or mName:find("showcase") or mName:find("tycoon"))
 
             if isArmor then
+                local is300 = false
                 local is150 = false
                 local is125 = false
 
@@ -1561,7 +1620,10 @@ local function getEquipArmorParts()
                     for _, child in ipairs(searchScope:GetDescendants()) do
                         if child:IsA("TextLabel") or child:IsA("BillboardGui") then
                             local t = child:IsA("TextLabel") and child.Text:lower() or ""
-                            if t:find("150") or t:find("heavy") then
+                            if t:find("300") then
+                                is300 = true
+                                break
+                            elseif t:find("150") then
                                 is150 = true
                                 break
                             elseif t:find("125") or t:find("light") then
@@ -1572,16 +1634,20 @@ local function getEquipArmorParts()
                     end
                 end
 
-                if not is150 and not is125 then
+                if not is300 and not is150 and not is125 then
                     local fullPath = (n .. " " .. pName .. " " .. mName):lower()
-                    if fullPath:find("heavy") or fullPath:find("150") then
+                    if fullPath:find("300") then
+                        is300 = true
+                    elseif fullPath:find("150") or fullPath:find("heavy") then
                         is150 = true
-                    elseif fullPath:find("light") or fullPath:find("125") then
+                    elseif fullPath:find("125") or fullPath:find("light") then
                         is125 = true
                     end
                 end
 
-                if is150 then
+                if is300 then
+                    table.insert(armors300, desc)
+                elseif is150 then
                     table.insert(armors150, desc)
                 elseif is125 then
                     table.insert(armors125, desc)
@@ -1589,9 +1655,10 @@ local function getEquipArmorParts()
             end
         end
     end
+    cachedArmor300 = armors300
     cachedArmor150 = armors150
     cachedArmor125 = armors125
-    return armors150, armors125
+    return armors300, armors150, armors125
 end
 
 local function autoHealArmor(force)
@@ -1603,7 +1670,7 @@ local function autoHealArmor(force)
 
     local currentPercent = (hum.Health / hum.MaxHealth) * 100
     if force or currentPercent < Config.AutoHealPercent then
-        local armors150, armors125 = getEquipArmorParts()
+        local armors300, armors150, armors125 = getEquipArmorParts()
         local equippedType = nil
 
         local function tryEquipList(list, armorName)
@@ -1618,8 +1685,10 @@ local function autoHealArmor(force)
             return false
         end
 
-        local sel = Config.SelectedArmor or "Heavy Armor (150 HP)"
-        if sel:find("125") or sel:find("Light") then
+        local sel = Config.SelectedArmor or "Super Armor (300 HP)"
+        if sel:find("300") then
+            tryEquipList(armors300, "Super Armor (300 HP)")
+        elseif sel:find("125") or sel:find("Light") then
             tryEquipList(armors125, "Light Armor (125 HP)")
         else
             tryEquipList(armors150, "Heavy Armor (150 HP)")
@@ -1659,8 +1728,8 @@ Tabs.Main:AddToggle("AutoHealT", {
 
 Tabs.Main:AddDropdown("SelectedArmorD", {
     Title = "Select Armor",
-    Values = {"Heavy Armor (150 HP)", "Light Armor (125 HP)"},
-    Default = Config.SelectedArmor or "Heavy Armor (150 HP)",
+    Values = {"Super Armor (300 HP)", "Heavy Armor (150 HP)", "Light Armor (125 HP)"},
+    Default = Config.SelectedArmor or "Super Armor (300 HP)",
     Callback = function(v)
         Config.SelectedArmor = v
         SaveConfig()
