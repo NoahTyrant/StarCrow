@@ -1341,7 +1341,10 @@ local function getEquipArmorParts()
     return armors150, armors125
 end
 
+local isHealing = false
+
 local function autoHealArmor(force)
+    if isHealing then return end
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -1356,8 +1359,21 @@ local function autoHealArmor(force)
         local function tryEquipList(list, armorName)
             for _, part in ipairs(list) do
                 if part and part.Parent then
-                    firetouchinterest(hrp, part, 0)
-                    firetouchinterest(hrp, part, 1)
+                    isHealing = true
+                    local oldCF = hrp.CFrame
+                    hrp.CFrame = part.CFrame
+                    if firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(hrp, part, 0)
+                            firetouchinterest(hrp, part, 1)
+                        end)
+                    end
+                    task.wait(0.08)
+                    if hrp and hrp.Parent then
+                        hrp.CFrame = oldCF
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    isHealing = false
                     equippedType = armorName
                     return true
                 end
