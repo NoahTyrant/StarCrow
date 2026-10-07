@@ -577,13 +577,24 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-local function findSafeArenaPoint(currentPos)
+local function findSafeArenaPoint(currentPos, basePos)
     local activeMeteors = {}
     for _, m in ipairs(workspace:GetChildren()) do
-        if m.Name == "Meteor" then
+        if string.find(string.lower(m.Name), "meteor") then
             local p = m:IsA("BasePart") and m or (m:IsA("Model") and (m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)))
             if p then
                 table.insert(activeMeteors, Vector3.new(p.Position.X, 0, p.Position.Z))
+            end
+        end
+    end
+    local models = workspace:FindFirstChild("Models")
+    if models then
+        for _, m in ipairs(models:GetChildren()) do
+            if string.find(string.lower(m.Name), "meteor") then
+                local p = m:IsA("BasePart") and m or (m:IsA("Model") and (m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)))
+                if p then
+                    table.insert(activeMeteors, Vector3.new(p.Position.X, 0, p.Position.Z))
+                end
             end
         end
     end
@@ -591,32 +602,51 @@ local function findSafeArenaPoint(currentPos)
     local flatCurrent = Vector3.new(currentPos.X, 0, currentPos.Z)
     local isThreatened = false
     for _, mPos in ipairs(activeMeteors) do
-        if (flatCurrent - mPos).Magnitude < 25 then
+        if (flatCurrent - mPos).Magnitude < 28 then
             isThreatened = true
             break
         end
     end
-    if not isThreatened then return nil end
+
+    if not isThreatened then
+        if basePos then
+            local flatBase = Vector3.new(basePos.X, 0, basePos.Z)
+            local baseThreatened = false
+            for _, mPos in ipairs(activeMeteors) do
+                if (flatBase - mPos).Magnitude < 28 then
+                    baseThreatened = true
+                    break
+                end
+            end
+            if baseThreatened then
+                return currentPos
+            end
+            return basePos
+        end
+        return currentPos
+    end
 
     local bestPos = nil
     local maxMinDist = -1
-    for angle = 0, 330, 30 do
-        local rad = math.rad(angle)
-        local candX = currentPos.X + math.cos(rad) * 25
-        local candZ = currentPos.Z + math.sin(rad) * 25
-        local flatCand = Vector3.new(candX, 0, candZ)
-        local nearest = math.huge
-        for _, mPos in ipairs(activeMeteors) do
-            local d = (flatCand - mPos).Magnitude
-            if d < nearest then nearest = d end
-        end
-        if nearest > maxMinDist then
-            maxMinDist = nearest
-            bestPos = Vector3.new(candX, currentPos.Y, candZ)
+    for dist = 28, 45, 10 do
+        for angle = 0, 330, 30 do
+            local rad = math.rad(angle)
+            local candX = currentPos.X + math.cos(rad) * dist
+            local candZ = currentPos.Z + math.sin(rad) * dist
+            local flatCand = Vector3.new(candX, 0, candZ)
+            local nearest = math.huge
+            for _, mPos in ipairs(activeMeteors) do
+                local d = (flatCand - mPos).Magnitude
+                if d < nearest then nearest = d end
+            end
+            if nearest > maxMinDist then
+                maxMinDist = nearest
+                bestPos = Vector3.new(candX, currentPos.Y, candZ)
+            end
         end
     end
 
-    return bestPos
+    return bestPos or currentPos
 end
 
 local clickedPlayAgain = false
@@ -1066,8 +1096,11 @@ task.spawn(function()
 
     task.wait(2)
 
+    local arenaBasePos = Vector3.new(120.47, 1123.55, -53155.12)
+    requestStreamTeleport(CFrame.new(arenaBasePos))
+    currentHoverCFrame = CFrame.new(arenaBasePos)
+
     statusText = "VoidReaper"
-    currentHoverCFrame = nil
     local island = workspace:FindFirstChild("Island")
 
     local reaperVerified = false
@@ -1098,12 +1131,9 @@ task.spawn(function()
         char = LocalPlayer.Character
         hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp then
-            local safePos = findSafeArenaPoint(hrp.Position)
-            if safePos then
-                hrp.CFrame = CFrame.new(safePos)
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-            end
+            local currentPos = currentHoverCFrame and currentHoverCFrame.Position or arenaBasePos
+            local safePos = findSafeArenaPoint(currentPos, arenaBasePos)
+            currentHoverCFrame = CFrame.new(safePos)
         end
 
         local priorityFound = false
