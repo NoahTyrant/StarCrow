@@ -256,6 +256,7 @@ local function activateHeldTool()
     if tool and isMelee(tool) then
         pcall(function()
             tool:Activate()
+            tool:SetAttribute("CooldownTimeLeft", 0)
             if Config.KillAuraEnabled then
                 silenceAttackSounds(tool)
                 silenceAttackSounds(char)
@@ -309,6 +310,108 @@ if LocalPlayer.Character then
     hookCharAnimations(LocalPlayer.Character)
 end
 LocalPlayer.CharacterAdded:Connect(hookCharAnimations)
+
+local function setupToolKillAuraCD(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    tool:GetAttributeChangedSignal("CooldownTimeLeft"):Connect(function()
+        if (tool:GetAttribute("CooldownTimeLeft") or 0) > 0 then
+            tool:SetAttribute("CooldownTimeLeft", 0)
+        end
+    end)
+end
+
+local function setupInventoryForKillAura()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do setupToolKillAuraCD(t) end
+        bp.ChildAdded:Connect(setupToolKillAuraCD)
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, t in ipairs(char:GetChildren()) do setupToolKillAuraCD(t) end
+        char.ChildAdded:Connect(setupToolKillAuraCD)
+    end
+end
+
+setupInventoryForKillAura()
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.2)
+    setupInventoryForKillAura()
+end)
+
+local function hideHotbarCooldownVisual()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            local n = string.lower(desc.Name)
+            local isCD = string.find(n, "cooldown") or string.find(n, "cd")
+            if not isCD then
+                local p = desc.Parent
+                local depth = 0
+                while p and p ~= pg and depth < 3 do
+                    local pn = string.lower(p.Name)
+                    if string.find(pn, "cooldown") or string.find(pn, "cd") then
+                        isCD = true
+                        break
+                    end
+                    p = p.Parent
+                    depth = depth + 1
+                end
+            end
+            if isCD and desc.Visible then
+                desc.Visible = false
+            end
+        end
+    end
+end
+
+local function restoreHotbarCooldownVisual()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, desc in ipairs(pg:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            local n = string.lower(desc.Name)
+            local isCD = string.find(n, "cooldown") or string.find(n, "cd")
+            if not isCD then
+                local p = desc.Parent
+                local depth = 0
+                while p and p ~= pg and depth < 3 do
+                    local pn = string.lower(p.Name)
+                    if string.find(pn, "cooldown") or string.find(pn, "cd") then
+                        isCD = true
+                        break
+                    end
+                    p = p.Parent
+                    depth = depth + 1
+                end
+            end
+            if isCD then
+                pcall(function()
+                    if desc:IsA("TextLabel") then
+                        desc.Visible = true
+                        desc.TextTransparency = 0
+                    else
+                        desc.Visible = false
+                    end
+                end)
+            end
+        end
+    end
+end
+
+local _cdVisualThrottle = 0
+RunService.Heartbeat:Connect(function(dt)
+    _cdVisualThrottle = _cdVisualThrottle + dt
+    if _cdVisualThrottle < 0.1 then return end
+    _cdVisualThrottle = 0
+    hideHotbarCooldownVisual()
+end)
+
+task.spawn(function()
+    task.wait(0.2)
+    restoreHotbarCooldownVisual()
+end)
 
 task.spawn(function()
     while true do
@@ -379,9 +482,6 @@ end
 local function isValidBurger(obj)
     if not (obj and obj.Parent and targetItems[obj.Name]) then return false end
     if obj:FindFirstAncestor("Spawners") or obj:FindFirstAncestor("Spawner") then return false end
-    if obj:FindFirstAncestor("FloatingCastle") then return false end
-    local map = workspace:FindFirstChild("Map")
-    if map and obj:IsDescendantOf(map) then return false end
     if isItemEquipped(obj) then return false end
     local p = obj.Parent
     if p and string.find(string.lower(p.Name), "spawn") then return false end
@@ -510,8 +610,6 @@ local bossTargets = {
     mastersamurai = true,
     eldervampire = true,
     gnomechampion = true,
-    machinarch = true,
-    steamborneczar = true,
     kingice = true,
 }
 
@@ -519,9 +617,6 @@ local function getBossKey(model)
     local name = string.gsub(string.lower(model.Name), "%s+", "")
     if string.find(name, "thief") then
         return "thiefking"
-    end
-    if string.find(name, "machinarch") or string.find(name, "steamborne") then
-        return "machinarch"
     end
     for n in pairs(bossTargets) do
         if string.find(name, n) then return n end
@@ -560,7 +655,6 @@ local bosses = {
     { n = "mastersamurai", pos = CFrame.new(103.27, 40.89, -3560.05) },
     { n = "eldervampire", pos = CFrame.new(103.08, 37.85, 7407.76) },
     { n = "gnomechampion", pos = CFrame.new(37.76, 3.00, 13993.09) },
-    { n = "machinarch", pos = CFrame.new(-15.31, 3.02, 27032.90) },
     { n = "kingice", pos = CFrame.new(24.27, 3.00, 45907.91) },
 }
 
