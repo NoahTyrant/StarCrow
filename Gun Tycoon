@@ -51,10 +51,6 @@ local Config = {
     FlyKey = "F",
     NoclipKey = "J",
     InvisKey = "C",
-    AutoFarm = false,
-    AutoFarmPC = false,
-    AutoFarmMobile = false,
-    AutoRebirth = false,
     AntiAFK = true,
     KeybindsEnabled = true,
     AutoHeal = false,
@@ -1026,7 +1022,7 @@ local function UpdateGuns()
     end
 end
 
-ScanGuns()
+task.defer(ScanGuns)
 
 local isScanningGuns = false
 local lastGunScanTime = 0
@@ -1184,70 +1180,8 @@ local Tabs = {
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
-local cachedShopUI = nil
-local function initShopSuppressor()
-    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if pGui then
-        local function isFarmingActive()
-            return Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm
-        end
 
-        local shop = pGui:FindFirstChild("Shop")
-        if shop and shop:FindFirstChild("UI") then
-            cachedShopUI = shop.UI
-            cachedShopUI:GetPropertyChangedSignal("Visible"):Connect(function()
-                if isFarmingActive() and cachedShopUI.Visible then
-                    cachedShopUI.Visible = false
-                end
-            end)
-        end
-        pGui.DescendantAdded:Connect(function(desc)
-            if isFarmingActive() and (desc:IsA("ScreenGui") or desc:IsA("Frame")) then
-                local n = desc.Name:lower()
-                if n:find("prompt") or n:find("product") or n:find("purchase") or n:find("shop") or n:find("pass") then
-                    pcall(function() desc.Visible = false end)
-                end
-            end
-        end)
-    end
-    pcall(function()
-        local GuiService = game:GetService("GuiService")
-        local CoreGui = game:GetService("CoreGui")
 
-        local function suppressPrompts()
-            if not (Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm) then return end
-            pcall(function()
-                for _, name in ipairs({"PurchasePrompt", "RobloxPurchasePrompt", "PurchasePromptApp"}) do
-                    local p = CoreGui:FindFirstChild(name)
-                    if p then
-                        p.Enabled = false
-                    end
-                end
-            end)
-        end
-
-        CoreGui.ChildAdded:Connect(function(child)
-            if Config.AutoFarmPC or Config.AutoFarmMobile or Config.AutoFarm then
-                local n = child.Name:lower()
-                if n:find("purchase") or n:find("prompt") then
-                    pcall(function()
-                        if child:IsA("ScreenGui") then
-                            child.Enabled = false
-                        else
-                            child.Visible = false
-                        end
-                    end)
-                end
-            end
-        end)
-
-        local MarketplaceService = game:GetService("MarketplaceService")
-        MarketplaceService.PromptPurchaseRequested:Connect(suppressPrompts)
-        MarketplaceService.PromptGamePassPurchaseRequested:Connect(suppressPrompts)
-        MarketplaceService.PromptProductPurchaseRequested:Connect(suppressPrompts)
-    end)
-end
-task.spawn(initShopSuppressor)
 
 local cachedMyTycoon = nil
 local function getMyTycoon()
@@ -1266,267 +1200,6 @@ local function getMyTycoon()
     return nil
 end
 
-
-local function teleportToClaimBase()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local tycoons = workspace:FindFirstChild("Tycoons") and workspace.Tycoons:FindFirstChild("Tycoons")
-    if not tycoons then return end
-
-    for _, tycoon in ipairs(tycoons:GetChildren()) do
-        local owner = tycoon:FindFirstChild("Owner")
-        if owner and owner.Value == nil then
-            local targetPart = nil
-            local claimModel = tycoon:FindFirstChild("Touch to claim!")
-            if claimModel then
-                targetPart = claimModel:FindFirstChild("Head") or claimModel:FindFirstChildWhichIsA("BasePart")
-            end
-            if not targetPart and tycoon:FindFirstChild("Essentials") then
-                local claimEss = tycoon.Essentials:FindFirstChild("Touch to claim!")
-                if claimEss then
-                    targetPart = claimEss:FindFirstChild("Head") or claimEss:FindFirstChildWhichIsA("BasePart")
-                end
-            end
-            if not targetPart and tycoon:FindFirstChild("Marker") then
-                targetPart = tycoon.Marker:FindFirstChildWhichIsA("BasePart") or tycoon.Marker
-            end
-
-            if targetPart then
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                hrp.CFrame = targetPart.CFrame + Vector3.new(0, 2, 0)
-                task.wait(0.2)
-                firetouchinterest(hrp, targetPart, 0)
-                task.wait(0.05)
-                firetouchinterest(hrp, targetPart, 1)
-                task.wait(0.5)
-                if getMyTycoon() then break end
-            end
-        end
-    end
-end
-
-local function getGiverPart(myTycoon)
-    local essentials = myTycoon and myTycoon:FindFirstChild("Essentials")
-    if not essentials then return nil end
-    local giver = essentials:FindFirstChild("Giver")
-    if not giver then return nil end
-    if giver:IsA("BasePart") then return giver end
-    return giver:FindFirstChildWhichIsA("BasePart") or giver:FindFirstChild("Head") or giver
-end
-
-local function unfreezePlayer()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp.Anchored then
-        hrp.Anchored = false
-    end
-end
-
-local giverJitterPhase = false
-
-local function jitterAtGiver(myTycoon)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local giverPart = getGiverPart(myTycoon)
-    if giverPart and giverPart:IsA("BasePart") then
-        if hrp.Anchored then
-            hrp.Anchored = false
-        end
-        giverJitterPhase = not giverJitterPhase
-        local yOffset = giverJitterPhase and 0.5 or 0.8
-        local xOffset = giverJitterPhase and 0.1 or -0.1
-        hrp.CFrame = giverPart.CFrame * CFrame.new(xOffset, yOffset, 0)
-        hrp.AssemblyLinearVelocity = Vector3.new(0, giverJitterPhase and 5 or -5, 0)
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        firetouchinterest(hrp, giverPart, 0)
-        task.wait(0.02)
-        firetouchinterest(hrp, giverPart, 1)
-    end
-end
-
-local function isBuyableButton(button)
-    if not button or not button.Parent then return false end
-    local bName = button.Name:lower()
-    if bName:find("rebirth") or bName:find("gamepass") or bName:find("robux") or bName:find("devproduct") or bName:find("invite") or bName:find("potion") then
-        return false
-    end
-
-    local checkPart = button:FindFirstChild("Head") or button:FindFirstChild("Pad") or button:FindFirstChildWhichIsA("BasePart")
-    if not checkPart or not checkPart:IsA("BasePart") then return false end
-
-    if checkPart.Transparency >= 0.95 then
-        return false
-    end
-
-    local bill = button:FindFirstChildWhichIsA("BillboardGui", true)
-    if bill then
-        for _, c in ipairs(bill:GetDescendants()) do
-            if c:IsA("TextLabel") then
-                local t = c.Text:lower()
-                if t:find("r$") or t:find("robux") or t:find("invite") or t:find("gamepass") or t:find("friend") then
-                    return false
-                end
-            end
-        end
-    end
-
-    local c = checkPart.Color
-    local r, g, b = c.R, c.G, c.B
-    if (r > 0.65 and g > 0.65 and b < 0.25) or (b > 0.6 and b > g) then
-        return false
-    end
-    local bc = checkPart.BrickColor.Name:lower()
-    if bc:find("yellow") or bc:find("purple") or bc:find("magenta") or bc:find("cyan") or bc:find("blue") or bc:find("teal") then
-        return false
-    end
-
-    return true
-end
-
-local function buyGreenButtonsPC(myTycoon)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local buttons = myTycoon:FindFirstChild("Buttons")
-    if not buttons then return end
-
-    for _, button in ipairs(buttons:GetChildren()) do
-        if not Config.AutoFarmPC then break end
-        local bName = button.Name:lower()
-        if not bName:find("rebirth") and isBuyableButton(button) then
-            local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
-            if head and head:IsA("BasePart") then
-                pcall(function()
-                    firetouchinterest(hrp, head, 0)
-                    task.wait(0.01)
-                    firetouchinterest(hrp, head, 1)
-                end)
-            end
-            local pad = button:FindFirstChild("Pad")
-            if pad and pad:IsA("BasePart") then
-                pcall(function()
-                    firetouchinterest(hrp, pad, 0)
-                    task.wait(0.01)
-                    firetouchinterest(hrp, pad, 1)
-                end)
-            end
-        end
-    end
-end
-
-local function buyGreenButtonsMobile(myTycoon)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then return end
-
-    local buttons = myTycoon:FindFirstChild("Buttons")
-    if not buttons then return end
-
-    local giverPart = getGiverPart(myTycoon)
-
-    for _, button in ipairs(buttons:GetChildren()) do
-        if not Config.AutoFarmMobile then break end
-        local bName = button.Name:lower()
-        if not bName:find("rebirth") and isBuyableButton(button) then
-            local targetPart = button:FindFirstChild("Head") or button:FindFirstChild("Pad") or button:FindFirstChildWhichIsA("BasePart")
-            if targetPart and targetPart:IsA("BasePart") then
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-                hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 2.5, 0))
-                hum:ChangeState(Enum.HumanoidStateType.Running)
-                pcall(function()
-                    firetouchinterest(hrp, targetPart, 0)
-                    task.wait(0.06)
-                    firetouchinterest(hrp, targetPart, 1)
-                end)
-                task.wait(0.08)
-            end
-        end
-    end
-
-    if giverPart and giverPart:IsA("BasePart") then
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        hrp.CFrame = CFrame.new(giverPart.Position + Vector3.new(0, 2, 0))
-        hum:ChangeState(Enum.HumanoidStateType.Running)
-    end
-end
-
-local function confirmRebirthGui()
-    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pGui then return end
-    for _, gui in ipairs(pGui:GetChildren()) do
-        if gui.Name:lower():find("rebirth") then
-            for _, desc in ipairs(gui:GetDescendants()) do
-                if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-                    local t = desc:IsA("TextButton") and desc.Text:lower() or ""
-                    local n = desc.Name:lower()
-                    if t:find("yes") or t:find("rebirth") or t:find("confirm") or n:find("yes") or n:find("confirm") or n:find("rebirth") or n:find("btn") or n:find("button") then
-                        pcall(function()
-                            if getconnections then
-                                for _, conn in ipairs(getconnections(desc.MouseButton1Click)) do
-                                    conn:Fire()
-                                end
-                                for _, conn in ipairs(getconnections(desc.Activated)) do
-                                    conn:Fire()
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function doAutoRebirth(myTycoon)
-    local canRebirthVal = LocalPlayer:FindFirstChild("CanRebirth")
-    if canRebirthVal and canRebirthVal:IsA("BoolValue") and not canRebirthVal.Value then
-        return
-    end
-
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local buttons = myTycoon:FindFirstChild("Buttons")
-    if not buttons then return end
-
-    for _, button in ipairs(buttons:GetChildren()) do
-        if button.Name:lower():find("rebirth") then
-            local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
-            if head and head:FindFirstChild("TouchInterest") then
-                firetouchinterest(hrp, head, 0)
-                task.wait(0.04)
-                firetouchinterest(hrp, head, 1)
-            end
-        end
-    end
-
-    confirmRebirthGui()
-
-    local repStorage = game:GetService("ReplicatedStorage")
-    local tycoonHelpers = repStorage:FindFirstChild("TycoonHelpers")
-    local scope = tycoonHelpers or repStorage
-    for _, r in ipairs(scope:GetChildren()) do
-        if (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) and r.Name:lower():find("rebirth") then
-            pcall(function()
-                if r:IsA("RemoteEvent") then
-                    r:FireServer()
-                else
-                    r:InvokeServer()
-                end
-            end)
-        end
-    end
-end
 
 local function isLaserObject(obj)
     local n = obj.Name:lower()
@@ -1595,141 +1268,28 @@ local function deleteAllBaseForcefields()
     end
 end
 
-local autoFarmStartTime = 0
-local autoFarmPCStartTime = 0
-local autoFarmMobileStartTime = 0
-local lastBuyButtonsPCTime = 0
-local lastBuyButtonsMobileTime = 0
-local lastRebirthTime = 0
-local lastCollectTime = 0
 
-task.spawn(function()
-    while task.wait(0.2) do
-        local isFarming = Config.AutoFarmPC or Config.AutoFarmMobile
-        if isFarming then
-            pcall(function()
-                local myTycoon = getMyTycoon()
-                if not myTycoon then
-                    teleportToClaimBase()
-                else
-                    local now = os.clock()
-                    if now - lastCollectTime >= 2 then
-                        lastCollectTime = now
-                        jitterAtGiver(myTycoon)
-                    end
-                    if Config.AutoFarmPC and (now - autoFarmPCStartTime >= 5) and (now - lastBuyButtonsPCTime >= 0.4) then
-                        lastBuyButtonsPCTime = now
-                        buyGreenButtonsPC(myTycoon)
-                    end
-                    if Config.AutoFarmMobile and (now - autoFarmMobileStartTime >= 5) and (now - lastBuyButtonsMobileTime >= 1.2) then
-                        lastBuyButtonsMobileTime = now
-                        buyGreenButtonsMobile(myTycoon)
-                    end
-                end
-            end)
-        end
-        if Config.AutoRebirth then
-            pcall(function()
-                local myTycoon = getMyTycoon()
-                if myTycoon then
-                    local now = os.clock()
-                    if now - lastRebirthTime >= 2 then
-                        lastRebirthTime = now
-                        doAutoRebirth(myTycoon)
-                    end
-                end
-            end)
-        end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    if not Config.AutoFarmPC and not Config.AutoFarmMobile then
-        unfreezePlayer()
-    end
-end)
-
-LocalPlayer.Idled:Connect(function()
-    pcall(function()
-        local VirtualUser = game:GetService("VirtualUser")
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-    end)
-end)
-
-Tabs.Main:AddSection("Tycoon")
-
-local AutoFarmPCToggle = nil
-local AutoFarmMobileToggle = nil
-
-AutoFarmPCToggle = Tabs.Main:AddToggle("AutoFarmPCT", {
-    Title = "Auto Farm PC",
-    Default = Config.AutoFarmPC,
-    Callback = function(v)
-        Config.AutoFarmPC = v
-        if v then
-            autoFarmPCStartTime = os.clock()
-            if Config.AutoFarmMobile and AutoFarmMobileToggle then
-                AutoFarmMobileToggle:SetValue(false)
-            end
-        else
-            if not Config.AutoFarmMobile then
-                unfreezePlayer()
-            end
-        end
-        SaveConfig()
-    end
-})
-
-AutoFarmMobileToggle = Tabs.Main:AddToggle("AutoFarmMobileT", {
-    Title = "Auto Farm Mobile",
-    Default = Config.AutoFarmMobile,
-    Callback = function(v)
-        Config.AutoFarmMobile = v
-        if v then
-            autoFarmMobileStartTime = os.clock()
-            if Config.AutoFarmPC and AutoFarmPCToggle then
-                AutoFarmPCToggle:SetValue(false)
-            end
-        else
-            if not Config.AutoFarmPC then
-                unfreezePlayer()
-            end
-        end
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddToggle("AutoRebirthT", {
-    Title = "Auto Rebirth",
-    Default = Config.AutoRebirth,
-    Callback = function(v)
-        Config.AutoRebirth = v
-        SaveConfig()
-    end
-})
 
 local lastHealNotifyTime = 0
 
-local cachedArmor300 = nil
 local cachedArmor150 = nil
 local cachedArmor125 = nil
 local lastArmorScan = 0
 
 local function getEquipArmorParts()
     local now = os.clock()
-    if cachedArmor300 and cachedArmor150 and cachedArmor125 and (now - lastArmorScan < 15) then
-        return cachedArmor300, cachedArmor150, cachedArmor125
+    if cachedArmor150 and cachedArmor125 and (now - lastArmorScan < 15) then
+        return cachedArmor150, cachedArmor125
     end
     lastArmorScan = now
 
-    local armors300 = {}
     local armors150 = {}
     local armors125 = {}
 
-    local tycoonsFolder = workspace:FindFirstChild("Tycoons") or workspace
-    for _, desc in ipairs(tycoonsFolder:GetDescendants()) do
+    local myTycoon = getMyTycoon()
+    if not myTycoon then return armors150, armors125 end
+
+    for _, desc in ipairs(myTycoon:GetDescendants()) do
         if desc:IsA("BasePart") then
             local n = desc.Name:lower()
             local pName = desc.Parent and desc.Parent.Name:lower() or ""
@@ -1740,7 +1300,6 @@ local function getEquipArmorParts()
                              mName:find("dropper") or mName:find("showcase") or mName:find("tycoon"))
 
             if isArmor then
-                local is300 = false
                 local is150 = false
                 local is125 = false
 
@@ -1749,10 +1308,7 @@ local function getEquipArmorParts()
                     for _, child in ipairs(searchScope:GetDescendants()) do
                         if child:IsA("TextLabel") or child:IsA("BillboardGui") then
                             local t = child:IsA("TextLabel") and child.Text:lower() or ""
-                            if t:find("300") then
-                                is300 = true
-                                break
-                            elseif t:find("150") then
+                            if t:find("150") then
                                 is150 = true
                                 break
                             elseif t:find("125") or t:find("light") then
@@ -1763,20 +1319,16 @@ local function getEquipArmorParts()
                     end
                 end
 
-                if not is300 and not is150 and not is125 then
+                if not is150 and not is125 then
                     local fullPath = (n .. " " .. pName .. " " .. mName):lower()
-                    if fullPath:find("300") then
-                        is300 = true
-                    elseif fullPath:find("150") or fullPath:find("heavy") then
+                    if fullPath:find("150") or fullPath:find("heavy") then
                         is150 = true
                     elseif fullPath:find("125") or fullPath:find("light") then
                         is125 = true
                     end
                 end
 
-                if is300 then
-                    table.insert(armors300, desc)
-                elseif is150 then
+                if is150 then
                     table.insert(armors150, desc)
                 elseif is125 then
                     table.insert(armors125, desc)
@@ -1784,10 +1336,9 @@ local function getEquipArmorParts()
             end
         end
     end
-    cachedArmor300 = armors300
     cachedArmor150 = armors150
     cachedArmor125 = armors125
-    return armors300, armors150, armors125
+    return armors150, armors125
 end
 
 local function autoHealArmor(force)
@@ -1799,7 +1350,7 @@ local function autoHealArmor(force)
 
     local currentPercent = (hum.Health / hum.MaxHealth) * 100
     if force or currentPercent < Config.AutoHealPercent then
-        local armors300, armors150, armors125 = getEquipArmorParts()
+        local armors150, armors125 = getEquipArmorParts()
         local equippedType = nil
 
         local function tryEquipList(list, armorName)
@@ -1814,10 +1365,8 @@ local function autoHealArmor(force)
             return false
         end
 
-        local sel = Config.SelectedArmor or "Super Armor (300 HP)"
-        if sel:find("300") then
-            tryEquipList(armors300, "Super Armor (300 HP)")
-        elseif sel:find("125") or sel:find("Light") then
+        local sel = Config.SelectedArmor or "Heavy Armor (150 HP)"
+        if sel:find("125") or sel:find("Light") then
             tryEquipList(armors125, "Light Armor (125 HP)")
         else
             tryEquipList(armors150, "Heavy Armor (150 HP)")
@@ -1857,8 +1406,8 @@ Tabs.Main:AddToggle("AutoHealT", {
 
 Tabs.Main:AddDropdown("SelectedArmorD", {
     Title = "Select Armor",
-    Values = {"Super Armor (300 HP)", "Heavy Armor (150 HP)", "Light Armor (125 HP)"},
-    Default = Config.SelectedArmor or "Super Armor (300 HP)",
+    Values = {"Heavy Armor (150 HP)", "Light Armor (125 HP)"},
+    Default = Config.SelectedArmor or "Heavy Armor (150 HP)",
     Callback = function(v)
         Config.SelectedArmor = v
         SaveConfig()
