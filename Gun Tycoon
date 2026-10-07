@@ -1185,16 +1185,61 @@ local Tabs = {
 local cachedShopUI = nil
 local function initShopSuppressor()
     local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pGui then return end
-    local shop = pGui:FindFirstChild("Shop")
-    if shop and shop:FindFirstChild("UI") then
-        cachedShopUI = shop.UI
-        cachedShopUI:GetPropertyChangedSignal("Visible"):Connect(function()
-            if Config.AutoFarm and cachedShopUI.Visible then
-                cachedShopUI.Visible = false
+    if pGui then
+        local shop = pGui:FindFirstChild("Shop")
+        if shop and shop:FindFirstChild("UI") then
+            cachedShopUI = shop.UI
+            cachedShopUI:GetPropertyChangedSignal("Visible"):Connect(function()
+                if Config.AutoFarm and cachedShopUI.Visible then
+                    cachedShopUI.Visible = false
+                end
+            end)
+        end
+        pGui.DescendantAdded:Connect(function(desc)
+            if Config.AutoFarm and (desc:IsA("ScreenGui") or desc:IsA("Frame")) then
+                local n = desc.Name:lower()
+                if n:find("prompt") or n:find("product") or n:find("purchase") or n:find("shop") or n:find("pass") then
+                    pcall(function() desc.Visible = false end)
+                end
             end
         end)
     end
+    pcall(function()
+        local GuiService = game:GetService("GuiService")
+        local CoreGui = game:GetService("CoreGui")
+
+        local function suppressPrompts()
+            if not Config.AutoFarm then return end
+            pcall(function()
+                for _, name in ipairs({"PurchasePrompt", "RobloxPurchasePrompt", "PurchasePromptApp"}) do
+                    local p = CoreGui:FindFirstChild(name)
+                    if p then
+                        p.Enabled = false
+                    end
+                end
+            end)
+        end
+
+        CoreGui.ChildAdded:Connect(function(child)
+            if Config.AutoFarm then
+                local n = child.Name:lower()
+                if n:find("purchase") or n:find("prompt") then
+                    pcall(function()
+                        if child:IsA("ScreenGui") then
+                            child.Enabled = false
+                        else
+                            child.Visible = false
+                        end
+                    end)
+                end
+            end
+        end)
+
+        local MarketplaceService = game:GetService("MarketplaceService")
+        MarketplaceService.PromptPurchaseRequested:Connect(suppressPrompts)
+        MarketplaceService.PromptGamePassPurchaseRequested:Connect(suppressPrompts)
+        MarketplaceService.PromptProductPurchaseRequested:Connect(suppressPrompts)
+    end)
 end
 task.spawn(initShopSuppressor)
 
@@ -1298,70 +1343,81 @@ local function jitterAtGiver(myTycoon)
     end
 end
 
-local function isGreenPad(part)
-    if not part or not part:IsA("BasePart") then return false end
-    local p = part.Parent
-    if p then
-        local pName = p.Name:lower()
-        if pName:find("rebirth") or pName:find("gamepass") or pName:find("devproduct") or pName:find("robux") or pName:find("product") or pName:find("invite") or pName:find("potion") then
-            return false
-        end
-        for _, c in ipairs(p:GetDescendants()) do
-            if c:IsA("TextLabel") or c:IsA("BillboardGui") then
-                local t = (c:IsA("TextLabel") and c.Text or ""):lower()
-                if t:find("r$") or t:find("robux") or t:find("invite") or t:find("gamepass") then
+local function isBuyableButton(button)
+    if not button or not button.Parent then return false end
+    local bName = button.Name:lower()
+    if bName:find("rebirth") or bName:find("gamepass") or bName:find("robux") or bName:find("devproduct") or bName:find("invite") or bName:find("potion") then
+        return false
+    end
+
+    local checkPart = button:FindFirstChild("Head") or button:FindFirstChild("Pad") or button:FindFirstChildWhichIsA("BasePart")
+    if not checkPart or not checkPart:IsA("BasePart") then return false end
+
+    if checkPart.Transparency >= 0.95 then
+        return false
+    end
+
+    local bill = button:FindFirstChildWhichIsA("BillboardGui", true)
+    if bill then
+        for _, c in ipairs(bill:GetDescendants()) do
+            if c:IsA("TextLabel") then
+                local t = c.Text:lower()
+                if t:find("r$") or t:find("robux") or t:find("invite") or t:find("gamepass") or t:find("friend") then
                     return false
                 end
             end
         end
     end
 
-    local c = part.Color
+    local c = checkPart.Color
     local r, g, b = c.R, c.G, c.B
-    if r > 0.6 and g > 0.6 and b < 0.3 then
+    if (r > 0.65 and g > 0.65 and b < 0.25) or (b > 0.6 and b > g) then
         return false
     end
-    if r > 0.4 and b > 0.4 then
-        return false
-    end
-    if b > 0.5 and g > 0.5 and r < 0.3 then
-        return false
-    end
-    if b > 0.6 and b > g then
-        return false
-    end
-
-    local bc = part.BrickColor.Name:lower()
+    local bc = checkPart.BrickColor.Name:lower()
     if bc:find("yellow") or bc:find("purple") or bc:find("magenta") or bc:find("cyan") or bc:find("blue") or bc:find("teal") then
         return false
     end
 
-    if g > 0.35 and g > r * 1.2 and g > b * 1.2 then
-        return true
-    end
-    if bc:find("green") or bc:find("lime") or bc:find("forest") or bc:find("moss") or bc:find("mint") then
-        return true
-    end
-    return false
+    return true
 end
 
 local function buyGreenButtonsRemote(myTycoon)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
 
     local buttons = myTycoon:FindFirstChild("Buttons")
     if not buttons then return end
 
+    local giverPart = getGiverPart(myTycoon)
+
     for _, button in ipairs(buttons:GetChildren()) do
+        if not Config.AutoFarm then break end
         local bName = button.Name:lower()
-        if not bName:find("rebirth") and not bName:find("gamepass") and not bName:find("robux") and not bName:find("devproduct") and not bName:find("invite") then
-            local head = button:FindFirstChild("Head") or button:FindFirstChildWhichIsA("BasePart")
-            if head and head:FindFirstChild("TouchInterest") and isGreenPad(head) then
-                firetouchinterest(hrp, head, 0)
-                firetouchinterest(hrp, head, 1)
+        if not bName:find("rebirth") and isBuyableButton(button) then
+            local targetPart = button:FindFirstChild("Head") or button:FindFirstChild("Pad") or button:FindFirstChildWhichIsA("BasePart")
+            if targetPart and targetPart:IsA("BasePart") then
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 2.5, 0))
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+                pcall(function()
+                    firetouchinterest(hrp, targetPart, 0)
+                    task.wait(0.06)
+                    firetouchinterest(hrp, targetPart, 1)
+                end)
+                task.wait(0.08)
             end
         end
+    end
+
+    if giverPart and giverPart:IsA("BasePart") then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.CFrame = CFrame.new(giverPart.Position + Vector3.new(0, 2, 0))
+        hum:ChangeState(Enum.HumanoidStateType.Running)
     end
 end
 
@@ -1519,7 +1575,7 @@ task.spawn(function()
                         lastCollectTime = now
                         jitterAtGiver(myTycoon)
                     end
-                    if now - lastBuyButtonsTime >= 0.4 then
+                    if (now - autoFarmStartTime >= 5) and (now - lastBuyButtonsTime >= 1.2) then
                         lastBuyButtonsTime = now
                         buyGreenButtonsRemote(myTycoon)
                     end
