@@ -90,8 +90,38 @@ end)
 local setUpval = debug.setupvalue or setupvalue
 local getUpvals = debug.getupvalues or getupvalues
 
+local origChargesUpvalIdx = nil
+local origChargesUpvalVal = 1
+local origCooldownUpvalIdx = nil
+local origCooldownUpvalVal = 1
+local origDashUpvalsSaved = false
+
+local function saveOrigDashUpvals(dashCtrl)
+    if origDashUpvalsSaved or not dashCtrl or not getUpvals then return end
+    pcall(function()
+        if dashCtrl.GetCharges then
+            for idx, val in pairs(getUpvals(dashCtrl.GetCharges)) do
+                if type(val) == "number" then
+                    origChargesUpvalIdx = idx
+                    origChargesUpvalVal = val
+                end
+            end
+        end
+        if dashCtrl.GetCooldown then
+            for idx, val in pairs(getUpvals(dashCtrl.GetCooldown)) do
+                if type(val) == "number" then
+                    origCooldownUpvalIdx = idx
+                    origCooldownUpvalVal = val
+                end
+            end
+        end
+        origDashUpvalsSaved = true
+    end)
+end
+
 local function resetDashState(dashCtrl)
     if not dashCtrl or not setUpval or not getUpvals then return end
+    saveOrigDashUpvals(dashCtrl)
     pcall(function()
         if dashCtrl.GetCharges then
             for idx, val in pairs(getUpvals(dashCtrl.GetCharges)) do
@@ -109,6 +139,20 @@ local function resetDashState(dashCtrl)
         end
     end)
 end
+
+local function restoreDashState(dashCtrl)
+    if not dashCtrl or not setUpval then return end
+    pcall(function()
+        if dashCtrl.GetCharges and origChargesUpvalIdx then
+            setUpval(dashCtrl.GetCharges, origChargesUpvalIdx, origChargesUpvalVal)
+        end
+        if dashCtrl.GetCooldown and origCooldownUpvalIdx then
+            setUpval(dashCtrl.GetCooldown, origCooldownUpvalIdx, origCooldownUpvalVal)
+        end
+    end)
+end
+
+local restoreAllDash = nil
 
 local AbilityControllerMod = nil
 local CasterBusyMod = nil
@@ -429,21 +473,71 @@ pcall(function()
 
         local origDashCooldown = GameConfig.Dash and GameConfig.Dash.Cooldown or 1
         local origDashCharges = GameConfig.Dash and GameConfig.Dash.Charges or 1
+        local movesetOrigData = {}
+
+        restoreAllDash = function()
+            if GameConfig and GameConfig.Dash then
+                GameConfig.Dash.Cooldown = origDashCooldown
+                GameConfig.Dash.Charges = origDashCharges
+            end
+            for m, data in pairs(movesetOrigData) do
+                if data then
+                    m.DashRefill = data.DashRefill
+                    m.Dashes = data.Dashes
+                end
+            end
+            if DashControllerMod then
+                restoreDashState(DashControllerMod)
+            end
+        end
 
         local oldGetMoveset = Registry.GetMoveset
         Registry.GetMoveset = function(name)
             local m = oldGetMoveset(name)
-            if m and Config.DashNoCooldown then
-                m.DashRefill = 0.001
-                m.Dashes = 999
+            if m then
+                if not movesetOrigData[m] then
+                    movesetOrigData[m] = {
+                        DashRefill = m.DashRefill,
+                        Dashes = m.Dashes
+                    }
+                end
+                if Config.DashNoCooldown then
+                    m.DashRefill = 0.001
+                    m.Dashes = 999
+                else
+                    m.DashRefill = movesetOrigData[m].DashRefill
+                    m.Dashes = movesetOrigData[m].Dashes
+                end
             end
             return m
+        end
+
+        local oldGetDashCooldown = DashController.GetCooldown
+        local lastNormalDashTick = 0
+
+        DashController.GetCooldown = function(...)
+            if Config.DashNoCooldown then return 0, 0 end
+            return oldGetDashCooldown(...)
+        end
+
+        local function isNormalCooldownActive()
+            if Config.DashNoCooldown then return false end
+            local cd = 0
+            if oldGetDashCooldown then
+                local s, r = pcall(oldGetDashCooldown)
+                if s and type(r) == "number" then cd = r end
+            end
+            if cd > 0.05 then return true end
+            local baseCD = (GameConfig.Dash and GameConfig.Dash.Cooldown) or origDashCooldown or 1
+            if os.clock() - lastNormalDashTick < baseCD then return true end
+            return false
         end
 
         local oldIsDashLocked = Controls.IsDashLocked
         if oldIsDashLocked then
             Controls.IsDashLocked = function(...)
                 if Config.DashNoCooldown then return false end
+                if isNormalCooldownActive() then return true end
                 return oldIsDashLocked(...)
             end
         end
@@ -459,33 +553,36 @@ pcall(function()
         local lastDashTick = 0
         local oldTryDash = DashController.TryDash
         DashController.TryDash = function(...)
-            if Config.DashNoCooldown then
-                local now = os.clock()
-                if now - lastDashTick < 0.08 then return false end
-                lastDashTick = now
-                if GameConfig.Dash then
-                    GameConfig.Dash.Cooldown = 0
-                    GameConfig.Dash.Charges = 999
+            if not Config.DashNoCooldown then
+                if isNormalCooldownActive() then
+                    return false
                 end
-                resetDashState(DashController)
-                pcall(function() CasterBusy.Release() end)
-            else
                 if GameConfig.Dash then
                     GameConfig.Dash.Cooldown = origDashCooldown
                     GameConfig.Dash.Charges = origDashCharges
                 end
+                restoreDashState(DashController)
+                local res = oldTryDash(...)
+                if res then
+                    lastNormalDashTick = os.clock()
+                end
+                return res
             end
+
+            local now = os.clock()
+            if now - lastDashTick < 0.08 then return false end
+            lastDashTick = now
+            if GameConfig.Dash then
+                GameConfig.Dash.Cooldown = 0
+                GameConfig.Dash.Charges = 999
+            end
+            resetDashState(DashController)
+            pcall(function() CasterBusy.Release() end)
             local res = oldTryDash(...)
             if Config.DashNoCooldown then
                 resetDashState(DashController)
             end
             return res
-        end
-
-        local oldGetDashCooldown = DashController.GetCooldown
-        DashController.GetCooldown = function()
-            if Config.DashNoCooldown then return 0, 0 end
-            return oldGetDashCooldown()
         end
 
         local oldIsRagdolled = RagdollUtil.IsRagdolled
@@ -1285,8 +1382,12 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     voidTPActive = false
     voidTPSafeCF = nil
     table.clear(punchAbilityCache)
-    if Config.DashNoCooldown and DashControllerMod then
-        resetDashState(DashControllerMod)
+    if DashControllerMod then
+        if Config.DashNoCooldown then
+            resetDashState(DashControllerMod)
+        elseif restoreAllDash then
+            restoreAllDash()
+        end
     end
     if Config.InfJump then
         task.defer(function()
@@ -1799,8 +1900,16 @@ Tabs.Player:AddToggle("DashNoCooldownToggle", {
     Callback = function(Value)
         Config.DashNoCooldown = Value
         SaveConfig()
-        if Value and DashControllerMod then
-            resetDashState(DashControllerMod)
+        if Value then
+            if DashControllerMod then
+                resetDashState(DashControllerMod)
+            end
+        else
+            if restoreAllDash then
+                restoreAllDash()
+            elseif DashControllerMod then
+                restoreDashState(DashControllerMod)
+            end
         end
     end
 })
