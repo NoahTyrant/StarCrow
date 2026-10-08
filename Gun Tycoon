@@ -1360,19 +1360,25 @@ local function autoHealArmor(force)
             for _, part in ipairs(list) do
                 if part and part.Parent then
                     isHealing = true
+
                     local oldCF = hrp.CFrame
-                    hrp.CFrame = part.CFrame
-                    if firetouchinterest then
-                        pcall(function()
+                    local oldVel = hrp.AssemblyLinearVelocity
+
+                    pcall(function()
+                        hrp.CFrame = part.CFrame
+                        if firetouchinterest then
                             firetouchinterest(hrp, part, 0)
                             firetouchinterest(hrp, part, 1)
-                        end)
-                    end
-                    task.wait(0.08)
-                    if hrp and hrp.Parent then
+                        end
                         hrp.CFrame = oldCF
-                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyLinearVelocity = oldVel
+                    end)
+
+                    if hrp and hrp.Parent and hrp.CFrame ~= oldCF then
+                        hrp.CFrame = oldCF
+                        hrp.AssemblyLinearVelocity = oldVel
                     end
+
                     isHealing = false
                     equippedType = armorName
                     return true
@@ -1613,6 +1619,70 @@ Tabs.GunMod:AddInput("BulletsPerShotInput", {
     end
 })
 
+Tabs.GunMod:AddSection("Loop Bring")
+
+local SelectPlayerDropdown = Tabs.GunMod:AddDropdown("SelectPlayer", {
+    Title = "Select Players",
+    Values = {},
+    Multi = true,
+    Default = {},
+    Callback = function(v)
+        LoopBring.Targets = v
+    end
+})
+
+local function refreshPlayerList()
+    local newNames = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(newNames, p.Name)
+        end
+    end
+    SelectPlayerDropdown:SetValues(newNames)
+end
+
+refreshPlayerList()
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(leftPlayer)
+    if LoopBring.Targets[leftPlayer.Name] then
+        LoopBring.Targets[leftPlayer.Name] = nil
+    end
+    refreshPlayerList()
+end)
+
+Tabs.GunMod:AddButton({
+    Title = "Select All Players",
+    Callback = function()
+        local allSelected = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                allSelected[p.Name] = true
+            end
+        end
+        SelectPlayerDropdown:SetValue(allSelected)
+        LoopBring.Targets = allSelected
+    end
+})
+
+Tabs.GunMod:AddToggle("LoopBringToggle", {
+    Title = "Loop Bring",
+    Default = false,
+    Callback = function(v)
+        local hasTargets = false
+        for _, s in pairs(LoopBring.Targets) do
+            if s then
+                hasTargets = true
+                break
+            end
+        end
+        if v and hasTargets then
+            StartLoopBring()
+        else
+            StopLoopBring()
+        end
+    end
+})
+
 Tabs.ESP:AddToggle("ESPPlayers", {
     Title = "ESP Players",
     Default = Config.ESPEnabled,
@@ -1700,68 +1770,6 @@ InvisToggleObj = Tabs.Player:AddToggle("InvisibleToggle", {
         toggleInvisibility(v)
         if SC_invisFloatStroke then
             setFloatStrokeActive(SC_invisFloatStroke, v)
-        end
-    end
-})
-
-local SelectPlayerDropdown = Tabs.Player:AddDropdown("SelectPlayer", {
-    Title = "Select Players",
-    Values = {},
-    Multi = true,
-    Default = {},
-    Callback = function(v)
-        LoopBring.Targets = v
-    end
-})
-
-local function refreshPlayerList()
-    local newNames = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(newNames, p.Name)
-        end
-    end
-    SelectPlayerDropdown:SetValues(newNames)
-end
-
-refreshPlayerList()
-Players.PlayerAdded:Connect(refreshPlayerList)
-Players.PlayerRemoving:Connect(function(leftPlayer)
-    if LoopBring.Targets[leftPlayer.Name] then
-        LoopBring.Targets[leftPlayer.Name] = nil
-    end
-    refreshPlayerList()
-end)
-
-Tabs.Player:AddButton({
-    Title = "Select All Players",
-    Callback = function()
-        local allSelected = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer then
-                allSelected[p.Name] = true
-            end
-        end
-        SelectPlayerDropdown:SetValue(allSelected)
-        LoopBring.Targets = allSelected
-    end
-})
-
-Tabs.Player:AddToggle("LoopBringToggle", {
-    Title = "Loop Bring",
-    Default = false,
-    Callback = function(v)
-        local hasTargets = false
-        for _, s in pairs(LoopBring.Targets) do
-            if s then
-                hasTargets = true
-                break
-            end
-        end
-        if v and hasTargets then
-            StartLoopBring()
-        else
-            StopLoopBring()
         end
     end
 })
