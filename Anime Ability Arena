@@ -402,12 +402,14 @@ pcall(function()
         local GameConfig = require(Shared:WaitForChild("Config"))
         local Registry = require(Shared:WaitForChild("Abilities"):WaitForChild("Registry"))
         local RagdollUtil = require(Shared:WaitForChild("Util"):WaitForChild("RagdollUtil"))
+        local RagdollController = require(Shared:WaitForChild("Client"):WaitForChild("RagdollController"))
         local RagdollCancelCtrl = require(Shared:WaitForChild("Client"):WaitForChild("RagdollCancelController"))
         local Network = require(Shared:WaitForChild("Network"))
         AbilityControllerMod = AbilityController
         CasterBusyMod = CasterBusy
         RegistryMod = Registry
         DashControllerMod = DashController
+        RagdollControllerMod = RagdollController
 
         local oldActivate = AbilityController.Activate
         AbilityController.Activate = function(id)
@@ -603,7 +605,7 @@ pcall(function()
 
         local oldSetState = RagdollUtil.SetState
         RagdollUtil.SetState = function(char, state)
-            if isAntiRagdollActive() and char == LocalPlayer.Character and state == "Ragdoll" then
+            if isAntiRagdollActive() and char == LocalPlayer.Character and (state == "Ragdoll" or state == "Stun") then
                 return oldSetState(char, "None")
             end
             return oldSetState(char, state)
@@ -620,21 +622,85 @@ pcall(function()
             return oldAttempt(...)
         end
 
-        CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(function(char)
-            if isAntiRagdollActive() and char == LocalPlayer.Character then
-                task.defer(function()
-                    CollectionService:RemoveTag(char, "BG_RagdollActive")
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum.PlatformStand = false
-                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        local function clearRagdollClones()
+            pcall(function()
+                local container = workspace:FindFirstChild("BG_LocalRagdolls")
+                if container then
+                    for _, child in ipairs(container:GetChildren()) do
+                        if child:IsA("Model") and (child.Name == LocalPlayer.Name or child:FindFirstChild(LocalPlayer.Name) or (LocalPlayer.Character and child:FindFirstChild("HumanoidRootPart") and (child.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude < 15)) then
+                            child:Destroy()
+                        end
                     end
-                    pcall(function()
-                        Network.Combat.packets.RagdollCancel.send({ Active = true })
-                    end)
-                end)
+                end
+            end)
+            local char = LocalPlayer.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local cam = workspace.CurrentCamera
+                if cam and hum and cam.CameraSubject ~= hum then
+                    cam.CameraSubject = hum
+                end
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") or part:IsA("Decal") then
+                        part.LocalTransparencyModifier = 0
+                    end
+                    if part:IsA("BallSocketConstraint") and (part.Name == "BG_Socket" or part.Name == "BallSocketConstraint") then
+                        part:Destroy()
+                    end
+                    if part:IsA("Attachment") and part.Name == "BG_Socket" then
+                        part:Destroy()
+                    end
+                    if part:IsA("Motor6D") then
+                        part.Enabled = true
+                    end
+                end
+            end
+        end
+
+        pcall(function()
+            local RagdollRig = require(Shared:WaitForChild("Util"):WaitForChild("RagdollRig"))
+            local oldBuild = RagdollRig.Build
+            RagdollRig.Build = function(model)
+                if isAntiRagdollActive() and model == LocalPlayer.Character then
+                    return
+                end
+                return oldBuild(model)
             end
         end)
+
+        pcall(function()
+            RagdollController.OnClone(function(srcModel, cloneModel)
+                if isAntiRagdollActive() and srcModel == LocalPlayer.Character then
+                    task.defer(function()
+                        if cloneModel and cloneModel.Parent then
+                            cloneModel:Destroy()
+                        end
+                        clearRagdollClones()
+                    end)
+                end
+            end)
+        end)
+
+        local function cancelRagdollNow(char)
+            if not isAntiRagdollActive() or char ~= LocalPlayer.Character then return end
+            task.defer(function()
+                CollectionService:RemoveTag(char, "BG_RagdollActive")
+                clearRagdollClones()
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.PlatformStand = false
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+                pcall(function()
+                    Network.Combat.packets.RagdollCancel.send({ Active = true })
+                end)
+            end)
+        end
+
+        CollectionService:GetInstanceAddedSignal("BG_RagdollActive"):Connect(cancelRagdollNow)
+        if CollectionService:HasTag(LocalPlayer.Character or workspace, "BG_RagdollActive") then
+            cancelRagdollNow(LocalPlayer.Character)
+        end
     end
 end)
 
@@ -740,7 +806,12 @@ RunService.Heartbeat:Connect(function()
                     hum.PlatformStand = false
                     hum:ChangeState(Enum.HumanoidStateType.GettingUp)
                 end
+                local cam = workspace.CurrentCamera
+                if cam and cam.CameraSubject ~= hum then
+                    cam.CameraSubject = hum
+                end
             end
+
 
             if isAntiVoidActive() and not isInsideLobby(hrp) and not voidTPActive then
                 local fallenHeight = workspace.FallenPartsDestroyHeight or -500
