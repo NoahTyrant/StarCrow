@@ -70,7 +70,11 @@ local Config = {
     JumpPower = 50,
     ToolFloatEnabled = false,
     CustomToolName = "",
-    ToolKey = "P"
+    ToolKey = "P",
+    HitboxPlayerEnabled = false,
+    HitboxPlayerSize = 15,
+    HitboxMobEnabled = false,
+    HitboxMobSize = 15
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -2301,6 +2305,125 @@ RunService.Stepped:Connect(function()
     end
 end)
 
+local function expandPartHitbox(model, size, color)
+    local head = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+
+    if head.Size ~= size then
+        if not head:GetAttribute("StarCrowOrigHeadSize") then
+            head:SetAttribute("StarCrowOrigHeadSize", head.Size)
+            head:SetAttribute("StarCrowOrigHeadTrans", head.Transparency)
+        end
+        head.Size = size
+        head.Transparency = 1
+        head.Material = Enum.Material.Plastic
+        head.CanCollide = false
+        head.Massless = true
+    end
+
+    local sb = head:FindFirstChild("StarCrowHitboxOutline")
+    if not sb then
+        sb = Instance.new("SelectionBox")
+        sb.Name = "StarCrowHitboxOutline"
+        sb.Adornee = head
+        sb.LineThickness = 0.05
+        sb.SurfaceTransparency = 1
+        sb.Color3 = color
+        sb.Parent = head
+    elseif sb.Color3 ~= color then
+        sb.Color3 = color
+    end
+end
+
+local function restorePartHitbox(model)
+    if not model then return end
+    local head = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
+    if head then
+        local sb = head:FindFirstChild("StarCrowHitboxOutline")
+        if sb then sb:Destroy() end
+        local origSize = head:GetAttribute("StarCrowOrigHeadSize")
+        if origSize then
+            head.Size = origSize
+            head.Transparency = head:GetAttribute("StarCrowOrigHeadTrans") or 0
+            head:SetAttribute("StarCrowOrigHeadSize", nil)
+            head:SetAttribute("StarCrowOrigHeadTrans", nil)
+            head.CanCollide = false
+            head.Massless = false
+        end
+    end
+end
+
+local function restorePlayerHitboxes()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            restorePartHitbox(p.Character)
+        end
+    end
+end
+
+local function restoreMobHitboxes()
+    local mobsFolder = workspace:FindFirstChild("MobsHolder")
+    local bossFolder = workspace:FindFirstChild("BossHolder")
+    if mobsFolder then
+        for _, mob in ipairs(mobsFolder:GetChildren()) do
+            restorePartHitbox(mob)
+        end
+    end
+    if bossFolder then
+        for _, mob in ipairs(bossFolder:GetChildren()) do
+            restorePartHitbox(mob)
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if Config.HitboxPlayerEnabled then
+            local s = Config.HitboxPlayerSize or 15
+            local pSize = Vector3.new(s, s, s)
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p.Character then
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    local head = p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 0 then
+                        expandPartHitbox(p.Character, pSize, Color3.fromRGB(0, 160, 255))
+                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
+                        restorePartHitbox(p.Character)
+                    end
+                end
+            end
+        end
+        if Config.HitboxMobEnabled then
+            local s = Config.HitboxMobSize or 15
+            local mSize = Vector3.new(s, s, s)
+            local mobsFolder = workspace:FindFirstChild("MobsHolder")
+            local bossFolder = workspace:FindFirstChild("BossHolder")
+            if mobsFolder then
+                for _, mob in ipairs(mobsFolder:GetChildren()) do
+                    local hum = mob:FindFirstChildOfClass("Humanoid")
+                    local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 0 then
+                        expandPartHitbox(mob, mSize, Color3.fromRGB(255, 60, 60))
+                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
+                        restorePartHitbox(mob)
+                    end
+                end
+            end
+            if bossFolder then
+                for _, mob in ipairs(bossFolder:GetChildren()) do
+                    local hum = mob:FindFirstChildOfClass("Humanoid")
+                    local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 0 then
+                        expandPartHitbox(mob, mSize, Color3.fromRGB(255, 60, 60))
+                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
+                        restorePartHitbox(mob)
+                    end
+                end
+            end
+        end
+    end
+end)
+
 task.spawn(function()
     while task.wait(1) do
         for _, desc in ipairs(workspace:GetDescendants()) do
@@ -2532,6 +2655,62 @@ Tabs.Combat:AddButton({
     Title = "Kill Player",
     Callback = function()
         killSelectedPlayers()
+    end
+})
+
+Tabs.Combat:AddSection("Hitbox")
+
+Tabs.Combat:AddToggle("HitboxPlayerT", {
+    Title = "Hitbox Player",
+    Default = Config.HitboxPlayerEnabled,
+    Callback = function(v)
+        Config.HitboxPlayerEnabled = v
+        SaveConfig()
+        if not v then
+            restorePlayerHitboxes()
+        end
+    end
+})
+
+Tabs.Combat:AddInput("HitboxPlayerSizeInput", {
+    Title = "Player Size",
+    Default = tostring(Config.HitboxPlayerSize or 15),
+    Placeholder = "Enter size",
+    Numeric = true,
+    Finished = false,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and n > 0 then
+            Config.HitboxPlayerSize = n
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Combat:AddToggle("HitboxMobT", {
+    Title = "Hitbox Mob",
+    Default = Config.HitboxMobEnabled,
+    Callback = function(v)
+        Config.HitboxMobEnabled = v
+        SaveConfig()
+        if not v then
+            restoreMobHitboxes()
+        end
+    end
+})
+
+Tabs.Combat:AddInput("HitboxMobSizeInput", {
+    Title = "Mob Size",
+    Default = tostring(Config.HitboxMobSize or 15),
+    Placeholder = "Enter size",
+    Numeric = true,
+    Finished = false,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and n > 0 then
+            Config.HitboxMobSize = n
+            SaveConfig()
+        end
     end
 })
 
