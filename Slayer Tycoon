@@ -1,1 +1,2868 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+local InvisState = { isInvisible = false }
+local setFloatStrokeActive
+local SC_invisFloatStroke
+local SC_flyFloatStroke
+local SC_noclipFloatStroke
+local fakeCharacter = nil
+local startFly
+local stopFly
+
+local FlyToggleObj = nil
+local NoclipToggleObj = nil
+local InvisToggleObj = nil
+
+local Config = {
+    RemoveNPCCam = true,
+    ESPEnabled = false,
+    ESPMobsEnabled = false,
+    LoopSpeedEnabled = false,
+    WalkSpeed = 30,
+    InfJumpEnabled = false,
+    NoclipEnabled = false,
+    FlyEnabled = false,
+    FlySpeed = 5,
+    FloatBtnSize = 46,
+    NoclipFloatEnabled = false,
+    FlyFloatEnabled = false,
+    InvisFloatEnabled = false,
+    UITheme = "Amethyst",
+    FlyKey = "F",
+    NoclipKey = "J",
+    InvisKey = "C",
+    KeybindsEnabled = true,
+    NoFog = false,
+    FullBright = false,
+    AutoRock = false,
+    AutoWoods = false,
+    InstantInteract = false,
+    ClickToKill = false,
+    AutoKillMobs = false,
+    AutoKillBosses = false,
+    InfStamina = false,
+    AutoSteal = false,
+    AutoBringItems = false,
+    RemoveBarriers = false,
+    AutoHeal = false,
+    AutoHealPercent = 50,
+    AimlockEnabled = false,
+    AimlockDistance = 150,
+    ESPRockEnabled = false,
+    ESPWoodEnabled = false,
+    JumpPowerEnabled = false,
+    JumpPower = 50,
+    ToolFloatEnabled = false,
+    CustomToolName = "",
+    ToolKey = "T"
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/SlayerTycoonConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then
+            makefolder(SAVE_FOLDER)
+        end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local data = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(data) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+LoadConfig()
+
+local INVIS_Y_OFFSET = 1000
+local invisPlatform = nil
+local invisMotor6DMap = {}
+local invisHeartbeatConn = nil
+local invisSteppedConn = nil
+local invisJumpConn = nil
+
+local function createFakeCharacter(realChar)
+    local ok, clone = pcall(function()
+        realChar.Archivable = true
+        local c = realChar:Clone()
+        realChar.Archivable = false
+        return c
+    end)
+    if not ok or not clone then return nil end
+
+    for _, descendant in ipairs(clone:GetDescendants()) do
+        if descendant:IsA("Script") or descendant:IsA("LocalScript") or descendant:IsA("Sound") or descendant:IsA("Highlight") then
+            descendant:Destroy()
+        elseif descendant:IsA("BasePart") or descendant:IsA("Decal") then
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = false
+            end
+            local realPart = realChar:FindFirstChild(descendant.Name, true)
+            if descendant.Name == "HumanoidRootPart" or (realPart and realPart:IsA("BasePart") and realPart.Transparency >= 0.99) then
+                descendant.Transparency = 1
+            else
+                descendant.Transparency = 0.5
+            end
+        end
+    end
+
+    invisMotor6DMap = {}
+    for _, descendant in ipairs(realChar:GetDescendants()) do
+        if descendant:IsA("Motor6D") then
+            local current = descendant
+            local path = {}
+            while current and current ~= realChar do
+                table.insert(path, 1, current.Name)
+                current = current.Parent
+            end
+            local cloneCurrent = clone
+            for _, name in ipairs(path) do
+                cloneCurrent = cloneCurrent and cloneCurrent:FindFirstChild(name)
+            end
+            if cloneCurrent and cloneCurrent:IsA("Motor6D") then
+                invisMotor6DMap[descendant] = cloneCurrent
+            end
+        end
+    end
+
+    clone.Parent = workspace
+    return clone
+end
+
+local function disableInvisibility()
+    if invisHeartbeatConn then
+        invisHeartbeatConn:Disconnect()
+        invisHeartbeatConn = nil
+    end
+    if invisSteppedConn then
+        invisSteppedConn:Disconnect()
+        invisSteppedConn = nil
+    end
+    if invisJumpConn then
+        invisJumpConn:Disconnect()
+        invisJumpConn = nil
+    end
+
+    local character = LocalPlayer.Character
+    if character then
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local fakeHRP = fakeCharacter and fakeCharacter:FindFirstChild("HumanoidRootPart")
+        local returnCFrame = fakeHRP and fakeHRP.CFrame
+
+        if fakeCharacter then
+            fakeCharacter:Destroy()
+            fakeCharacter = nil
+        end
+
+        if humanoidRootPart and returnCFrame then
+            humanoidRootPart.CFrame = returnCFrame
+            humanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+
+        local cam = workspace.CurrentCamera
+        if cam and humanoid then
+            cam.CameraSubject = humanoid
+        end
+    end
+
+    if invisPlatform then
+        invisPlatform:Destroy()
+        invisPlatform = nil
+    end
+
+    invisMotor6DMap = {}
+    InvisState.isInvisible = false
+    if Config.FlyEnabled and startFly then
+        startFly()
+    end
+    if SC_invisFloatStroke and setFloatStrokeActive then
+        setFloatStrokeActive(SC_invisFloatStroke, false)
+    end
+    pcall(function()
+        if Fluent and Fluent.Options and Fluent.Options["InvisibleToggle"] then
+            Fluent.Options["InvisibleToggle"]:SetValue(false)
+        end
+    end)
+end
+
+local function enableInvisibility()
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoidRootPart or not humanoid then return end
+
+    local hipHeightOffset = (humanoid.RigType ~= Enum.HumanoidRigType.R6) and (humanoid.HipHeight + humanoidRootPart.Size.Y / 2) or 3
+    local originalPos = humanoidRootPart.Position
+    local groundY = originalPos.Y - hipHeightOffset
+
+    fakeCharacter = createFakeCharacter(character)
+    if not fakeCharacter then return end
+
+    local fakeHRP = fakeCharacter:FindFirstChild("HumanoidRootPart")
+    local fakeHumanoid = fakeCharacter:FindFirstChildOfClass("Humanoid")
+    if not fakeHRP or not fakeHumanoid then
+        if fakeCharacter then
+            fakeCharacter:Destroy()
+            fakeCharacter = nil
+        end
+        return
+    end
+
+    invisPlatform = Instance.new("Part")
+    invisPlatform.Name = "InvisPlatform"
+    invisPlatform.Size = Vector3.new(12, 1, 12)
+    invisPlatform.Anchored = true
+    invisPlatform.CanCollide = true
+    invisPlatform.Transparency = 1
+    invisPlatform.CastShadow = false
+    invisPlatform.Parent = workspace
+    invisPlatform.CFrame = CFrame.new(originalPos.X, groundY + INVIS_Y_OFFSET - 0.5, originalPos.Z)
+
+    fakeHumanoid.WalkSpeed = humanoid.WalkSpeed
+    fakeHumanoid.JumpPower = humanoid.JumpPower
+    fakeHumanoid.JumpHeight = humanoid.JumpHeight
+    fakeHumanoid.UseJumpPower = humanoid.UseJumpPower
+
+    local cam = workspace.CurrentCamera
+    if cam then
+        cam.CameraSubject = fakeHumanoid
+    end
+
+    humanoidRootPart.CFrame = humanoidRootPart.CFrame + Vector3.new(0, INVIS_Y_OFFSET, 0)
+    humanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+
+    invisSteppedConn = RunService.Stepped:Connect(function()
+        if fakeCharacter and character then
+            for realMotor, fakeMotor in pairs(invisMotor6DMap) do
+                if realMotor and realMotor.Parent and realMotor.Parent.Parent then
+                    fakeMotor.Transform = realMotor.Transform
+                end
+            end
+        end
+    end)
+
+    invisJumpConn = UserInputService.JumpRequest:Connect(function()
+        if fakeHumanoid then
+            if Config.InfJumpEnabled then
+                fakeHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            else
+                fakeHumanoid.Jump = true
+            end
+        end
+    end)
+
+    invisHeartbeatConn = RunService.Heartbeat:Connect(function()
+        if not character or not character.Parent or humanoid.Health <= 0 then
+            if InvisState.isInvisible then
+                disableInvisibility()
+            end
+            return
+        end
+
+        if humanoidRootPart and fakeCharacter and fakeCharacter.Parent and fakeHRP and fakeHRP.Parent and fakeHumanoid and invisPlatform then
+            local state = fakeHumanoid:GetState()
+            if (state == Enum.HumanoidStateType.Climbing or state == Enum.HumanoidStateType.Swimming or state == Enum.HumanoidStateType.Seated) and state ~= humanoid:GetState() then
+                humanoid:ChangeState(state)
+            end
+
+            local moveDirection = humanoid.MoveDirection
+            if state == Enum.HumanoidStateType.Climbing then
+                if cam then
+                    local lookVector = cam.CFrame.LookVector
+                    local unit = Vector3.new(lookVector.X, 0, lookVector.Z).Unit
+                    local dot = humanoid.MoveDirection:Dot(unit)
+                    if dot > 0.1 then
+                        moveDirection = Vector3.new(0, 1, 0)
+                    elseif dot < -0.1 then
+                        moveDirection = Vector3.new(0, -1, 0)
+                    else
+                        moveDirection = Vector3.new(0, 0, 0)
+                    end
+                end
+            elseif state == Enum.HumanoidStateType.Swimming then
+                local jumpY = (UserInputService:IsKeyDown(Enum.KeyCode.Space) or humanoid.Jump) and 1 or 0
+                moveDirection = Vector3.new(moveDirection.X, jumpY, moveDirection.Z)
+            end
+
+            if not Config.FlyEnabled then
+                fakeHumanoid:Move(moveDirection, false)
+            end
+            fakeHumanoid.Jump = humanoid.Jump
+            fakeHumanoid.WalkSpeed = humanoid.WalkSpeed
+            fakeHumanoid.JumpPower = humanoid.JumpPower
+            fakeHumanoid.JumpHeight = humanoid.JumpHeight
+            fakeHumanoid.UseJumpPower = humanoid.UseJumpPower
+
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.FilterDescendantsInstances = {character, invisPlatform, fakeCharacter}
+
+            local raycastResult = workspace:Raycast(fakeHRP.Position, Vector3.new(0, -500, 0), raycastParams)
+            if raycastResult then
+                groundY = raycastResult.Position.Y
+            else
+                groundY = fakeHRP.Position.Y - hipHeightOffset
+            end
+
+            humanoidRootPart.CFrame = fakeHRP.CFrame + Vector3.new(0, INVIS_Y_OFFSET, 0)
+            humanoidRootPart.AssemblyLinearVelocity = fakeHRP.AssemblyLinearVelocity
+            humanoidRootPart.AssemblyAngularVelocity = fakeHRP.AssemblyAngularVelocity
+            invisPlatform.CFrame = CFrame.new(humanoidRootPart.Position.X, humanoidRootPart.Position.Y - hipHeightOffset - 0.5, humanoidRootPart.Position.Z)
+
+            if humanoidRootPart.Position.Y < groundY + INVIS_Y_OFFSET - 15 then
+                humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position.X, groundY + INVIS_Y_OFFSET + hipHeightOffset + 2, humanoidRootPart.Position.Z)
+                humanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end)
+
+    InvisState.isInvisible = true
+    if Config.FlyEnabled and startFly then
+        startFly()
+    end
+    if SC_invisFloatStroke and setFloatStrokeActive then
+        setFloatStrokeActive(SC_invisFloatStroke, true)
+    end
+    pcall(function()
+        if Fluent and Fluent.Options and Fluent.Options["InvisibleToggle"] then
+            Fluent.Options["InvisibleToggle"]:SetValue(true)
+        end
+    end)
+end
+
+local function toggleInvisibility(state)
+    if state == nil then
+        state = not InvisState.isInvisible
+    end
+    if state then
+        if not InvisState.isInvisible then
+            enableInvisibility()
+        end
+    else
+        if InvisState.isInvisible then
+            disableInvisibility()
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    local cam = workspace.CurrentCamera
+    if cam and humanoid then
+        cam.CameraSubject = humanoid
+    end
+    if InvisState.isInvisible then
+        disableInvisibility()
+    end
+end)
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then
+    LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function()
+    TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play()
+end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        local delta = input.Position - dragStart
+        LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+        dragInput = nil
+    end
+end)
+
+local uiVisible = true
+LogoBtn.MouseButton1Click:Connect(function()
+    uiVisible = not uiVisible
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do
+                        p = p.Parent
+                    end
+                    if p and p:IsA("Frame") then
+                        p.Visible = uiVisible
+                        return
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local flyConnection = nil
+
+startFly = function()
+    stopFly()
+    local char = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not humanoid then return end
+
+    local realChar = LocalPlayer.Character
+    local realHum = realChar and realChar:FindFirstChildOfClass("Humanoid")
+    if realHum then
+        realHum.PlatformStand = true
+        for _, t in ipairs(realHum:GetPlayingAnimationTracks()) do
+            t:Stop()
+        end
+    end
+    humanoid.PlatformStand = true
+    for _, t in ipairs(humanoid:GetPlayingAnimationTracks()) do
+        t:Stop()
+    end
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Name = "FlyVelocity"
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.Name = "FlyGyro"
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 1e7
+    bg.D = 12000
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        local currentTarget = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+        local targetHRP = currentTarget and currentTarget:FindFirstChild("HumanoidRootPart")
+        local rc = LocalPlayer.Character
+        local rHum = rc and rc:FindFirstChildOfClass("Humanoid")
+        local tHum = currentTarget and currentTarget:FindFirstChildOfClass("Humanoid")
+        if not targetHRP or not bv.Parent then return end
+
+        local cam = workspace.CurrentCamera
+        local move = Vector3.zero
+        local md = (rHum and rHum.MoveDirection) or (tHum and tHum.MoveDirection) or Vector3.zero
+
+        if md.Magnitude > 0 then
+            local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+            local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+            if flatLook.Magnitude > 0.01 and flatRight.Magnitude > 0.01 then
+                move += cam.CFrame.LookVector * md:Dot(flatLook.Unit)
+                move += cam.CFrame.RightVector * md:Dot(flatRight.Unit)
+            end
+        end
+
+        if move.Magnitude > 0 then
+            move = move.Unit
+        end
+        bv.Velocity = move * Config.FlySpeed * 50
+        bg.CFrame = CFrame.lookAt(targetHRP.Position, targetHRP.Position + cam.CFrame.LookVector, Vector3.new(0, 1, 0))
+    end)
+end
+
+stopFly = function()
+    local char = LocalPlayer.Character
+    for _, c in ipairs({char, fakeCharacter}) do
+        if c then
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            local humanoid = c:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.PlatformStand = false
+            end
+            if hrp then
+                local bv = hrp:FindFirstChild("FlyVelocity")
+                local bg = hrp:FindFirstChild("FlyGyro")
+                if bv then bv:Destroy() end
+                if bg then bg:Destroy() end
+            end
+        end
+    end
+
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+end
+
+local floatGui = Instance.new("ScreenGui")
+floatGui.Name = "StarCrowFloatBtns"
+floatGui.ResetOnSpawn = false
+floatGui.DisplayOrder = 9999
+floatGui.IgnoreGuiInset = true
+pcall(function() floatGui.Parent = game:GetService("CoreGui") end)
+if not floatGui.Parent then
+    floatGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local floatDragLocked = false
+
+setFloatStrokeActive = function(stroke, isActive)
+    if not stroke then return end
+    local old = stroke:FindFirstChildOfClass("UIGradient")
+    if old then
+        old:Destroy()
+    end
+
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness = isActive and 2.2 or 1.6
+
+    local grad = Instance.new("UIGradient")
+    grad.Color = isActive and ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
+    }) or ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
+    })
+    grad.Parent = stroke
+    task.spawn(function()
+        TweenService:Create(grad, TweenInfo.new(3, isActive and Enum.EasingStyle.Linear or Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, not isActive), {Rotation = isActive and 360 or 180}):Play()
+    end)
+end
+
+local lastFlyToggleTime = 0
+local function toggleFly()
+    local now = tick()
+    if now - lastFlyToggleTime < 0.25 then return end
+    lastFlyToggleTime = now
+    if FlyToggleObj then
+        FlyToggleObj:SetValue(not Config.FlyEnabled)
+    else
+        Config.FlyEnabled = not Config.FlyEnabled
+        SaveConfig()
+        if Config.FlyEnabled then startFly() else stopFly() end
+        if SC_flyFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(SC_flyFloatStroke, Config.FlyEnabled)
+        end
+    end
+end
+
+local lastNoclipToggleTime = 0
+local function toggleNoclip()
+    local now = tick()
+    if now - lastNoclipToggleTime < 0.25 then return end
+    lastNoclipToggleTime = now
+    if NoclipToggleObj then
+        NoclipToggleObj:SetValue(not Config.NoclipEnabled)
+    else
+        Config.NoclipEnabled = not Config.NoclipEnabled
+        SaveConfig()
+        if SC_noclipFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(SC_noclipFloatStroke, Config.NoclipEnabled)
+        end
+    end
+end
+
+local lastInvisToggleTime = 0
+local function toggleInvisAction()
+    local now = tick()
+    if now - lastInvisToggleTime < 0.25 then return end
+    lastInvisToggleTime = now
+    if InvisToggleObj then
+        InvisToggleObj:SetValue(not InvisState.isInvisible)
+    else
+        toggleInvisibility(not InvisState.isInvisible)
+        if SC_invisFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(SC_invisFloatStroke, InvisState.isInvisible)
+        end
+    end
+end
+
+local function getFlyKey()
+    local k = Config.FlyKey or "F"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.F
+end
+
+local function getNoclipKey()
+    local k = Config.NoclipKey or "J"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.J
+end
+
+local function getInvisKey()
+    local k = Config.InvisKey or "C"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.C
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if not Config.KeybindsEnabled then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == getFlyKey() then
+            toggleFly()
+        elseif input.KeyCode == getNoclipKey() then
+            toggleNoclip()
+        elseif input.KeyCode == getInvisKey() then
+            toggleInvisAction()
+        end
+    end
+end)
+
+local function makeDraggableFloat(btn)
+    local fDragging, fMoved, fDragStart, fDragPos, fDragInput = false, false, nil, nil, nil
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if floatDragLocked then return end
+            fDragging = true
+            fMoved = false
+            fDragStart = input.Position
+            fDragPos = btn.Position
+            fDragInput = input
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    fDragging = false
+                    fDragInput = nil
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if floatDragLocked then return end
+        if fDragging and (input == fDragInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - fDragStart
+            if delta.Magnitude > 6 then
+                fMoved = true
+            end
+            btn.Position = UDim2.new(fDragPos.X.Scale, fDragPos.X.Offset + delta.X, fDragPos.Y.Scale, fDragPos.Y.Offset + delta.Y)
+        end
+    end)
+    return function() return fMoved end, function() fMoved = false end
+end
+
+local function makeFloatBtn(text, posScale, posOffX, posOffY)
+    local sz = Config.FloatBtnSize
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, sz, 0, sz)
+    btn.Position = UDim2.new(posScale, posOffX, 0.5, posOffY)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    btn.BackgroundTransparency = 0.88
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = math.max(11, math.floor(sz * 0.22))
+    btn.Font = Enum.Font.GothamBold
+    btn.ZIndex = 15
+    btn.Parent = floatGui
+
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    local s = Instance.new("UIStroke", btn)
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    return btn, s
+end
+
+local SC_noclipFloatBtn, SC_noclipFloatStroke
+local SC_flyFloatBtn, SC_flyFloatStroke
+local SC_invisFloatBtn
+local SC_toolFloatBtn, SC_toolFloatStroke
+
+local function resizeAllFloatBtns()
+    local sz = Config.FloatBtnSize
+    local ts = math.max(11, math.floor(sz * 0.22))
+    if SC_noclipFloatBtn then
+        SC_noclipFloatBtn.Size = UDim2.new(0, sz, 0, sz)
+        SC_noclipFloatBtn.TextSize = ts
+    end
+    if SC_flyFloatBtn then
+        SC_flyFloatBtn.Size = UDim2.new(0, sz, 0, sz)
+        SC_flyFloatBtn.TextSize = ts
+    end
+    if SC_invisFloatBtn then
+        SC_invisFloatBtn.Size = UDim2.new(0, sz, 0, sz)
+        SC_invisFloatBtn.TextSize = ts
+    end
+    if SC_toolFloatBtn then
+        SC_toolFloatBtn.Size = UDim2.new(0, sz, 0, sz)
+        SC_toolFloatBtn.TextSize = ts
+    end
+end
+
+local function createNoclipFloat()
+    if SC_noclipFloatBtn then
+        SC_noclipFloatBtn:Destroy()
+    end
+    local sz = Config.FloatBtnSize
+    local btn, stroke = makeFloatBtn("Noclip", 0.85, sz + 14, -(sz * 2 + 18))
+    SC_noclipFloatBtn, SC_noclipFloatStroke = btn, stroke
+    setFloatStrokeActive(stroke, Config.NoclipEnabled)
+    local getWasMoved, clearMoved = makeDraggableFloat(btn)
+    btn.MouseButton1Click:Connect(function()
+        if getWasMoved() then
+            clearMoved()
+            return
+        end
+        toggleNoclip()
+    end)
+end
+
+local function createFlyFloat()
+    if SC_flyFloatBtn then
+        SC_flyFloatBtn:Destroy()
+    end
+    local sz = Config.FloatBtnSize
+    local btn, stroke = makeFloatBtn("Fly", 0.85, sz + 14, -(sz * 4 - 16))
+    SC_flyFloatBtn, SC_flyFloatStroke = btn, stroke
+    setFloatStrokeActive(stroke, Config.FlyEnabled)
+    local getWasMoved, clearMoved = makeDraggableFloat(btn)
+    btn.MouseButton1Click:Connect(function()
+        if getWasMoved() then
+            clearMoved()
+            return
+        end
+        toggleFly()
+    end)
+end
+
+local function createInvisFloat()
+    if SC_invisFloatBtn then
+        SC_invisFloatBtn:Destroy()
+    end
+    local sz = Config.FloatBtnSize
+    local btn, stroke = makeFloatBtn("Invisible", 0.85, 0, -(sz * 3 + 30))
+    SC_invisFloatBtn, SC_invisFloatStroke = btn, stroke
+    setFloatStrokeActive(stroke, InvisState.isInvisible)
+    local getWasMoved, clearMoved = makeDraggableFloat(btn)
+    btn.MouseButton1Click:Connect(function()
+        if getWasMoved() then
+            clearMoved()
+            return
+        end
+        toggleInvisAction()
+    end)
+end
+
+local function useToolAction()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    
+    local toolToUse = nil
+    if Config.CustomToolName and Config.CustomToolName ~= "" then
+        local lowerName = Config.CustomToolName:lower()
+        if char then
+            for _, c in ipairs(char:GetChildren()) do
+                if c:IsA("Tool") and c.Name:lower():find(lowerName) then
+                    toolToUse = c
+                    break
+                end
+            end
+        end
+        if not toolToUse and bp then
+            for _, c in ipairs(bp:GetChildren()) do
+                if c:IsA("Tool") and c.Name:lower():find(lowerName) then
+                    toolToUse = c
+                    break
+                end
+            end
+        end
+    end
+    
+    if not toolToUse then
+        if char then
+            toolToUse = char:FindFirstChildOfClass("Tool")
+        end
+        if not toolToUse and bp then
+            toolToUse = bp:FindFirstChildOfClass("Tool")
+        end
+    end
+    
+    if toolToUse and char and hum then
+        if toolToUse.Parent ~= char then
+            hum:EquipTool(toolToUse)
+            toolToUse.Parent = char
+        end
+        task.delay(0.04, function()
+            pcall(function() toolToUse:Activate() end)
+            for _, desc in ipairs(toolToUse:GetDescendants()) do
+                if desc:IsA("RemoteEvent") then
+                    pcall(function() desc:FireServer() end)
+                end
+            end
+        end)
+    end
+    
+    if SC_toolFloatStroke then
+        setFloatStrokeActive(SC_toolFloatStroke, true)
+        task.delay(0.2, function()
+            if SC_toolFloatStroke then
+                setFloatStrokeActive(SC_toolFloatStroke, false)
+            end
+        end)
+    end
+end
+
+local function createToolFloat()
+    if SC_toolFloatBtn then
+        SC_toolFloatBtn:Destroy()
+    end
+    local sz = Config.FloatBtnSize
+    local btn, stroke = makeFloatBtn("Tool", 0.85, -(sz + 14), -(sz * 2 + 18))
+    SC_toolFloatBtn, SC_toolFloatStroke = btn, stroke
+    setFloatStrokeActive(stroke, false)
+    local getWasMoved, clearMoved = makeDraggableFloat(btn)
+    
+    local function handleClick()
+        if getWasMoved() then
+            clearMoved()
+            return
+        end
+        useToolAction()
+    end
+    
+    btn.MouseButton1Click:Connect(handleClick)
+    btn.Activated:Connect(handleClick)
+end
+
+if Config.NoclipFloatEnabled then
+    createNoclipFloat()
+end
+if Config.FlyFloatEnabled then
+    createFlyFloat()
+end
+if Config.InvisFloatEnabled then
+    createInvisFloat()
+end
+if Config.ToolFloatEnabled then
+    createToolFloat()
+end
+
+local function updateESP()
+    if not Config.ESPEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
+                local hum, head = char.Humanoid, char.Head
+                local esp = head:FindFirstChild("StarCrowESP")
+
+                if hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 300, 0, 42)
+                        esp.StudsOffset = Vector3.new(0, 1.2, 0)
+                        esp.AlwaysOnTop = true
+                        local text = Instance.new("TextLabel", esp)
+                        text.Name = "NameText"
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.TextSize = 12
+                        text.Font = Enum.Font.GothamBold
+                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        text.RichText = true
+                        esp.Parent = head
+                    end
+                    local hpVal = math.floor(hum.Health)
+                    local pct = (hum.Health / math.max(hum.MaxHealth, 1)) * 100
+                    local tc = player.Team and player.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+                    local hpColor = pct > 70 and "rgb(0, 255, 127)" or pct > 30 and "rgb(255, 200, 0)" or "rgb(255, 50, 50)"
+                    esp.NameText.Text = string.format('<font color="rgb(%d,%d,%d)">%s</font>\n<font color="%s">%d HP</font>', tc.R * 255, tc.G * 255, tc.B * 255, player.DisplayName, hpColor, hpVal)
+                else
+                    if esp then
+                        esp:Destroy()
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function updateMobESP()
+    if not Config.ESPMobsEnabled then return end
+    local mobFolders = {workspace:FindFirstChild("MobsHolder"), workspace:FindFirstChild("BossHolder")}
+    for _, folder in ipairs(mobFolders) do
+        if folder then
+            for _, mob in ipairs(folder:GetChildren()) do
+                local hum = mob:FindFirstChildOfClass("Humanoid")
+                local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
+                if hum and head and hum.Health > 0 then
+                    local esp = head:FindFirstChild("StarCrowMobESP")
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowMobESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 300, 0, 42)
+                        esp.StudsOffset = Vector3.new(0, 1.2, 0)
+                        esp.AlwaysOnTop = true
+                        local text = Instance.new("TextLabel", esp)
+                        text.Name = "NameText"
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.TextSize = 12
+                        text.Font = Enum.Font.GothamBold
+                        text.TextColor3 = Color3.fromRGB(255, 100, 100)
+                        text.RichText = true
+                        esp.Parent = head
+                    end
+                    local hpVal = math.floor(hum.Health)
+                    local pct = (hum.Health / math.max(hum.MaxHealth, 1)) * 100
+                    local hpColor = pct > 70 and "rgb(0, 255, 127)" or pct > 30 and "rgb(255, 200, 0)" or "rgb(255, 50, 50)"
+                    esp.NameText.Text = string.format('<font color="rgb(255,80,80)">%s</font>\n<font color="%s">%d HP</font>', mob.Name, hpColor, hpVal)
+                else
+                    if head then
+                        local esp = head:FindFirstChild("StarCrowMobESP")
+                        if esp then esp:Destroy() end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local origFogEnd = Lighting.FogEnd
+local origBrightness = Lighting.Brightness
+local origClockTime = Lighting.ClockTime
+local origGlobalShadows = Lighting.GlobalShadows
+local origOutdoorAmbient = Lighting.OutdoorAmbient
+
+local function applyLightingMods()
+    if Config.NoFog then
+        Lighting.FogEnd = 100000
+        for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("Atmosphere") then
+                v.Density = 0
+            end
+        end
+    else
+        Lighting.FogEnd = origFogEnd
+    end
+
+    if Config.FullBright then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.GlobalShadows = false
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+    else
+        Lighting.Brightness = origBrightness
+        Lighting.ClockTime = origClockTime
+        Lighting.GlobalShadows = origGlobalShadows
+        Lighting.OutdoorAmbient = origOutdoorAmbient
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    Camera = workspace.CurrentCamera
+    updateESP()
+    updateMobESP()
+end)
+
+local currentFarmHoldCF = nil
+
+RunService.Stepped:Connect(function()
+    local char = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    if char then
+        if currentFarmHoldCF and (Config.AutoRock or Config.AutoWoods) then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                hrp.CFrame = currentFarmHoldCF
+            end
+        end
+        if Config.NoclipEnabled then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+            if fakeCharacter then
+                for _, part in ipairs(fakeCharacter:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if Config.LoopSpeedEnabled then
+                hum.WalkSpeed = Config.WalkSpeed
+            end
+            if Config.JumpPowerEnabled then
+                hum.UseJumpPower = true
+                hum.JumpPower = Config.JumpPower
+            end
+        end
+        local npcCam = LocalPlayer:FindFirstChild("PlayerScripts") and LocalPlayer.PlayerScripts:FindFirstChild("NPCCamera")
+        if npcCam and npcCam:IsA("LocalScript") then
+            npcCam.Disabled = Config.RemoveNPCCam
+        end
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfJumpEnabled then
+        local char = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+    end
+end)
+
+local function equipToolByName(toolName)
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not char or not toolName or toolName == "" then return nil end
+    local lowerName = toolName:lower()
+
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and child.Name:lower():find(lowerName) then
+            return child
+        end
+    end
+
+    if bp then
+        for _, child in ipairs(bp:GetChildren()) do
+            if child:IsA("Tool") and child.Name:lower():find(lowerName) then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum:EquipTool(child)
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function attackTargetContinuous(targetInstance)
+    local targetChar = targetInstance:FindFirstAncestorOfClass("Model")
+    if not targetChar then return end
+    local hum = targetChar:FindFirstChildOfClass("Humanoid")
+    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Head") or targetChar:FindFirstChildWhichIsA("BasePart")
+    if not hum or not hrp then return end
+
+    task.spawn(function()
+        while hum and hum.Parent and hum.Health > 0 and hrp and hrp.Parent do
+            local axe = equipToolByName("Hatchet")
+            if axe then
+                axe:Activate()
+                local remote = axe:FindFirstChild("Attack")
+                if remote and remote:IsA("RemoteEvent") then
+                    pcall(function() remote:FireServer() end)
+                end
+            end
+
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if desc:IsA("RemoteEvent") and desc.Name == "Attack" and desc.Parent.Name == "Hatchet" then
+                    pcall(function() desc:FireServer() end)
+                end
+            end
+
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            if myChar then
+                local currentTool = myChar:FindFirstChildOfClass("Tool")
+                if currentTool and currentTool.Name == "Hatchet" then
+                    local handle = currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart")
+                    if handle and firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(handle, hrp, 0)
+                            firetouchinterest(handle, hrp, 1)
+                        end)
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+Mouse.Button1Down:Connect(function()
+    if not Config.ClickToKill then return end
+    local target = Mouse.Target
+    if not target then return end
+    local model = target:FindFirstAncestorOfClass("Model")
+    if not model then return end
+
+    local isPlr = Players:GetPlayerFromCharacter(model)
+    local isMob = (model.Parent and (model.Parent.Name == "MobsHolder" or model.Parent.Name == "BossHolder")) or (model:FindFirstChildOfClass("Humanoid") and not isPlr and model ~= LocalPlayer.Character)
+
+    if (isPlr and isPlr ~= LocalPlayer) or isMob then
+        attackTargetContinuous(target)
+    end
+end)
+
+local function isTreeValid(part)
+    if not part or not part.Parent or part.Transparency >= 0.9 then return false end
+    local model = part.Parent
+    if model:IsA("Model") then
+        local wood = model:FindFirstChild("Wood")
+        if wood and wood:IsA("BasePart") and wood.Transparency >= 0.9 then
+            return false
+        end
+    end
+    if math.abs(part.CFrame.UpVector.Y) < 0.65 then
+        return false
+    end
+    return true
+end
+
+local function isRockValid(part)
+    if not part or not part.Parent or part.Transparency >= 0.9 or part.Size.Magnitude < 1.5 then
+        return false
+    end
+    return true
+end
+
+local function getValidFarmTarget(hitPartName)
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return nil end
+
+    local closest = nil
+    local minDist = math.huge
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and desc.Name == hitPartName then
+            local valid = (hitPartName == "WoodHitPart" and isTreeValid(desc)) or (hitPartName == "RockHitPart" and isRockValid(desc))
+            if valid then
+                local dist = (myHRP.Position - desc.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = desc
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local wasFarmingRock = false
+task.spawn(function()
+    while task.wait(0.08) do
+        local farmed = false
+        if Config.AutoRock then
+            pcall(function()
+                local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+                local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                local rock = getValidFarmTarget("RockHitPart")
+                if rock and isRockValid(rock) and myHRP then
+                    farmed = true
+                    local standPos = rock.Position + Vector3.new(0, 1.5, 3.5)
+                    currentFarmHoldCF = CFrame.lookAt(standPos, rock.Position)
+                    myHRP.AssemblyLinearVelocity = Vector3.zero
+                    myHRP.AssemblyAngularVelocity = Vector3.zero
+                    myHRP.Anchored = false
+                    myHRP.CFrame = currentFarmHoldCF
+                    if hum then hum.PlatformStand = false end
+
+                    local pick = equipToolByName("Pickaxe")
+                    if pick then
+                        pick:Activate()
+                        local atk = pick:FindFirstChild("Attack")
+                        if atk and atk:IsA("RemoteEvent") then atk:FireServer() end
+                    end
+                end
+            end)
+        end
+        if farmed then
+            wasFarmingRock = true
+        elseif wasFarmingRock then
+            wasFarmingRock = false
+            currentFarmHoldCF = nil
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHRP then myHRP.Anchored = false end
+        end
+    end
+end)
+
+local wasFarmingWood = false
+task.spawn(function()
+    while task.wait(0.08) do
+        local farmed = false
+        if Config.AutoWoods then
+            pcall(function()
+                local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+                local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                local wood = getValidFarmTarget("WoodHitPart")
+                if wood and isTreeValid(wood) and myHRP then
+                    farmed = true
+                    local standPos = wood.Position + Vector3.new(0, 1.5, 3.5)
+                    currentFarmHoldCF = CFrame.lookAt(standPos, wood.Position)
+                    myHRP.AssemblyLinearVelocity = Vector3.zero
+                    myHRP.AssemblyAngularVelocity = Vector3.zero
+                    myHRP.Anchored = false
+                    myHRP.CFrame = currentFarmHoldCF
+                    if hum then hum.PlatformStand = false end
+
+                    local hatchet = equipToolByName("Hatchet")
+                    if hatchet then
+                        hatchet:Activate()
+                        local atk = hatchet:FindFirstChild("Attack")
+                        if atk and atk:IsA("RemoteEvent") then atk:FireServer() end
+                    end
+                end
+            end)
+        end
+        if farmed then
+            wasFarmingWood = true
+        elseif wasFarmingWood then
+            wasFarmingWood = false
+            currentFarmHoldCF = nil
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHRP then myHRP.Anchored = false end
+        end
+    end
+end)
+
+local function sellWood()
+    local lumberjack = workspace:FindFirstChild("Lumberjack", true)
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if lumberjack and myHRP then
+        local head = lumberjack:FindFirstChild("Head") or lumberjack:FindFirstChild("Hitbox") or lumberjack:FindFirstChildWhichIsA("BasePart")
+        if head then
+            myHRP.AssemblyLinearVelocity = Vector3.zero
+            myHRP.AssemblyAngularVelocity = Vector3.zero
+            myHRP.CFrame = CFrame.lookAt(head.Position + (head.CFrame.LookVector * 3.5), head.Position)
+            if hum then hum.PlatformStand = false end
+            task.wait(0.15)
+            local prompt = lumberjack:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                fireproximityprompt(prompt)
+            end
+            local hit = lumberjack:FindFirstChild("Hitbox") or head
+            if hit and firetouchinterest then
+                firetouchinterest(myHRP, hit, 0)
+                firetouchinterest(myHRP, hit, 1)
+            end
+        end
+    end
+end
+
+local function sellRock()
+    local miner = workspace:FindFirstChild("Miner", true)
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if miner and myHRP then
+        local head = miner:FindFirstChild("Head") or miner:FindFirstChild("Hitbox") or miner:FindFirstChildWhichIsA("BasePart")
+        if head then
+            myHRP.AssemblyLinearVelocity = Vector3.zero
+            myHRP.AssemblyAngularVelocity = Vector3.zero
+            myHRP.CFrame = CFrame.lookAt(head.Position + (head.CFrame.LookVector * 3.5), head.Position)
+            if hum then hum.PlatformStand = false end
+            task.wait(0.15)
+            local prompt = miner:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                fireproximityprompt(prompt)
+            end
+            local hit = miner:FindFirstChild("Hitbox") or head
+            if hit and firetouchinterest then
+                firetouchinterest(myHRP, hit, 0)
+                firetouchinterest(myHRP, hit, 1)
+            end
+        end
+    end
+end
+
+local function applyBarrierSetting(state)
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        local n = desc.Name:lower()
+        if n:find("wisteria") or n:find("inviswall") or n:find("barrier") or n:find("invisiblewall") or n:find("forcefield") then
+            pcall(function()
+                if desc:IsA("BasePart") then
+                    desc.CanCollide = not state
+                    desc.CanTouch = not state
+                elseif desc:IsA("Model") then
+                    for _, child in ipairs(desc:GetDescendants()) do
+                        if child:IsA("BasePart") then
+                            child.CanCollide = not state
+                            child.CanTouch = not state
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+local promptConnections = {}
+local function applyInstantInteract(v)
+    if v then
+        for _, prompt in ipairs(workspace:GetDescendants()) do
+            if prompt:IsA("ProximityPrompt") then
+                prompt.HoldDuration = 0
+            end
+        end
+        promptConnections["PromptAdded"] = workspace.DescendantAdded:Connect(function(desc)
+            if desc:IsA("ProximityPrompt") and Config.InstantInteract then
+                desc.HoldDuration = 0
+            end
+        end)
+    else
+        if promptConnections["PromptAdded"] then
+            promptConnections["PromptAdded"]:Disconnect()
+            promptConnections["PromptAdded"] = nil
+        end
+    end
+end
+
+local isCollectingDrops = false
+local function collectDrop(dropPart, prompt)
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHRP or not dropPart or not dropPart.Parent then return end
+
+    local origCF = myHRP.CFrame
+    local origCamCF = workspace.CurrentCamera and workspace.CurrentCamera.CFrame
+    local origCamType = workspace.CurrentCamera and workspace.CurrentCamera.CameraType
+    local movedOffset = Vector3.zero
+
+    local walkConn = RunService.Heartbeat:Connect(function(dt)
+        local h = myChar:FindFirstChildOfClass("Humanoid")
+        if h and h.MoveDirection.Magnitude > 0 then
+            movedOffset = movedOffset + (h.MoveDirection * (h.WalkSpeed * dt))
+        end
+        if workspace.CurrentCamera and origCamCF then
+            workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+            workspace.CurrentCamera.CFrame = origCamCF + movedOffset
+        end
+    end)
+
+    myHRP.AssemblyLinearVelocity = Vector3.zero
+    myHRP.AssemblyAngularVelocity = Vector3.zero
+    myHRP.CFrame = dropPart.CFrame
+
+    if prompt and fireproximityprompt then
+        pcall(function() fireproximityprompt(prompt) end)
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(myHRP, dropPart, 0)
+            firetouchinterest(myHRP, dropPart, 1)
+        end)
+    end
+
+    local startWait = tick()
+    while dropPart and dropPart.Parent and tick() - startWait < 0.25 do
+        if prompt and fireproximityprompt then
+            pcall(function() fireproximityprompt(prompt) end)
+        end
+        task.wait(0.03)
+    end
+
+    if walkConn then
+        walkConn:Disconnect()
+    end
+
+    myHRP.CFrame = origCF + movedOffset
+    if hum and hum.MoveDirection.Magnitude > 0 then
+        myHRP.AssemblyLinearVelocity = hum.MoveDirection * hum.WalkSpeed
+    end
+
+    if workspace.CurrentCamera then
+        if origCamCF then
+            workspace.CurrentCamera.CameraType = origCamType or Enum.CameraType.Custom
+        end
+        workspace.CurrentCamera.CameraType = origCamType or Enum.CameraType.Custom
+        if hum then
+            workspace.CurrentCamera.CameraSubject = hum
+        end
+    end
+end
+
+local function getNearKillPos()
+    if currentFarmMob and currentFarmMob.Parent then
+        local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
+        if hrp then return hrp.Position end
+    end
+    if currentFarmBoss and currentFarmBoss.Parent then
+        local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
+        if hrp then return hrp.Position end
+    end
+    return nil
+end
+
+local function scanAndCollectDrops()
+    if not (Config.AutoKillMobs or Config.AutoKillBosses) or isCollectingDrops then return end
+    local killPos = getNearKillPos()
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if not (Config.AutoKillMobs or Config.AutoKillBosses) then break end
+        if desc:IsA("ProximityPrompt") then
+            local action = desc.ActionText and desc.ActionText:lower() or ""
+            local obj = desc.ObjectText and desc.ObjectText:lower() or ""
+            local pName = desc.Parent and desc.Parent.Name:lower() or ""
+            if action:find("pick up") or action:find("take") or obj:find("money") or pName:find("money") or pName:find("bag") or pName:find("drop") then
+                local part = desc.Parent
+                if part and part:IsA("BasePart") then
+                    if killPos and (part.Position - killPos).Magnitude > 30 then
+                        continue
+                    end
+                    isCollectingDrops = true
+                    collectDrop(part, desc)
+                    isCollectingDrops = false
+                    break
+                end
+            end
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.15) do
+        pcall(scanAndCollectDrops)
+    end
+end)
+
+
+local currentFarmMob = nil
+local function isMobAlive(m)
+    if not m or not m.Parent then return false end
+    local hum = m:FindFirstChildOfClass("Humanoid")
+    local hrp = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Head") or m:FindFirstChildWhichIsA("BasePart")
+    return hum ~= nil and hum.Health > 0 and hrp ~= nil
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if Config.AutoKillMobs then
+            local folder = workspace:FindFirstChild("MobsHolder")
+            if folder then
+                if not isMobAlive(currentFarmMob) then
+                    currentFarmMob = nil
+                    for _, mob in ipairs(folder:GetChildren()) do
+                        if isMobAlive(mob) then
+                            currentFarmMob = mob
+                            break
+                        end
+                    end
+                end
+
+                if isMobAlive(currentFarmMob) then
+                    local axe = equipToolByName("Hatchet")
+                    if axe then
+                        axe:Activate()
+                        local remote = axe:FindFirstChild("Attack")
+                        if remote and remote:IsA("RemoteEvent") then
+                            pcall(function() remote:FireServer() end)
+                        end
+                    end
+
+                    for _, desc in ipairs(workspace:GetDescendants()) do
+                        if desc:IsA("RemoteEvent") and desc.Name == "Attack" and desc.Parent.Name == "Hatchet" then
+                            pcall(function() desc:FireServer() end)
+                        end
+                    end
+
+                    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+                    local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
+                    local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
+                    local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
+
+                    if handle and hrp and firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(handle, hrp, 0)
+                            firetouchinterest(handle, hrp, 1)
+                        end)
+                    end
+                end
+            end
+        else
+            currentFarmMob = nil
+        end
+    end
+end)
+
+local currentFarmBoss = nil
+local function isBossAlive(b)
+    if not b or not b.Parent then return false end
+    local hum = b:FindFirstChildOfClass("Humanoid")
+    local hrp = b:FindFirstChild("HumanoidRootPart") or b:FindFirstChild("Head") or b:FindFirstChildWhichIsA("BasePart")
+    return hum ~= nil and hum.Health > 0 and hrp ~= nil
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if Config.AutoKillBosses then
+            local folder = workspace:FindFirstChild("BossHolder")
+            if folder then
+                if not isBossAlive(currentFarmBoss) then
+                    currentFarmBoss = nil
+                    for _, boss in ipairs(folder:GetChildren()) do
+                        if isBossAlive(boss) then
+                            currentFarmBoss = boss
+                            break
+                        end
+                    end
+                end
+
+                if isBossAlive(currentFarmBoss) then
+                    local axe = equipToolByName("Hatchet")
+                    if axe then
+                        axe:Activate()
+                        local remote = axe:FindFirstChild("Attack")
+                        if remote and remote:IsA("RemoteEvent") then
+                            pcall(function() remote:FireServer() end)
+                        end
+                    end
+
+                    for _, desc in ipairs(workspace:GetDescendants()) do
+                        if desc:IsA("RemoteEvent") and desc.Name == "Attack" and desc.Parent.Name == "Hatchet" then
+                            pcall(function() desc:FireServer() end)
+                        end
+                    end
+
+                    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+                    local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
+                    local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
+                    local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
+
+                    if handle and hrp and firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(handle, hrp, 0)
+                            firetouchinterest(handle, hrp, 1)
+                        end)
+                    end
+                end
+            end
+        else
+            currentFarmBoss = nil
+        end
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local target = (Config.AutoKillBosses and currentFarmBoss) or (Config.AutoKillMobs and currentFarmMob)
+    local Camera = workspace.CurrentCamera
+    if target and target.Parent then
+        local hum = target:FindFirstChildOfClass("Humanoid")
+        if hum and Camera then
+            Camera.CameraSubject = hum
+        end
+    else
+        local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+        local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        if myHum and Camera and Camera.CameraSubject ~= myHum then
+            Camera.CameraSubject = myHum
+        end
+    end
+end)
+
+local KillPlayerTargets = {}
+local function killSelectedPlayers()
+    for targetName, isSelected in pairs(KillPlayerTargets) do
+        if isSelected then
+            local targetPlayer = Players:FindFirstChild(targetName)
+            if targetPlayer and targetPlayer.Character then
+                local hrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Head")
+                if hrp then
+                    attackTargetContinuous(hrp)
+                end
+            end
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.3) do
+        if Config.InfStamina then
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then
+                    local rollScript = char:FindFirstChild("Roll")
+                    if rollScript then
+                        pcall(function()
+                            getfenv(getsenv(rollScript).roll).runcdOver = true
+                            getfenv(getsenv(rollScript).roll).enabled = false
+                        end)
+                    end
+                end
+                local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+                local cdGui = pGui and pGui:FindFirstChild("CooldownsGui")
+                local cdFrame = cdGui and cdGui:FindFirstChild("Frame")
+                if cdFrame then
+                    for _, child in ipairs(cdFrame:GetChildren()) do
+                        if child:IsA("Frame") or child:IsA("ImageLabel") then
+                            local cdName = child:GetAttribute("AtkName")
+                            if cdName == "Sprint" or cdName == "Roll" or cdName == "False Rainbow" then
+                                child:Destroy()
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+local function findTycoonSets()
+    local ts = workspace:FindFirstChild("TycoonSets")
+    if ts and ts:FindFirstChild("Tycoons") then
+        return ts.Tycoons
+    end
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc.Name == "Tycoons" and (desc:IsA("Folder") or desc:IsA("Model")) then
+            return desc
+        end
+    end
+    return nil
+end
+
+local function getTycoonCashPads()
+    local pads = {}
+    local tycoonsFolder = findTycoonSets()
+    if tycoonsFolder then
+        for _, tycoon in ipairs(tycoonsFolder:GetChildren()) do
+            local currency = tycoon:FindFirstChild("CurrencyToCollect") or tycoon:FindFirstChildWhichIsA("IntValue") or tycoon:FindFirstChildWhichIsA("NumberValue")
+            local essentials = tycoon:FindFirstChild("Essentials")
+            local collector = essentials and essentials:FindFirstChild("CollectorParts")
+            local extras = collector and collector:FindFirstChild("Extras")
+            local padPart = nil
+            if extras then
+                if extras:IsA("BasePart") then
+                    padPart = extras
+                else
+                    for _, p in ipairs(extras:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            padPart = p
+                            break
+                        end
+                    end
+                end
+            end
+            if not padPart and collector then
+                for _, p in ipairs(collector:GetDescendants()) do
+                    if p:IsA("BasePart") and p.Name ~= "CashToCollect" and not (p.Parent and p.Parent.Name == "Sign") then
+                        padPart = p
+                        break
+                    end
+                end
+            end
+            if padPart then
+                table.insert(pads, {
+                    tycoon = tycoon,
+                    currency = currency,
+                    pad = padPart
+                })
+            end
+        end
+    end
+    if #pads == 0 then
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("BasePart") and desc.Parent and desc.Parent.Name == "Extras" then
+                local col = desc:FindFirstAncestor("CollectorParts")
+                local tyc = col and col.Parent and col.Parent.Parent
+                local cur = tyc and (tyc:FindFirstChild("CurrencyToCollect") or tyc:FindFirstChildWhichIsA("IntValue") or tyc:FindFirstChildWhichIsA("NumberValue"))
+                table.insert(pads, {
+                    tycoon = tyc,
+                    currency = cur,
+                    pad = desc
+                })
+            end
+        end
+    end
+    return pads
+end
+
+local isStealing = false
+local function stealCashFromPad(padPart, currencyObj)
+    if isStealing or not padPart or not padPart.Parent then return end
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHRP then return end
+
+    isStealing = true
+    local origCF = myHRP.CFrame
+    local origCamCF = workspace.CurrentCamera and workspace.CurrentCamera.CFrame
+    local origCamType = workspace.CurrentCamera and workspace.CurrentCamera.CameraType
+    local movedOffset = Vector3.zero
+
+    local walkConn = RunService.Heartbeat:Connect(function(dt)
+        local h = myChar:FindFirstChildOfClass("Humanoid")
+        if h and h.MoveDirection.Magnitude > 0 then
+            movedOffset = movedOffset + (h.MoveDirection * (h.WalkSpeed * dt))
+        end
+        if workspace.CurrentCamera and origCamCF then
+            workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+            workspace.CurrentCamera.CFrame = origCamCF + movedOffset
+        end
+    end)
+
+    myHRP.AssemblyLinearVelocity = Vector3.zero
+    myHRP.AssemblyAngularVelocity = Vector3.zero
+    myHRP.CFrame = padPart.CFrame + Vector3.new(0, 1.5, 0)
+
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(myHRP, padPart, 0)
+            firetouchinterest(myHRP, padPart, 1)
+        end)
+        for _, p in ipairs(myChar:GetChildren()) do
+            if p:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(p, padPart, 0)
+                    firetouchinterest(p, padPart, 1)
+                end)
+            end
+        end
+    end
+
+    if getconnections then
+        pcall(function()
+            for _, conn in ipairs(getconnections(padPart.Touched)) do
+                conn:Fire(myHRP)
+            end
+        end)
+    end
+
+    local startWait = tick()
+    while padPart and padPart.Parent and tick() - startWait < 0.12 do
+        if currencyObj and currencyObj.Value == 0 then break end
+        task.wait(0.02)
+    end
+
+    if walkConn then
+        walkConn:Disconnect()
+    end
+
+    myHRP.CFrame = origCF + movedOffset
+    if hum and hum.MoveDirection.Magnitude > 0 then
+        myHRP.AssemblyLinearVelocity = hum.MoveDirection * hum.WalkSpeed
+    end
+
+    if workspace.CurrentCamera then
+        if origCamCF then
+            workspace.CurrentCamera.CameraType = origCamType or Enum.CameraType.Custom
+        end
+        workspace.CurrentCamera.CameraType = origCamType or Enum.CameraType.Custom
+        if hum then
+            workspace.CurrentCamera.CameraSubject = hum
+        end
+    end
+    isStealing = false
+end
+
+task.spawn(function()
+    while task.wait(0.3) do
+        if Config.AutoSteal then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then continue end
+            for _, v in ipairs(workspace:GetDescendants()) do
+                if not Config.AutoSteal then break end
+                if v:IsA("BasePart") and v.Name == "Giver" then
+                    local tycoon = v:FindFirstAncestorWhichIsA("Model")
+                    local isOwn = false
+                    if tycoon then
+                        local ownerVal = tycoon:FindFirstChild("Owner") or tycoon:FindFirstChild("OwnerName") or tycoon:FindFirstChild("PlayerOwner")
+                        if ownerVal then
+                            local ownerName = (ownerVal:IsA("StringValue") and ownerVal.Value) or (ownerVal:IsA("ObjectValue") and ownerVal.Value and ownerVal.Value.Name) or tostring(ownerVal.Value)
+                            if ownerName == LocalPlayer.Name then
+                                isOwn = true
+                            end
+                        end
+                    end
+                    if not isOwn then
+                        pcall(function()
+                            firetouchinterest(hrp, v, 0)
+                            task.wait(0.05)
+                            firetouchinterest(hrp, v, 1)
+                        end)
+                        task.wait(0.05)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+
+local function getNurseTarget()
+    local char = LocalPlayer.Character
+    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
+    local closestNursePart = nil
+    local closestPrompt = nil
+    local minDistance = math.huge
+
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("Model") and desc.Name == "Nurse" then
+            local hitbox = desc:FindFirstChild("Hitbox") or desc:FindFirstChildWhichIsA("BasePart")
+            local prompt = desc:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if hitbox then
+                local dist = myHRP and (myHRP.Position - hitbox.Position).Magnitude or 0
+                if dist < minDistance then
+                    minDistance = dist
+                    closestNursePart = hitbox
+                    closestPrompt = prompt
+                end
+            end
+        end
+    end
+
+    if not closestNursePart then
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") then
+                local pName = desc.Parent and desc.Parent.Name:lower() or ""
+                local mName = desc.Parent and desc.Parent.Parent and desc.Parent.Parent.Name:lower() or ""
+                local act = desc.ActionText and desc.ActionText:lower() or ""
+                local obj = desc.ObjectText and desc.ObjectText:lower() or ""
+                if pName:find("nurse") or mName:find("nurse") or obj:find("nurse") or act:find("speak") then
+                    local part = desc.Parent
+                    if part and part:IsA("BasePart") then
+                        return part, desc
+                    end
+                end
+            end
+        end
+    end
+
+    return closestNursePart, closestPrompt
+end
+
+local isHealing = false
+
+local function resetCamera()
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+    if hum then
+        workspace.CurrentCamera.CameraSubject = hum
+    end
+end
+
+local function healAtNurse()
+    if isHealing then return end
+
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myHRP or not hum or hum.Health <= 0 then return end
+
+    local nursePart, prompt = getNurseTarget()
+    if not nursePart then return end
+
+    isHealing = true
+
+    local origCF = myHRP.CFrame
+    local origWS = hum.WalkSpeed
+    local origJP = hum.JumpPower
+    local standPos = nursePart.Position + (nursePart.CFrame.LookVector * 2.5)
+    
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+    myHRP.AssemblyLinearVelocity = Vector3.zero
+    myHRP.AssemblyAngularVelocity = Vector3.zero
+    myHRP.CFrame = CFrame.lookAt(standPos, Vector3.new(nursePart.Position.X, standPos.Y, nursePart.Position.Z))
+
+    task.wait(0.15)
+
+    if prompt then
+        prompt.HoldDuration = 0
+        if fireproximityprompt then
+            pcall(function() fireproximityprompt(prompt) end)
+        end
+    end
+
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(myHRP, nursePart, 0)
+            firetouchinterest(myHRP, nursePart, 1)
+        end)
+    end
+
+    for _, desc in ipairs(nursePart.Parent:GetDescendants()) do
+        if desc:IsA("RemoteEvent") then
+            pcall(function() desc:FireServer("Heal") end)
+            pcall(function() desc:FireServer() end)
+        end
+    end
+
+    task.wait(0.15)
+
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if pGui then
+        for _, btn in ipairs(pGui:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                local t = (btn:IsA("TextButton") and btn.Text or btn.Name):lower()
+                if t:find("heal") or t:find("yes") or t:find("speak") or t:find("hồi") then
+                    pcall(function()
+                        if firesignal then
+                            firesignal(btn.MouseButton1Click)
+                            firesignal(btn.Activated)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
+    task.wait(0.5)
+    resetCamera()
+    if hum then
+        hum.WalkSpeed = origWS
+        hum.JumpPower = origJP
+    end
+    myHRP.CFrame = origCF
+    
+    task.spawn(function()
+        task.wait(7)
+        isHealing = false
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if Config.AutoHeal then
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local pct = (hum.Health / math.max(hum.MaxHealth, 1)) * 100
+                if pct <= Config.AutoHealPercent then
+                    healAtNurse()
+                end
+            end
+        end
+    end
+end)
+
+
+task.spawn(function()
+    while task.wait(0.1) do
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+                    if hum:GetState() == Enum.HumanoidStateType.Ragdoll or hum:GetState() == Enum.HumanoidStateType.FallingDown then
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    end
+                end)
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.3) do
+        if Config.AutoBringItems then
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHRP then
+                local debris = workspace:FindFirstChild("DebrisFolder")
+                if debris then
+                    for _, item in ipairs(debris:GetChildren()) do
+                        if item:IsA("Tool") then
+                            local handle = item:FindFirstChild("Handle") or item:FindFirstChildWhichIsA("BasePart")
+                            if handle then
+                                handle.CFrame = myHRP.CFrame
+                            end
+                        elseif item:IsA("BasePart") and not item.Anchored then
+                            item.CFrame = myHRP.CFrame
+                        end
+                    end
+                end
+                for _, item in ipairs(workspace:GetChildren()) do
+                    if item:IsA("Tool") and item ~= myChar:FindFirstChildOfClass("Tool") then
+                        local handle = item:FindFirstChild("Handle") or item:FindFirstChildWhichIsA("BasePart")
+                        if handle then
+                            handle.CFrame = myHRP.CFrame
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local currentAimlockTarget = nil
+local function getNearestPlayer()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local closest = nil
+    local minDist = Config.AimlockDistance or 150
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local thrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if thrp and hum and hum.Health > 0 then
+                local dist = (hrp.Position - thrp.Position).Magnitude
+                if dist <= minDist then
+                    minDist = dist
+                    closest = p
+                end
+            end
+        end
+    end
+    return closest
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if Config.AimlockEnabled then
+            currentAimlockTarget = getNearestPlayer()
+        else
+            currentAimlockTarget = nil
+        end
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if Config.AimlockEnabled and currentAimlockTarget and currentAimlockTarget.Character then
+        local thrp = currentAimlockTarget.Character:FindFirstChild("HumanoidRootPart")
+        if thrp then
+            local bg = hrp:FindFirstChild("AimlockGyro")
+            if not bg then
+                bg = Instance.new("BodyGyro")
+                bg.Name = "AimlockGyro"
+                bg.MaxTorque = Vector3.new(0, 400000, 0)
+                bg.P = 100000
+                bg.D = 1000
+                bg.Parent = hrp
+            end
+            bg.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(thrp.Position.X, hrp.Position.Y, thrp.Position.Z))
+        end
+    else
+        local bg = hrp:FindFirstChild("AimlockGyro")
+        if bg then bg:Destroy() end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                if desc.Name == "WoodHitPart" then
+                    if Config.ESPWoodEnabled and isTreeValid(desc) then
+                        local esp = desc:FindFirstChild("StarCrowWoodESP")
+                        if not esp then
+                            esp = Instance.new("Highlight")
+                            esp.Name = "StarCrowWoodESP"
+                            esp.FillTransparency = 1
+                            esp.OutlineColor = Color3.fromRGB(0, 255, 0)
+                            esp.OutlineTransparency = 0
+                            esp.Adornee = (desc.Parent and desc.Parent:IsA("Model")) and desc.Parent or desc
+                            esp.Parent = desc
+                        end
+                    else
+                        local esp = desc:FindFirstChild("StarCrowWoodESP")
+                        if esp then esp:Destroy() end
+                    end
+                elseif desc.Name == "RockHitPart" then
+                    if Config.ESPRockEnabled and isRockValid(desc) then
+                        local esp = desc:FindFirstChild("StarCrowRockESP")
+                        if not esp then
+                            esp = Instance.new("Highlight")
+                            esp.Name = "StarCrowRockESP"
+                            esp.FillTransparency = 1
+                            esp.OutlineColor = Color3.fromRGB(150, 150, 150)
+                            esp.OutlineTransparency = 0
+                            esp.Adornee = desc
+                            esp.Parent = desc
+                        end
+                    else
+                        local esp = desc:FindFirstChild("StarCrowRockESP")
+                        if esp then esp:Destroy() end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrowHub",
+    SubTitle = "Slayer Tycoon",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = "Amethyst",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Combat = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "box" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+Tabs.Main:AddSection("Farming")
+
+Tabs.Main:AddToggle("AutoRockT", {
+    Title = "Auto Rock",
+    Default = Config.AutoRock,
+    Callback = function(v)
+        Config.AutoRock = v
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoWoodsT", {
+    Title = "Auto Woods",
+    Default = Config.AutoWoods,
+    Callback = function(v)
+        Config.AutoWoods = v
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoBringItemsT", {
+    Title = "Auto Bring Items",
+    Default = Config.AutoBringItems,
+    Callback = function(v)
+        Config.AutoBringItems = v
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoStealT", {
+    Title = "Auto Steal Cash",
+    Default = Config.AutoSteal,
+    Callback = function(v)
+        Config.AutoSteal = v
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Selling")
+
+Tabs.Main:AddButton({
+    Title = "Sell Woods",
+    Callback = function()
+        sellWood()
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Sell Rock",
+    Callback = function()
+        sellRock()
+    end
+})
+
+Tabs.Combat:AddSection("Survival")
+
+Tabs.Combat:AddToggle("AutoHealT", {
+    Title = "Auto Heal",
+    Default = Config.AutoHeal,
+    Callback = function(v)
+        Config.AutoHeal = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSlider("AutoHealPercentS", {
+    Title = "Hp%",
+    Default = Config.AutoHealPercent,
+    Min = 10,
+    Max = 95,
+    Rounding = 0,
+    Callback = function(v)
+        Config.AutoHealPercent = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSection("PvE")
+
+Tabs.Combat:AddToggle("ClickToKillT", {
+    Title = "Click To Kill",
+    Default = Config.ClickToKill,
+    Callback = function(v)
+        Config.ClickToKill = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("AutoKillMobsT", {
+    Title = "Auto Kill Mobs",
+    Default = Config.AutoKillMobs,
+    Callback = function(v)
+        Config.AutoKillMobs = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("AutoKillBossesT", {
+    Title = "Auto Kill Boss",
+    Default = Config.AutoKillBosses,
+    Callback = function(v)
+        Config.AutoKillBosses = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSection("PvP")
+
+Tabs.Combat:AddToggle("AimlockPlayerT", {
+    Title = "Aimlock",
+    Default = Config.AimlockEnabled,
+    Callback = function(v)
+        Config.AimlockEnabled = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSlider("AimlockDistanceS", {
+    Title = "Distance",
+    Default = Config.AimlockDistance or 150,
+    Min = 10,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(v)
+        Config.AimlockDistance = v
+        SaveConfig()
+    end
+})
+
+local KillSelectPlayerDropdown = Tabs.Combat:AddDropdown("KillSelectPlayer", {
+    Title = "Select Player",
+    Values = {},
+    Multi = true,
+    Default = {},
+    Callback = function(v)
+        KillPlayerTargets = v
+    end
+})
+
+Tabs.Combat:AddButton({
+    Title = "Kill Player",
+    Callback = function()
+        killSelectedPlayers()
+    end
+})
+
+local TPPlayerSelectDropdown
+local function refreshAllPlayerLists()
+    local newNames = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(newNames, p.Name)
+        end
+    end
+    KillSelectPlayerDropdown:SetValues(newNames)
+    if TPPlayerSelectDropdown then
+        TPPlayerSelectDropdown:SetValues(newNames)
+    end
+end
+
+refreshAllPlayerLists()
+Players.PlayerAdded:Connect(refreshAllPlayerLists)
+Players.PlayerRemoving:Connect(function(leftPlayer)
+    if KillPlayerTargets[leftPlayer.Name] then
+        KillPlayerTargets[leftPlayer.Name] = nil
+    end
+    refreshAllPlayerLists()
+end)
+
+Tabs.ESP:AddSection("ESP")
+
+Tabs.ESP:AddToggle("ESPPlayers", {
+    Title = "ESP Players",
+    Default = Config.ESPEnabled,
+    Callback = function(v)
+        Config.ESPEnabled = v
+        SaveConfig()
+        if not v then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character and player.Character:FindFirstChild("Head") then
+                    local esp = player.Character.Head:FindFirstChild("StarCrowESP")
+                    if esp then
+                        esp:Destroy()
+                    end
+                end
+            end
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPMobs", {
+    Title = "ESP Mobs",
+    Default = Config.ESPMobsEnabled,
+    Callback = function(v)
+        Config.ESPMobsEnabled = v
+        SaveConfig()
+        if not v then
+            local folders = {workspace:FindFirstChild("MobsHolder"), workspace:FindFirstChild("BossHolder")}
+            for _, folder in ipairs(folders) do
+                if folder then
+                    for _, mob in ipairs(folder:GetChildren()) do
+                        local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
+                        if head then
+                            local esp = head:FindFirstChild("StarCrowMobESP")
+                            if esp then esp:Destroy() end
+                        end
+                    end
+                end
+            end
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPRockT", {
+    Title = "ESP Rock",
+    Default = Config.ESPRockEnabled,
+    Callback = function(v)
+        Config.ESPRockEnabled = v
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddToggle("ESPWoodT", {
+    Title = "ESP Wood",
+    Default = Config.ESPWoodEnabled,
+    Callback = function(v)
+        Config.ESPWoodEnabled = v
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSection("Movement")
+
+Tabs.Player:AddToggle("LoopSpeed", {
+    Title = "Enable Speed",
+    Default = Config.LoopSpeedEnabled,
+    Callback = function(v)
+        Config.LoopSpeedEnabled = v
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("WalkSpeed", {
+    Title = "Speed",
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 250,
+    Rounding = 0,
+    Callback = function(v)
+        Config.WalkSpeed = v
+        SaveConfig()
+    end
+})
+Tabs.Player:AddToggle("JumpPowerT", {
+    Title = "Enable Jump Power",
+    Default = Config.JumpPowerEnabled,
+    Callback = function(v)
+        Config.JumpPowerEnabled = v
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("JumpPowerS", {
+    Title = "Jump Power",
+    Default = Config.JumpPower,
+    Min = 50,
+    Max = 500,
+    Rounding = 0,
+    Callback = function(v)
+        Config.JumpPower = v
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJump", {
+    Title = "Infinite Jump",
+    Default = Config.InfJumpEnabled,
+    Callback = function(v)
+        Config.InfJumpEnabled = v
+        SaveConfig()
+    end
+})
+
+NoclipToggleObj = Tabs.Player:AddToggle("Noclip", {
+    Title = "Noclip",
+    Default = Config.NoclipEnabled,
+    Callback = function(v)
+        Config.NoclipEnabled = v
+        SaveConfig()
+        if SC_noclipFloatStroke then
+            setFloatStrokeActive(SC_noclipFloatStroke, v)
+        end
+    end
+})
+
+FlyToggleObj = Tabs.Player:AddToggle("FlyToggle", {
+    Title = "Fly",
+    Default = Config.FlyEnabled,
+    Callback = function(v)
+        Config.FlyEnabled = v
+        SaveConfig()
+        if v then
+            startFly()
+        else
+            stopFly()
+        end
+        if SC_flyFloatStroke then
+            setFloatStrokeActive(SC_flyFloatStroke, v)
+        end
+    end
+})
+
+Tabs.Player:AddSlider("FlySpeed", {
+    Title = "Fly Speed",
+    Default = Config.FlySpeed,
+    Min = 1,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(v)
+        Config.FlySpeed = v
+        SaveConfig()
+    end
+})
+
+InvisToggleObj = Tabs.Player:AddToggle("InvisibleToggle", {
+    Title = "Invisible",
+    Default = InvisState.isInvisible,
+    Callback = function(v)
+        toggleInvisibility(v)
+        if SC_invisFloatStroke then
+            setFloatStrokeActive(SC_invisFloatStroke, v)
+        end
+    end
+})
+
+Tabs.Player:AddSection("Teleport")
+
+Tabs.Player:AddButton({
+    Title = "Give TP Tool",
+    Callback = function()
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        local char = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+        if not backpack then return end
+        if backpack:FindFirstChild("TP Tool") or (char and char:FindFirstChild("TP Tool")) then
+            return
+        end
+        local tool = Instance.new("Tool")
+        tool.RequiresHandle = false
+        tool.Name = "TP Tool"
+        tool.Activated:Connect(function()
+            local currentChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            if currentChar and currentChar:FindFirstChild("HumanoidRootPart") then
+                local hitPos = Mouse.Hit and Mouse.Hit.Position
+                if hitPos then
+                    currentChar.HumanoidRootPart.CFrame = CFrame.new(hitPos + Vector3.new(0, 2.5, 0))
+                end
+            end
+        end)
+        tool.Parent = backpack
+    end
+})
+
+local selectedTPPlayer = nil
+TPPlayerSelectDropdown = Tabs.Player:AddDropdown("TPPlayerSelectDropdown", {
+    Title = "Select Player",
+    Values = {},
+    Multi = false,
+    Default = "",
+    Callback = function(v)
+        selectedTPPlayer = v
+    end
+})
+
+Tabs.Player:AddButton({
+    Title = "Teleport",
+    Callback = function()
+        if not selectedTPPlayer or selectedTPPlayer == "" then return end
+        local targetPlr = Players:FindFirstChild(selectedTPPlayer)
+        if targetPlr and targetPlr.Character then
+            local targetHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart") or targetPlr.Character:FindFirstChild("Head") or targetPlr.Character:FindFirstChildWhichIsA("BasePart")
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if targetHRP and myHRP then
+                myHRP.CFrame = targetHRP.CFrame + Vector3.new(0, 2, 0)
+            end
+        end
+    end
+})
+
+refreshAllPlayerLists()
+
+Tabs.Player:AddSection("Camera")
+
+Tabs.Player:AddToggle("RemoveNPCCamT", {
+    Title = "Remove NPC Camera Shake",
+    Default = Config.RemoveNPCCam,
+    Callback = function(v)
+        Config.RemoveNPCCam = v
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSection("Stats")
+
+Tabs.Player:AddToggle("InfStaminaT", {
+    Title = "Infinite Stamina",
+    Default = Config.InfStamina,
+    Callback = function(v)
+        Config.InfStamina = v
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddSection("Visuals")
+
+Tabs.Misc:AddToggle("NoFogT", {
+    Title = "No Fog",
+    Default = Config.NoFog,
+    Callback = function(v)
+        Config.NoFog = v
+        SaveConfig()
+        applyLightingMods()
+    end
+})
+
+Tabs.Misc:AddToggle("FullBrightT", {
+    Title = "Full Bright",
+    Default = Config.FullBright,
+    Callback = function(v)
+        Config.FullBright = v
+        SaveConfig()
+        applyLightingMods()
+    end
+})
+
+Tabs.Misc:AddSection("Interaction")
+
+Tabs.Misc:AddToggle("InstantInteractT", {
+    Title = "Instant Interact",
+    Default = Config.InstantInteract,
+    Callback = function(v)
+        Config.InstantInteract = v
+        SaveConfig()
+        applyInstantInteract(v)
+    end
+})
+
+Tabs.Misc:AddToggle("RemoveBarriersT", {
+    Title = "Remove Barriers",
+    Default = Config.RemoveBarriers,
+    Callback = function(v)
+        Config.RemoveBarriers = v
+        SaveConfig()
+        applyBarrierSetting(v)
+    end
+})
+
+Tabs.Settings:AddSection("Floating Buttons")
+
+Tabs.Settings:AddToggle("NoclipFloat", {
+    Title = "Noclip Float Button",
+    Default = Config.NoclipFloatEnabled,
+    Callback = function(v)
+        Config.NoclipFloatEnabled = v
+        SaveConfig()
+        if v then
+            createNoclipFloat()
+        elseif SC_noclipFloatBtn then
+            SC_noclipFloatBtn:Destroy()
+        end
+    end
+})
+
+Tabs.Settings:AddToggle("FlyFloat", {
+    Title = "Fly Float Button",
+    Default = Config.FlyFloatEnabled,
+    Callback = function(v)
+        Config.FlyFloatEnabled = v
+        SaveConfig()
+        if v then
+            createFlyFloat()
+        elseif SC_flyFloatBtn then
+            SC_flyFloatBtn:Destroy()
+        end
+    end
+})
+
+Tabs.Settings:AddToggle("InvisFloat", {
+    Title = "Invisible Float Button",
+    Default = Config.InvisFloatEnabled,
+    Callback = function(v)
+        Config.InvisFloatEnabled = v
+        SaveConfig()
+        if v then
+            createInvisFloat()
+        elseif SC_invisFloatBtn then
+            SC_invisFloatBtn:Destroy()
+        end
+    end
+})
+
+local ToolSelectDropdown = Tabs.Settings:AddDropdown("ToolFloatSelect", {
+    Title = "Select Tool",
+    Values = {},
+    Multi = false,
+    Default = Config.CustomToolName,
+    Callback = function(v)
+        Config.CustomToolName = v
+        SaveConfig()
+    end
+})
+
+local lastToolSignature = ""
+local function refreshToolList()
+    local tools = {}
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and not table.find(tools, t.Name) then
+                table.insert(tools, t.Name)
+            end
+        end
+    end
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and not table.find(tools, t.Name) then
+                table.insert(tools, t.Name)
+            end
+        end
+    end
+    table.sort(tools)
+    local sig = table.concat(tools, "|")
+    if sig == lastToolSignature then return end
+    lastToolSignature = sig
+    
+    ToolSelectDropdown:SetValues(tools)
+    if #tools > 0 then
+        if not Config.CustomToolName or Config.CustomToolName == "" or not table.find(tools, Config.CustomToolName) then
+            Config.CustomToolName = tools[1]
+            ToolSelectDropdown:SetValue(tools[1])
+        end
+    end
+end
+
+refreshToolList()
+
+local function hookBackpackEvents()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        bp.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
+        bp.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
+    end
+end
+hookBackpackEvents()
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    task.wait(0.5)
+    hookBackpackEvents()
+    refreshToolList()
+    newChar.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
+    newChar.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
+end)
+if LocalPlayer.Character then
+    LocalPlayer.Character.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
+    LocalPlayer.Character.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(refreshToolList)
+    end
+end)
+
+Tabs.Settings:AddToggle("ToolFloat", {
+    Title = "Tool Float Button",
+    Default = Config.ToolFloatEnabled,
+    Callback = function(v)
+        Config.ToolFloatEnabled = v
+        SaveConfig()
+        if v then
+            createToolFloat()
+        elseif SC_toolFloatBtn then
+            SC_toolFloatBtn:Destroy()
+        end
+    end
+})
+
+Tabs.Settings:AddSlider("FloatBtnSizeSlider", {
+    Title = "Float Size",
+    Default = Config.FloatBtnSize,
+    Min = 30,
+    Max = 130,
+    Rounding = 0,
+    Callback = function(v)
+        Config.FloatBtnSize = v
+        SaveConfig()
+        resizeAllFloatBtns()
+    end
+})
+
+Tabs.Settings:AddSection("Keybinds")
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = "LeftControl",
+    ChangedCallback = function(NewKey)
+        Window.MinimizeKey = Enum.KeyCode[NewKey] or NewKey
+    end
+})
+
+Tabs.Settings:AddKeybind("FlyKeybind", {
+    Title = "Fly Keybind",
+    Mode = "Toggle",
+    Default = Config.FlyKey or "F",
+    Callback = function()
+        if Config.KeybindsEnabled then
+            toggleFly()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.FlyKey = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddKeybind("NoclipKeybind", {
+    Title = "Noclip Keybind",
+    Mode = "Toggle",
+    Default = Config.NoclipKey or "J",
+    Callback = function()
+        if Config.KeybindsEnabled then
+            toggleNoclip()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.NoclipKey = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddKeybind("InvisKeybind", {
+    Title = "Invisible Keybind",
+    Mode = "Toggle",
+    Default = Config.InvisKey or "C",
+    Callback = function()
+        if Config.KeybindsEnabled then
+            toggleInvisAction()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.InvisKey = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddKeybind("ToolKeybind", {
+    Title = "Tool Keybind",
+    Mode = "Toggle",
+    Default = Config.ToolKey or "T",
+    Callback = function()
+        if Config.KeybindsEnabled then
+            useToolAction()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.ToolKey = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:AddToggle("EnableKeybindsToggle", {
+    Title = "Enable Keybinds",
+    Default = Config.KeybindsEnabled,
+    Callback = function(v)
+        Config.KeybindsEnabled = v
+        SaveConfig()
+    end
+})
+
+Window:SelectTab(1)
+Fluent:SetTheme("Amethyst")
 
