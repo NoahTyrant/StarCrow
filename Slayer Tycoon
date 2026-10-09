@@ -2137,23 +2137,14 @@ local function updateAimlockVisual()
             aimlockVisualPart.Name = "StarCrowAimlockZone"
             aimlockVisualPart.Shape = Enum.PartType.Ball
             aimlockVisualPart.Material = Enum.Material.ForceField
-            aimlockVisualPart.Color = Color3.fromRGB(180, 70, 255)
-            aimlockVisualPart.Transparency = 0.8
+            aimlockVisualPart.Color = Color3.fromRGB(160, 35, 255)
+            aimlockVisualPart.Transparency = 0.74
             aimlockVisualPart.CanCollide = false
             aimlockVisualPart.CanQuery = false
             aimlockVisualPart.CanTouch = false
             aimlockVisualPart.CastShadow = false
             aimlockVisualPart.Anchored = true
             aimlockVisualPart.Parent = workspace
-
-            local hl = Instance.new("Highlight")
-            hl.Name = "StarCrowZoneOutline"
-            hl.FillColor = Color3.fromRGB(130, 30, 230)
-            hl.FillTransparency = 0.92
-            hl.OutlineColor = Color3.fromRGB(200, 75, 255)
-            hl.OutlineTransparency = 0
-            hl.Adornee = aimlockVisualPart
-            hl.Parent = aimlockVisualPart
         end
         aimlockVisualPart.Size = Vector3.new(rad, rad, rad)
         aimlockVisualPart.CFrame = hrp.CFrame
@@ -2423,7 +2414,7 @@ Tabs.Combat:AddSlider("AimlockDistanceS", {
     Title = "Distance",
     Default = Config.AimlockDistance or 40,
     Min = 10,
-    Max = 2000,
+    Max = 200,
     Rounding = 0,
     Callback = function(v)
         Config.AimlockDistance = v
