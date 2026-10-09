@@ -23,6 +23,7 @@ local stopFly
 local FlyToggleObj = nil
 local NoclipToggleObj = nil
 local InvisToggleObj = nil
+local AimlockToggleObj = nil
 
 local Config = {
     RemoveNPCCam = true,
@@ -38,10 +39,12 @@ local Config = {
     NoclipFloatEnabled = false,
     FlyFloatEnabled = false,
     InvisFloatEnabled = false,
+    AimlockFloatEnabled = false,
     UITheme = "Amethyst",
     FlyKey = "F",
     NoclipKey = "J",
     InvisKey = "C",
+    AimlockKey = "G",
     KeybindsEnabled = true,
     NoFog = false,
     FullBright = false,
@@ -67,7 +70,7 @@ local Config = {
     JumpPower = 50,
     ToolFloatEnabled = false,
     CustomToolName = "",
-    ToolKey = "T"
+    ToolKey = "P"
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -642,6 +645,22 @@ local function toggleInvisAction()
     end
 end
 
+local lastAimlockToggleTime = 0
+local function toggleAimlock()
+    local now = tick()
+    if now - lastAimlockToggleTime < 0.25 then return end
+    lastAimlockToggleTime = now
+    if AimlockToggleObj then
+        AimlockToggleObj:SetValue(not Config.AimlockEnabled)
+    else
+        Config.AimlockEnabled = not Config.AimlockEnabled
+        SaveConfig()
+        if SC_aimlockFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(SC_aimlockFloatStroke, Config.AimlockEnabled)
+        end
+    end
+end
+
 local function getFlyKey()
     local k = Config.FlyKey or "F"
     if typeof(k) == "EnumItem" then return k end
@@ -663,6 +682,22 @@ local function getInvisKey()
     return Enum.KeyCode[name] or Enum.KeyCode.C
 end
 
+local function getAimlockKey()
+    local k = Config.AimlockKey or "G"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.G
+end
+
+local function getToolKey()
+    local k = Config.ToolKey or "P"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.P
+end
+
+local useToolAction
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if not Config.KeybindsEnabled then return end
@@ -674,6 +709,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             toggleNoclip()
         elseif input.KeyCode == getInvisKey() then
             toggleInvisAction()
+        elseif input.KeyCode == getAimlockKey() then
+            toggleAimlock()
+        elseif input.KeyCode == getToolKey() then
+            if useToolAction then useToolAction() end
         end
     end
 end)
@@ -734,6 +773,7 @@ local SC_noclipFloatBtn, SC_noclipFloatStroke
 local SC_flyFloatBtn, SC_flyFloatStroke
 local SC_invisFloatBtn
 local SC_toolFloatBtn, SC_toolFloatStroke
+local SC_aimlockFloatBtn, SC_aimlockFloatStroke
 
 local function resizeAllFloatBtns()
     local sz = Config.FloatBtnSize
@@ -753,6 +793,10 @@ local function resizeAllFloatBtns()
     if SC_toolFloatBtn then
         SC_toolFloatBtn.Size = UDim2.new(0, sz, 0, sz)
         SC_toolFloatBtn.TextSize = ts
+    end
+    if SC_aimlockFloatBtn then
+        SC_aimlockFloatBtn.Size = UDim2.new(0, sz, 0, sz)
+        SC_aimlockFloatBtn.TextSize = ts
     end
 end
 
@@ -810,7 +854,7 @@ local function createInvisFloat()
     end)
 end
 
-local function useToolAction()
+useToolAction = function()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -892,6 +936,28 @@ local function createToolFloat()
     btn.Activated:Connect(handleClick)
 end
 
+local function createAimlockFloat()
+    if SC_aimlockFloatBtn then
+        SC_aimlockFloatBtn:Destroy()
+    end
+    local sz = Config.FloatBtnSize
+    local btn, stroke = makeFloatBtn("Aimlock", 0.85, -(sz + 14), -(sz * 4 - 16))
+    SC_aimlockFloatBtn, SC_aimlockFloatStroke = btn, stroke
+    setFloatStrokeActive(stroke, Config.AimlockEnabled)
+    local getWasMoved, clearMoved = makeDraggableFloat(btn)
+    
+    local function handleClick()
+        if getWasMoved() then
+            clearMoved()
+            return
+        end
+        toggleAimlock()
+    end
+    
+    btn.MouseButton1Click:Connect(handleClick)
+    btn.Activated:Connect(handleClick)
+end
+
 if Config.NoclipFloatEnabled then
     createNoclipFloat()
 end
@@ -903,6 +969,9 @@ if Config.InvisFloatEnabled then
 end
 if Config.ToolFloatEnabled then
     createToolFloat()
+end
+if Config.AimlockFloatEnabled then
+    createAimlockFloat()
 end
 
 local function updateESP()
@@ -2401,24 +2470,30 @@ Tabs.Combat:AddToggle("AutoKillBossesT", {
 
 Tabs.Combat:AddSection("PvP")
 
-Tabs.Combat:AddToggle("AimlockPlayerT", {
+AimlockToggleObj = Tabs.Combat:AddToggle("AimlockPlayerT", {
     Title = "Aimlock",
     Default = Config.AimlockEnabled,
     Callback = function(v)
         Config.AimlockEnabled = v
         SaveConfig()
+        if SC_aimlockFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(SC_aimlockFloatStroke, v)
+        end
     end
 })
 
-Tabs.Combat:AddSlider("AimlockDistanceS", {
+Tabs.Combat:AddInput("AimlockDistanceInput", {
     Title = "Distance",
-    Default = Config.AimlockDistance or 40,
-    Min = 10,
-    Max = 200,
-    Rounding = 0,
+    Default = tostring(Config.AimlockDistance or 40),
+    Placeholder = "Enter distance",
+    Numeric = true,
+    Finished = false,
     Callback = function(v)
-        Config.AimlockDistance = v
-        SaveConfig()
+        local n = tonumber(v)
+        if n and n > 0 then
+            Config.AimlockDistance = n
+            SaveConfig()
+        end
     end
 })
 
@@ -2902,6 +2977,20 @@ Tabs.Settings:AddToggle("ToolFloat", {
     end
 })
 
+Tabs.Settings:AddToggle("AimlockFloat", {
+    Title = "Aimlock Float Button",
+    Default = Config.AimlockFloatEnabled,
+    Callback = function(v)
+        Config.AimlockFloatEnabled = v
+        SaveConfig()
+        if v then
+            createAimlockFloat()
+        elseif SC_aimlockFloatBtn then
+            SC_aimlockFloatBtn:Destroy()
+        end
+    end
+})
+
 Tabs.Settings:AddSlider("FloatBtnSizeSlider", {
     Title = "Float Size",
     Default = Config.FloatBtnSize,
@@ -2980,10 +3069,28 @@ Tabs.Settings:AddKeybind("InvisKeybind", {
     end
 })
 
+Tabs.Settings:AddKeybind("AimlockKeybind", {
+    Title = "Aimlock Keybind",
+    Mode = "Toggle",
+    Default = Config.AimlockKey or "G",
+    Callback = function()
+        if Config.KeybindsEnabled then
+            toggleAimlock()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.AimlockKey = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
 Tabs.Settings:AddKeybind("ToolKeybind", {
     Title = "Tool Keybind",
     Mode = "Toggle",
-    Default = Config.ToolKey or "T",
+    Default = Config.ToolKey or "P",
     Callback = function()
         if Config.KeybindsEnabled then
             useToolAction()
