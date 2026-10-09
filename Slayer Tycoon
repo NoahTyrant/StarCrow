@@ -58,7 +58,9 @@ local Config = {
     AutoHeal = false,
     AutoHealPercent = 50,
     AimlockEnabled = false,
-    AimlockDistance = 150,
+    AimlockDistance = 40,
+    AimlockFriendCheck = true,
+    AimlockWhitelist = "",
     ESPRockEnabled = false,
     ESPWoodEnabled = false,
     JumpPowerEnabled = false,
@@ -1025,11 +1027,24 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local currentFarmHoldCF = nil
+local currentFarmTargetPart = nil
 
 RunService.Stepped:Connect(function()
     local char = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
     if char then
-        if currentFarmHoldCF and (Config.AutoRock or Config.AutoWoods) then
+        if (Config.AutoRock or Config.AutoWoods) and currentFarmTargetPart and currentFarmTargetPart.Parent then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local t = tick() * 4
+                local swayX = math.sin(t) * 2.8
+                local swayY = 1.8 + math.cos(t * 1.5) * 1.2
+                local standPos = currentFarmTargetPart.Position + Vector3.new(swayX, swayY, 5.0)
+                currentFarmHoldCF = CFrame.lookAt(standPos, currentFarmTargetPart.Position)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                hrp.CFrame = currentFarmHoldCF
+            end
+        elseif currentFarmHoldCF and (Config.AutoRock or Config.AutoWoods) then
             local hrp = char:FindFirstChild("HumanoidRootPart")
             if hrp then
                 hrp.AssemblyLinearVelocity = Vector3.zero
@@ -1165,6 +1180,16 @@ end)
 
 local function isTreeValid(part)
     if not part or not part.Parent or part.Transparency >= 0.9 then return false end
+
+    local p = part
+    while p and p ~= workspace do
+        local n = p.Name:lower()
+        if n:find("wisteria") then
+            return false
+        end
+        p = p.Parent
+    end
+
     local model = part.Parent
     if model:IsA("Model") then
         local wood = model:FindFirstChild("Wood")
@@ -1219,7 +1244,11 @@ task.spawn(function()
                 local rock = getValidFarmTarget("RockHitPart")
                 if rock and isRockValid(rock) and myHRP then
                     farmed = true
-                    local standPos = rock.Position + Vector3.new(0, 1.5, 3.5)
+                    currentFarmTargetPart = rock
+                    local t = tick() * 4
+                    local swayX = math.sin(t) * 2.8
+                    local swayY = 1.8 + math.cos(t * 1.5) * 1.2
+                    local standPos = rock.Position + Vector3.new(swayX, swayY, 5.0)
                     currentFarmHoldCF = CFrame.lookAt(standPos, rock.Position)
                     myHRP.AssemblyLinearVelocity = Vector3.zero
                     myHRP.AssemblyAngularVelocity = Vector3.zero
@@ -1232,6 +1261,13 @@ task.spawn(function()
                         pick:Activate()
                         local atk = pick:FindFirstChild("Attack")
                         if atk and atk:IsA("RemoteEvent") then atk:FireServer() end
+                        local handle = pick:FindFirstChild("Handle") or pick:FindFirstChildWhichIsA("BasePart")
+                        if handle and firetouchinterest then
+                            pcall(function()
+                                firetouchinterest(handle, rock, 0)
+                                firetouchinterest(handle, rock, 1)
+                            end)
+                        end
                     end
                 end
             end)
@@ -1240,6 +1276,7 @@ task.spawn(function()
             wasFarmingRock = true
         elseif wasFarmingRock then
             wasFarmingRock = false
+            currentFarmTargetPart = nil
             currentFarmHoldCF = nil
             local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
             local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -1260,7 +1297,11 @@ task.spawn(function()
                 local wood = getValidFarmTarget("WoodHitPart")
                 if wood and isTreeValid(wood) and myHRP then
                     farmed = true
-                    local standPos = wood.Position + Vector3.new(0, 1.5, 3.5)
+                    currentFarmTargetPart = wood
+                    local t = tick() * 4
+                    local swayX = math.sin(t) * 2.8
+                    local swayY = 1.8 + math.cos(t * 1.5) * 1.2
+                    local standPos = wood.Position + Vector3.new(swayX, swayY, 5.0)
                     currentFarmHoldCF = CFrame.lookAt(standPos, wood.Position)
                     myHRP.AssemblyLinearVelocity = Vector3.zero
                     myHRP.AssemblyAngularVelocity = Vector3.zero
@@ -1273,6 +1314,13 @@ task.spawn(function()
                         hatchet:Activate()
                         local atk = hatchet:FindFirstChild("Attack")
                         if atk and atk:IsA("RemoteEvent") then atk:FireServer() end
+                        local handle = hatchet:FindFirstChild("Handle") or hatchet:FindFirstChildWhichIsA("BasePart")
+                        if handle and firetouchinterest then
+                            pcall(function()
+                                firetouchinterest(handle, wood, 0)
+                                firetouchinterest(handle, wood, 1)
+                            end)
+                        end
                     end
                 end
             end)
@@ -1281,6 +1329,7 @@ task.spawn(function()
             wasFarmingWood = true
         elseif wasFarmingWood then
             wasFarmingWood = false
+            currentFarmTargetPart = nil
             currentFarmHoldCF = nil
             local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
             local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -2054,13 +2103,76 @@ task.spawn(function()
 end)
 
 local currentAimlockTarget = nil
-local function getNearestPlayer()
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+local aimlockVisualPart = nil
+local aimlockHighlight = nil
+
+local function isPlayerIgnored(p)
+    if not p or p == LocalPlayer then return true end
+    if Config.AimlockFriendCheck then
+        local ok, isFr = pcall(function() return LocalPlayer:IsFriendsWith(p.UserId) end)
+        if ok and isFr then return true end
+    end
+    if Config.AimlockWhitelist and Config.AimlockWhitelist ~= "" then
+        local wlList = string.split(Config.AimlockWhitelist:lower(), ",")
+        local pName = p.Name:lower()
+        local pDisplay = p.DisplayName:lower()
+        for _, rawItem in ipairs(wlList) do
+            local item = rawItem:match("^%s*(.-)%s*$")
+            if item ~= "" and (pName:find(item, 1, true) or pDisplay:find(item, 1, true)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function updateAimlockVisual()
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local rad = (Config.AimlockDistance or 40) * 2
+
+    if Config.AimlockEnabled and hrp then
+        if not aimlockVisualPart or not aimlockVisualPart.Parent then
+            aimlockVisualPart = Instance.new("Part")
+            aimlockVisualPart.Name = "StarCrowAimlockZone"
+            aimlockVisualPart.Shape = Enum.PartType.Ball
+            aimlockVisualPart.Material = Enum.Material.ForceField
+            aimlockVisualPart.Color = Color3.fromRGB(180, 70, 255)
+            aimlockVisualPart.Transparency = 0.8
+            aimlockVisualPart.CanCollide = false
+            aimlockVisualPart.CanQuery = false
+            aimlockVisualPart.CanTouch = false
+            aimlockVisualPart.CastShadow = false
+            aimlockVisualPart.Anchored = true
+            aimlockVisualPart.Parent = workspace
+
+            local hl = Instance.new("Highlight")
+            hl.Name = "StarCrowZoneOutline"
+            hl.FillColor = Color3.fromRGB(130, 30, 230)
+            hl.FillTransparency = 0.92
+            hl.OutlineColor = Color3.fromRGB(200, 75, 255)
+            hl.OutlineTransparency = 0
+            hl.Adornee = aimlockVisualPart
+            hl.Parent = aimlockVisualPart
+        end
+        aimlockVisualPart.Size = Vector3.new(rad, rad, rad)
+        aimlockVisualPart.CFrame = hrp.CFrame
+    else
+        if aimlockVisualPart then
+            aimlockVisualPart:Destroy()
+            aimlockVisualPart = nil
+        end
+    end
+end
+
+local function getNearestAimlockTarget()
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
     local closest = nil
-    local minDist = Config.AimlockDistance or 150
+    local minDist = Config.AimlockDistance or 40
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
+        if not isPlayerIgnored(p) and p.Character then
             local thrp = p.Character:FindFirstChild("HumanoidRootPart")
             local hum = p.Character:FindFirstChildOfClass("Humanoid")
             if thrp and hum and hum.Health > 0 then
@@ -2075,18 +2187,38 @@ local function getNearestPlayer()
     return closest
 end
 
-task.spawn(function()
-    while task.wait(0.5) do
-        if Config.AimlockEnabled then
-            currentAimlockTarget = getNearestPlayer()
-        else
-            currentAimlockTarget = nil
+RunService.RenderStepped:Connect(function()
+    updateAimlockVisual()
+    if Config.AimlockEnabled then
+        currentAimlockTarget = getNearestAimlockTarget()
+    else
+        currentAimlockTarget = nil
+    end
+
+    if Config.AimlockEnabled and currentAimlockTarget and currentAimlockTarget.Character then
+        local tChar = currentAimlockTarget.Character
+        if not aimlockHighlight or aimlockHighlight.Parent ~= tChar then
+            if aimlockHighlight then aimlockHighlight:Destroy() end
+            aimlockHighlight = Instance.new("Highlight")
+            aimlockHighlight.Name = "StarCrowAimlockHighlight"
+            aimlockHighlight.FillColor = Color3.fromRGB(85, 20, 150)
+            aimlockHighlight.FillTransparency = 0.75
+            aimlockHighlight.OutlineColor = Color3.fromRGB(180, 70, 255)
+            aimlockHighlight.OutlineTransparency = 0
+            aimlockHighlight.Adornee = tChar
+            aimlockHighlight.Parent = tChar
+        end
+    else
+        if aimlockHighlight then
+            aimlockHighlight:Destroy()
+            aimlockHighlight = nil
         end
     end
 end)
 
 RunService.Stepped:Connect(function()
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+    local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
     if Config.AimlockEnabled and currentAimlockTarget and currentAimlockTarget.Character then
@@ -2289,12 +2421,33 @@ Tabs.Combat:AddToggle("AimlockPlayerT", {
 
 Tabs.Combat:AddSlider("AimlockDistanceS", {
     Title = "Distance",
-    Default = Config.AimlockDistance or 150,
+    Default = Config.AimlockDistance or 40,
     Min = 10,
     Max = 2000,
     Rounding = 0,
     Callback = function(v)
         Config.AimlockDistance = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("AimlockFriendCheckT", {
+    Title = "Friend Check",
+    Default = Config.AimlockFriendCheck,
+    Callback = function(v)
+        Config.AimlockFriendCheck = v
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddInput("AimlockWhitelistInput", {
+    Title = "Whitelist Player",
+    Default = Config.AimlockWhitelist,
+    Placeholder = "Enter Username",
+    Numeric = false,
+    Finished = false,
+    Callback = function(v)
+        Config.AimlockWhitelist = v
         SaveConfig()
     end
 })
@@ -2865,4 +3018,3 @@ Tabs.Settings:AddToggle("EnableKeybindsToggle", {
 
 Window:SelectTab(1)
 Fluent:SetTheme("Amethyst")
-
