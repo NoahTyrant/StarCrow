@@ -489,7 +489,52 @@ local rhythmKeyMap = {
 }
 local lastRhythmLaneHit = { A = 0, S = 0, D = 0 }
 local lastRhythmScan = 0
-local lastReelTween = 0
+local CENTER_BAR_POS = UDim2.new(0.5, 0, 0.5, 0)
+local isLockingBar = false
+local barPosConn = nil
+local boundBar = nil
+
+local function LockFishingBar()
+    if isLockingBar then return end
+    if not FishingGui or not FishingGui.Visible or not FishingBar then return end
+    if not (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) then return end
+    isLockingBar = true
+    local char = cachedChar
+    if char and (tonumber(char:GetAttribute("GuildPower")) or 0) < 99999999 then
+        pcall(function()
+            char:SetAttribute("GuildPower", 99999999)
+            local stats = cachedStatsFolder or char:FindFirstChild("Stats")
+            local rp = stats and stats:FindFirstChild("RodPower")
+            if rp then
+                local orig = rp.Value
+                rp.Value = orig + 1
+                rp.Value = orig
+            end
+        end)
+    end
+    pcall(function()
+        FishingBar:TweenPosition(CENTER_BAR_POS, Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
+        FishingBar.Position = CENTER_BAR_POS
+    end)
+    isLockingBar = false
+end
+
+local function BindFishingBarLock()
+    if FishingBar and FishingBar ~= boundBar then
+        if barPosConn then
+            pcall(function() barPosConn:Disconnect() end)
+            barPosConn = nil
+        end
+        boundBar = FishingBar
+        barPosConn = FishingBar:GetPropertyChangedSignal("Position"):Connect(function()
+            if not isLockingBar and FishingBar.Position.X.Scale ~= 0.5 then
+                LockFishingBar()
+            end
+        end)
+    end
+end
+
+BindFishingBarLock()
 
 local function TriggerGuiButton(btn)
     if not btn then return false end
@@ -516,22 +561,25 @@ local function TriggerGuiButton(btn)
     return triggered
 end
 
+RunService.RenderStepped:Connect(function()
+    if not FishingGui or not FishingGui.Visible then return end
+    BindFishingBarLock()
+    LockFishingBar()
+end)
+
+RunService.Stepped:Connect(function()
+    if not FishingGui or not FishingGui.Visible then return end
+    BindFishingBarLock()
+    LockFishingBar()
+end)
+
 RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
 
-    local activeReel = Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss
     local activeFinal = Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
 
-    if activeReel and FishingBar then
-        if math.abs(FishingBar.Position.X.Scale - 0.5) > 0.005 then
-            local now = os.clock()
-            if now - lastReelTween >= 0.25 then
-                lastReelTween = now
-                FishingBar:TweenPosition(UDim2.new(0.5, 0, 0.5, 0), Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
-            end
-            FishingBar.Position = UDim2.new(0.5, 0, 0.5, 0)
-        end
-    end
+    BindFishingBarLock()
+    LockFishingBar()
 
     if activeFinal and RhythmGui and RhythmGui.Visible then
         local now = os.clock()
@@ -985,8 +1033,8 @@ local function MonitorBossMinigame()
             if fishObj:GetAttribute("FinalPhaseHP") ~= nil then
                 lastFinalHp = tonumber(fishObj:GetAttribute("FinalPhaseHP")) or lastFinalHp
             end
-            if Bar then
-                lastScale = Bar.Position.X.Scale
+            if FishingBar then
+                lastScale = FishingBar.Position.X.Scale
             end
             task.wait(0.1)
         end
@@ -1188,6 +1236,11 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
         pcall(function()
             remote:FireServer("Perfect")
         end)
+        pcall(function()
+            local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
+            local slamGui = tc and tc:FindFirstChild("Slam")
+            if slamGui then slamGui:Destroy() end
+        end)
     end
 end)
 
@@ -1196,6 +1249,11 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
         task.wait(0.05)
         pcall(function()
             remote:FireServer()
+        end)
+        pcall(function()
+            local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
+            local chargeGui = tc and tc:FindFirstChild("Charge")
+            if chargeGui then chargeGui:Destroy() end
         end)
     end
 end)
