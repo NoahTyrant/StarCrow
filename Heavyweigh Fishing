@@ -1,1 +1,1141 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+
+local LocalPlayer = Players.LocalPlayer
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Info = ReplicatedStorage:WaitForChild("Info")
+local DataFolder = ReplicatedStorage:WaitForChild("Data")
+local PlayerData = DataFolder:WaitForChild(LocalPlayer.UserId)
+
+local ToggleHotbar = Events:WaitForChild("ToggleHotbar")
+local FishingEvent = Events:WaitForChild("Fishing")
+local UpdateFishProgression = Events:WaitForChild("UpdateFishProgression")
+local UseSkill = Events:WaitForChild("UseSkill")
+local SellFish = Events:WaitForChild("SellFish")
+local CraftBaitEvent = Events:WaitForChild("CraftBait")
+local CraftRodEvent = Events:WaitForChild("CraftRod")
+local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
+
+local Config = {
+    AutoCast = false,
+    AutoReel = false,
+    AutoSkill = false,
+    SkillOrder = {"Z", "X", "C", "V"},
+    AutoSell = false,
+    SellDelay = 1,
+    SelectedBuyBait = "",
+    BuyBaitAmount = 1,
+    AutoBuyBait = false,
+    SelectedBait = "",
+    BaitAmount = 1,
+    AutoCraftBait = false,
+    SelectedRod = "",
+    AutoCraftRod = false,
+    ESPEnabled = false,
+    LoopSpeedEnabled = false,
+    WalkSpeed = 30,
+    NoclipEnabled = false,
+    InfJumpEnabled = false,
+    FlyEnabled = false,
+    FlySpeed = 2
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+if type(Config.SkillOrder) ~= "table" then
+    Config.SkillOrder = {"Z", "X", "C", "V"}
+end
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, false, game, 1)
+    end)
+end)
+
+if getconnections then
+    for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+        if conn.Disable then
+            conn:Disable()
+        elseif conn.Disconnect then
+            conn:Disconnect()
+        end
+    end
+end
+
+local cachedChar = LocalPlayer.Character
+local cachedHum = cachedChar and cachedChar:FindFirstChildOfClass("Humanoid")
+local cachedHrp = cachedChar and cachedChar:FindFirstChild("HumanoidRootPart")
+
+local MainGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("MainGui")
+local FishingGui = MainGui:WaitForChild("Fishing")
+local BarFrame = FishingGui:WaitForChild("BarFrame")
+local FishingBar = BarFrame:WaitForChild("Bar")
+local SkillBtnFrame = FishingGui:WaitForChild("SkillButton"):WaitForChild("Frame")
+
+local function RefreshGuiCache()
+    if not MainGui or not MainGui.Parent then
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        MainGui = pg and pg:FindFirstChild("MainGui")
+        FishingGui = MainGui and MainGui:FindFirstChild("Fishing")
+        BarFrame = FishingGui and FishingGui:FindFirstChild("BarFrame")
+        FishingBar = BarFrame and BarFrame:FindFirstChild("Bar")
+        local sb = FishingGui and FishingGui:FindFirstChild("SkillButton")
+        SkillBtnFrame = sb and sb:FindFirstChild("Frame")
+    end
+end
+
+local _noclipThrottle = 0
+RunService.Stepped:Connect(function(_, dt)
+    if not Config.NoclipEnabled and not Config.LoopSpeedEnabled then return end
+    _noclipThrottle = _noclipThrottle + dt
+    if _noclipThrottle < 0.05 then return end
+    _noclipThrottle = 0
+
+    local char = cachedChar
+    if not char or not char.Parent then return end
+
+    if Config.NoclipEnabled then
+        for _, part in ipairs(char:GetChildren()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end
+
+    if Config.LoopSpeedEnabled and cachedHum and cachedHum.WalkSpeed ~= Config.WalkSpeed then
+        cachedHum.WalkSpeed = Config.WalkSpeed
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfJumpEnabled and cachedHum then
+        cachedHum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+local flyConnection = nil
+local jumpStateConnection = nil
+
+local function startFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+    if not hrp or not humanoid then return end
+
+    humanoid.PlatformStand = true
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 1e7
+    bg.D = 12000
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    jumpStateConnection = humanoid.StateChanged:Connect(function(_, new)
+        if new == Enum.HumanoidStateType.Jumping or new == Enum.HumanoidStateType.Freefall then
+            humanoid.PlatformStand = true
+        end
+    end)
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        local cam = workspace.CurrentCamera
+        local move = Vector3.zero
+        local md = humanoid.MoveDirection
+
+        if md.Magnitude > 0 then
+            local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+            local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+
+            if flatLook.Magnitude > 0.01 and flatRight.Magnitude > 0.01 then
+                local fwdAmt = md:Dot(flatLook.Unit)
+                local rightAmt = md:Dot(flatRight.Unit)
+
+                move += cam.CFrame.LookVector * fwdAmt
+                move += cam.CFrame.RightVector * rightAmt
+            end
+        end
+
+        if move.Magnitude > 0 then move = move.Unit end
+        bv.Velocity = move * Config.FlySpeed * 50
+        local look = cam.CFrame.LookVector
+        bg.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + look, Vector3.new(0, 1, 0))
+    end)
+end
+
+local function stopFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+    if humanoid then humanoid.PlatformStand = false end
+    if jumpStateConnection then
+        jumpStateConnection:Disconnect()
+        jumpStateConnection = nil
+    end
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    if hrp then
+        for _, v in pairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") or v:IsA("BodyGyro") then
+                v:Destroy()
+            end
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    cachedChar = newChar
+    cachedHum = newChar:WaitForChild("Humanoid", 5)
+    cachedHrp = newChar:WaitForChild("HumanoidRootPart", 5)
+    task.wait(0.3)
+    if Config.FlyEnabled then
+        startFly()
+    end
+end)
+
+local minigameOpenTick = 0
+local wasMinigameVisible = false
+
+local function IsGameAllowingSkill(char)
+    RefreshGuiCache()
+    if not FishingGui or not FishingGui.Visible then
+        wasMinigameVisible = false
+        return false
+    end
+
+    if not wasMinigameVisible then
+        wasMinigameVisible = true
+        minigameOpenTick = os.clock()
+    end
+
+    local rhythm = FishingGui:FindFirstChild("Rhythm")
+    if rhythm and rhythm.Visible then
+        return false
+    end
+
+    if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") or char:GetAttribute("Phase2") then
+        return false
+    end
+
+    local stats = char:FindFirstChild("Stats")
+    if stats and stats:FindFirstChild("Stun") and stats.Stun.Value == true then
+        return false
+    end
+
+    local fishId = LocalPlayer:GetAttribute("FishID")
+    local fishesFolder = workspace:FindFirstChild("Fishes")
+    local fishObj = (fishId and fishesFolder) and fishesFolder:FindFirstChild(fishId) or nil
+    if fishObj then
+        local readyVal = fishObj:FindFirstChild("Ready")
+        if readyVal then
+            if readyVal.Value ~= true then
+                return false
+            end
+        elseif os.clock() - minigameOpenTick < 3.1 then
+            return false
+        end
+        if fishObj:GetAttribute("FinalPhase") == true or fishObj:GetAttribute("PreFinalPhase") == true then
+            return false
+        end
+    elseif os.clock() - minigameOpenTick < 3.1 then
+        return false
+    end
+
+    if SkillBtnFrame then
+        for _, btn in ipairs(SkillBtnFrame:GetChildren()) do
+            if btn:IsA("TextButton") and btn.Visible then
+                local cd = btn:FindFirstChild("CD")
+                if cd and cd.Visible and cd.Text == "" then
+                    return false
+                end
+            end
+        end
+    end
+
+    local skillsFolder = char:FindFirstChild("Skills")
+    if skillsFolder then
+        for _, s in ipairs(skillsFolder:GetChildren()) do
+            if s:IsA("NumberValue") and (s:GetAttribute("UsingSkill") or 0) > 0 then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+local function IsSkillKeyReady(char, key)
+    if not SkillBtnFrame then return false end
+    local btn = SkillBtnFrame:FindFirstChild(key)
+    if not btn or not btn.Visible then
+        return false
+    end
+    local lock = btn:FindFirstChild("Lock")
+    if lock and lock.Visible then
+        return false
+    end
+    local cd = btn:FindFirstChild("CD")
+    if cd and cd.Visible then
+        return false
+    end
+    local skillsFolder = char:FindFirstChild("Skills")
+    if skillsFolder then
+        for _, s in ipairs(skillsFolder:GetChildren()) do
+            if s:IsA("NumberValue") and s:GetAttribute("Key") == key then
+                if s.Value > 0 or (s:GetAttribute("UsingSkill") or 0) > 0 then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Config.AutoReel then return end
+    if FishingGui and FishingGui.Visible and FishingBar then
+        if math.abs(FishingBar.Position.X.Scale - 0.5) > 0.005 then
+            FishingBar:TweenPosition(UDim2.new(0.5, 0, 0.5, 0), Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
+            FishingBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+        end
+    end
+end)
+
+task.spawn(function()
+    local lastCastTry = 0
+    local lastSkillTry = 0
+    while task.wait(0.1) do
+        local now = os.clock()
+        RefreshGuiCache()
+        local isMinigame = FishingGui and FishingGui.Visible or false
+
+        if Config.AutoReel and isMinigame then
+            pcall(function()
+                UpdateFishProgression:FireServer()
+            end)
+        end
+
+        if Config.AutoSkill and isMinigame and (now - lastSkillTry >= 0.45) then
+            local char = cachedChar
+            if char and IsGameAllowingSkill(char) then
+                for _, key in ipairs(Config.SkillOrder) do
+                    if IsSkillKeyReady(char, key) then
+                        lastSkillTry = os.clock()
+                        pcall(function()
+                            UseSkill:FireServer(key)
+                        end)
+                        break
+                    end
+                end
+            end
+        end
+
+        if Config.AutoCast and not isMinigame and (now - lastCastTry >= 0.6) then
+            local char = cachedChar
+            if char then
+                if char:GetAttribute("Type") ~= "Fishing Rod" then
+                    lastCastTry = now
+                    pcall(function()
+                        ToggleHotbar:InvokeServer("1")
+                    end)
+                elseif not char:GetAttribute("Fishing") then
+                    local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        lastCastTry = now + 0.9
+                        pcall(function()
+                            FishingEvent:FireServer(hrp.CFrame)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
+    if Config.AutoReel and remote then
+        task.wait(0.05)
+        pcall(function()
+            remote:FireServer("Perfect")
+        end)
+    end
+end)
+
+Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
+    if Config.AutoReel and remote then
+        task.wait(0.05)
+        pcall(function()
+            remote:FireServer()
+        end)
+    end
+end)
+
+local function clearPlayerESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head then
+                local esp = head:FindFirstChild("StarCrowESP")
+                if esp then esp:Destroy() end
+            end
+        end
+    end
+end
+
+local function updateESP()
+    if not Config.ESPEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
+                local hum = char.Humanoid
+                local head = char.Head
+                local esp = head:FindFirstChild("StarCrowESP")
+
+                if hum.Health > 0 then
+                    if not esp then
+                        esp = Instance.new("BillboardGui")
+                        esp.Name = "StarCrowESP"
+                        esp.Adornee = head
+                        esp.Size = UDim2.new(0, 200, 0, 25)
+                        esp.StudsOffset = Vector3.new(0, 2.5, 0)
+                        esp.AlwaysOnTop = true
+                        esp.MaxDistance = math.huge
+                        local text = Instance.new("TextLabel")
+                        text.Name = "NameText"
+                        text.Parent = esp
+                        text.Size = UDim2.new(1, 0, 1, 0)
+                        text.BackgroundTransparency = 1
+                        text.TextScaled = false
+                        text.TextSize = 13
+                        text.Font = Enum.Font.GothamBold
+                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        text.TextStrokeTransparency = 0
+                        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                        text.TextXAlignment = Enum.TextXAlignment.Center
+                        esp.Parent = head
+                    end
+                    esp.NameText.Text = player.DisplayName
+                else
+                    if esp then esp:Destroy() end
+                end
+            end
+        end
+    end
+end
+
+local _espThrottle = 0
+RunService.RenderStepped:Connect(function(dt)
+    if not Config.ESPEnabled then return end
+    _espThrottle = _espThrottle + dt
+    if _espThrottle < 0.05 then return end
+    _espThrottle = 0
+    updateESP()
+end)
+
+local lastSellTime = 0
+
+local function DoBuyBait(baitName, amount)
+    if not baitName or baitName == "" then return end
+    local amt = math.max(1, math.floor(tonumber(amount) or 1))
+    local buyEvent = Events:FindFirstChild("BuyBait") or Events:FindFirstChild("Bait") or Events:FindFirstChild("PurchaseBait") or Events:FindFirstChild("BaitShop") or Events:FindFirstChild("BuyItem")
+    pcall(function()
+        if buyEvent then
+            if buyEvent:IsA("RemoteEvent") then
+                buyEvent:FireServer(baitName, amt)
+            elseif buyEvent:IsA("RemoteFunction") then
+                buyEvent:InvokeServer(baitName, amt)
+            end
+        else
+            CraftBaitEvent:FireServer(baitName, amt)
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.8) do
+        if Config.AutoSell then
+            local delaySec = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60
+            local now = os.clock()
+            if now - lastSellTime >= delaySec then
+                lastSellTime = now
+                pcall(function()
+                    SellFish:FireServer("All")
+                end)
+            end
+        end
+        if Config.AutoBuyBait and Config.SelectedBuyBait ~= "" then
+            DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
+        end
+        if Config.AutoCraftBait and Config.SelectedBait ~= "" then
+            pcall(function()
+                CraftBaitEvent:FireServer(Config.SelectedBait, math.max(1, math.floor(tonumber(Config.BaitAmount) or 1)))
+            end)
+        end
+        if Config.AutoCraftRod and Config.SelectedRod ~= "" then
+            pcall(function()
+                CraftRodEvent:FireServer(Config.SelectedRod)
+            end)
+        end
+    end
+end)
+
+local function GetBuyableBaits()
+    local list = {}
+    local seen = {}
+    local baitFolder = Info:FindFirstChild("Bait")
+    if baitFolder then
+        for _, child in pairs(baitFolder:GetChildren()) do
+            local ok, data = pcall(require, child)
+            if ok and type(data) == "table" and not data.Ingredient then
+                seen[child.Name] = true
+                table.insert(list, child.Name)
+            end
+        end
+    end
+    local invFolder = Info:FindFirstChild("Inventory")
+    if invFolder then
+        for _, child in pairs(invFolder:GetChildren()) do
+            if not seen[child.Name] then
+                local ok, data = pcall(require, child)
+                if ok and type(data) == "table" and data.Type == "Bait" and not data.Ingredient then
+                    seen[child.Name] = true
+                    table.insert(list, child.Name)
+                end
+            end
+        end
+    end
+    local itemFolder = Info:FindFirstChild("Item")
+    if itemFolder then
+        for _, child in pairs(itemFolder:GetChildren()) do
+            if not seen[child.Name] then
+                local ok, data = pcall(require, child)
+                if ok and type(data) == "table" and data.Type == "Bait" and not data.Ingredient then
+                    seen[child.Name] = true
+                    table.insert(list, child.Name)
+                end
+            end
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+local function GetCraftableBaits()
+    local list = {}
+    local baitFolder = Info:FindFirstChild("Bait")
+    if baitFolder then
+        for _, child in pairs(baitFolder:GetChildren()) do
+            local ok, data = pcall(require, child)
+            if ok and type(data) == "table" and data.Ingredient then
+                table.insert(list, child.Name)
+            end
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+local function GetCraftableRods()
+    local list = {}
+    local invFolder = Info:FindFirstChild("Inventory")
+    if invFolder then
+        for _, child in pairs(invFolder:GetChildren()) do
+            local ok, data = pcall(require, child)
+            if ok and type(data) == "table" and data.Ingredient and data.Type == "Fishing Rod" then
+                table.insert(list, child.Name)
+            end
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+local KnownCodes = {
+    "SeeYouSoon",
+    "BUGTrait",
+    "65KLikes",
+    "60KLikes",
+    "50KLikes",
+    "80KLikes",
+    "41MVisits",
+    "40MVisits",
+    "39MVisits",
+    "38MVisits",
+    "37MVisits",
+    "55MVisits",
+    "55MVistits",
+    "PVP",
+    "19KActives",
+    "AXO",
+    "Welcome",
+    "VermilionBird"
+}
+
+local function RedeemAllCodes()
+    task.spawn(function()
+        local codeSet = {}
+        for _, c in ipairs(KnownCodes) do
+            codeSet[c] = true
+        end
+        local function scanContainer(container)
+            if not container then return end
+            if container:IsA("ModuleScript") then
+                local ok, data = pcall(require, container)
+                if ok and type(data) == "table" then
+                    for k, v in pairs(data) do
+                        if type(k) == "string" then codeSet[k] = true end
+                        if type(v) == "string" then codeSet[v] = true end
+                    end
+                end
+            end
+            for _, child in ipairs(container:GetChildren()) do
+                codeSet[child.Name] = true
+                if child:IsA("StringValue") and child.Value ~= "" then
+                    codeSet[child.Value] = true
+                end
+            end
+        end
+        scanContainer(Info:FindFirstChild("Code"))
+        scanContainer(Info:FindFirstChild("Codes"))
+        scanContainer(PlayerData:FindFirstChild("Code"))
+        scanContainer(PlayerData:FindFirstChild("Codes"))
+
+        for code in pairs(codeSet) do
+            pcall(function()
+                RedeemCodeEvent:FireServer(code)
+            end)
+            task.wait(0.15)
+        end
+    end)
+end
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+do
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            dragInput = nil
+        end
+    end)
+end
+
+local uiVisible = true
+local minimizeKey = Enum.KeyCode.LeftControl
+local lastToggleTime = 0
+local cachedMainHubFrame = nil
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
+    uiVisible = not uiVisible
+    if cachedMainHubFrame and cachedMainHubFrame.Parent then
+        cachedMainHubFrame.Visible = uiVisible
+        return
+    end
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and (desc.Text == "StarCrowHub" or desc.Text:find("StarCrow")) then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do p = p.Parent end
+                    if p and p:IsA("Frame") then
+                        cachedMainHubFrame = p
+                        p.Visible = uiVisible
+                        return
+                    end
+                end
+            end
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if UserInputService:GetFocusedTextBox() then return end
+    if not processed and input.KeyCode == minimizeKey then
+        uiVisible = not uiVisible
+    end
+end)
+
+local clickStartPos = Vector2.new()
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+end)
+LogoBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+        if dist < 10 then
+            toggleUI()
+        end
+    end
+end)
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrowHub",
+    SubTitle = " | Heavyweigh Fishing",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = "Amethyst",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Shop = Window:AddTab({ Title = "Shop", Icon = "shopping-cart" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "layers" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+Tabs.Main:AddSection("Fishing")
+
+Tabs.Main:AddToggle("AutoCastToggle", {
+    Title = "Auto Cast",
+    Default = Config.AutoCast,
+    Callback = function(Value)
+        Config.AutoCast = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoReelToggle", {
+    Title = "Auto Reel",
+    Default = Config.AutoReel,
+    Callback = function(Value)
+        Config.AutoReel = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Skill")
+
+Tabs.Main:AddToggle("AutoSkillToggle", {
+    Title = "Auto Skill",
+    Default = Config.AutoSkill,
+    Callback = function(Value)
+        Config.AutoSkill = Value
+        SaveConfig()
+    end
+})
+
+local allSkillKeys = {"Z", "X", "C", "V"}
+local SkillDropdown = Tabs.Main:AddDropdown("SelectSkillDropdown", {
+    Title = "Select Skill",
+    Values = allSkillKeys,
+    Default = Config.SkillOrder,
+    Multi = true
+})
+
+local origSkillDisplay = SkillDropdown.Display
+if origSkillDisplay then
+    SkillDropdown.Display = function(self, ...)
+        local savedValues = self.Values
+        self.Values = Config.SkillOrder
+        local res = origSkillDisplay(self, ...)
+        self.Values = savedValues
+        return res
+    end
+end
+
+SkillDropdown:OnChanged(function(Value)
+    if type(Value) ~= "table" then return end
+    for i = #Config.SkillOrder, 1, -1 do
+        local k = Config.SkillOrder[i]
+        if not Value[k] then
+            table.remove(Config.SkillOrder, i)
+        end
+    end
+    for _, k in ipairs(allSkillKeys) do
+        if Value[k] and not table.find(Config.SkillOrder, k) then
+            table.insert(Config.SkillOrder, k)
+        end
+    end
+    if SkillDropdown.Display then
+        SkillDropdown:Display()
+    end
+    SaveConfig()
+end)
+
+if SkillDropdown.Display then
+    SkillDropdown:Display()
+end
+
+Tabs.Player:AddSection("Movement")
+
+Tabs.Player:AddToggle("LoopSpeedToggle", {
+    Title = "Walk Speed",
+    Default = Config.LoopSpeedEnabled,
+    Callback = function(Value)
+        Config.LoopSpeedEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("WalkSpeedSlider", {
+    Title = "Speed",
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 250,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("FlyToggle", {
+    Title = "Fly",
+    Default = Config.FlyEnabled,
+    Callback = function(Value)
+        Config.FlyEnabled = Value
+        SaveConfig()
+        if Value then
+            startFly()
+        else
+            stopFly()
+        end
+    end
+})
+
+Tabs.Player:AddSlider("FlySpeedSlider", {
+    Title = "Fly Speed",
+    Default = Config.FlySpeed,
+    Min = 1,
+    Max = 20,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.FlySpeed = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Default = Config.NoclipEnabled,
+    Callback = function(Value)
+        Config.NoclipEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJumpToggle", {
+    Title = "Infinite Jump",
+    Default = Config.InfJumpEnabled,
+    Callback = function(Value)
+        Config.InfJumpEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddSection("Selling")
+
+Tabs.Shop:AddToggle("AutoSellToggle", {
+    Title = "Auto Sell All",
+    Default = Config.AutoSell,
+    Callback = function(Value)
+        Config.AutoSell = Value
+        if not Value then
+            lastSellTime = 0
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddSlider("AutoSellDelaySlider", {
+    Title = "Sell Delay",
+    Default = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10),
+    Min = 1,
+    Max = 10,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.SellDelay = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddButton({
+    Title = "Sell All Fish",
+    Callback = function()
+        SellFish:FireServer("All")
+    end
+})
+
+Tabs.Shop:AddButton({
+    Title = "Sell One Fish",
+    Callback = function()
+        SellFish:FireServer("One")
+    end
+})
+
+Tabs.Shop:AddSection("Buy Bait")
+
+local buyBaitList = GetBuyableBaits()
+if Config.SelectedBuyBait == "" and #buyBaitList > 0 then
+    Config.SelectedBuyBait = buyBaitList[1]
+end
+
+Tabs.Shop:AddDropdown("SelectBuyBaitDropdown", {
+    Title = "Select Bait",
+    Values = buyBaitList,
+    Default = Config.SelectedBuyBait ~= "" and Config.SelectedBuyBait or buyBaitList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedBuyBait = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddInput("BuyBaitAmountInput", {
+    Title = "Buy Amount",
+    Default = tostring(Config.BuyBaitAmount or 1),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "1",
+    Callback = function(Value)
+        Config.BuyBaitAmount = math.max(1, math.floor(tonumber(Value) or 1))
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddToggle("AutoBuyBaitToggle", {
+    Title = "Auto Buy Bait",
+    Default = Config.AutoBuyBait,
+    Callback = function(Value)
+        Config.AutoBuyBait = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddButton({
+    Title = "Buy Bait",
+    Callback = function()
+        DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
+    end
+})
+
+Tabs.Shop:AddSection("Craft Bait")
+
+local baitList = GetCraftableBaits()
+if Config.SelectedBait == "" and #baitList > 0 then
+    Config.SelectedBait = baitList[1]
+end
+
+Tabs.Shop:AddDropdown("SelectBaitDropdown", {
+    Title = "Select Bait",
+    Values = baitList,
+    Default = Config.SelectedBait ~= "" and Config.SelectedBait or baitList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedBait = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddInput("BaitAmountInput", {
+    Title = "Craft Amount",
+    Default = tostring(Config.BaitAmount or 1),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "1",
+    Callback = function(Value)
+        Config.BaitAmount = math.max(1, math.floor(tonumber(Value) or 1))
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddToggle("AutoCraftBaitToggle", {
+    Title = "Auto Craft Bait",
+    Default = Config.AutoCraftBait,
+    Callback = function(Value)
+        Config.AutoCraftBait = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddButton({
+    Title = "Craft Bait",
+    Callback = function()
+        if Config.SelectedBait ~= "" then
+            CraftBaitEvent:FireServer(Config.SelectedBait, math.max(1, math.floor(tonumber(Config.BaitAmount) or 1)))
+        end
+    end
+})
+
+Tabs.Shop:AddSection("Craft Rod")
+
+local rodList = GetCraftableRods()
+if Config.SelectedRod == "" and #rodList > 0 then
+    Config.SelectedRod = rodList[1]
+end
+
+Tabs.Shop:AddDropdown("SelectRodDropdown", {
+    Title = "Select Rod",
+    Values = rodList,
+    Default = Config.SelectedRod ~= "" and Config.SelectedRod or rodList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedRod = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddToggle("AutoCraftRodToggle", {
+    Title = "Auto Craft Rod",
+    Default = Config.AutoCraftRod,
+    Callback = function(Value)
+        Config.AutoCraftRod = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddButton({
+    Title = "Craft Rod",
+    Callback = function()
+        if Config.SelectedRod ~= "" then
+            CraftRodEvent:FireServer(Config.SelectedRod)
+        end
+    end
+})
+
+Tabs.ESP:AddToggle("ESPPlayers", {
+    Title = "ESP Players",
+    Default = Config.ESPEnabled,
+    Callback = function(Value)
+        Config.ESPEnabled = Value
+        SaveConfig()
+        if not Value then
+            clearPlayerESP()
+        end
+    end
+})
+
+Tabs.Misc:AddSection("Codes")
+
+Tabs.Misc:AddButton({
+    Title = "Redeem All Codes",
+    Callback = function()
+        RedeemAllCodes()
+    end
+})
+
+Tabs.Settings:AddSection("Keybinds")
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
+        minimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+    end
+})
+
+Window:SelectTab(1)
 
