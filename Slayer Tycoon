@@ -1222,7 +1222,7 @@ local function attackTargetContinuous(targetInstance)
     local targetChar = targetInstance:FindFirstAncestorOfClass("Model")
     if not targetChar then return end
     local hum = targetChar:FindFirstChildOfClass("Humanoid")
-    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Head") or targetChar:FindFirstChildWhichIsA("BasePart")
+    local hrp = targetChar:FindFirstChild("Head") or targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChildWhichIsA("BasePart")
     if not hum or not hrp then return end
 
     task.spawn(function()
@@ -1556,8 +1556,13 @@ local function collectDrop(dropPart, prompt)
     myHRP.AssemblyAngularVelocity = Vector3.zero
     myHRP.CFrame = dropPart.CFrame
 
-    if prompt and fireproximityprompt then
-        pcall(function() fireproximityprompt(prompt) end)
+    if prompt then
+        prompt.HoldDuration = 0
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = math.huge
+        if fireproximityprompt then
+            pcall(function() fireproximityprompt(prompt) end)
+        end
     end
     if firetouchinterest then
         pcall(function()
@@ -1568,8 +1573,13 @@ local function collectDrop(dropPart, prompt)
 
     local startWait = tick()
     while dropPart and dropPart.Parent and tick() - startWait < 0.25 do
-        if prompt and fireproximityprompt then
-            pcall(function() fireproximityprompt(prompt) end)
+        if prompt then
+            prompt.HoldDuration = 0
+            prompt.RequiresLineOfSight = false
+            prompt.MaxActivationDistance = math.huge
+            if fireproximityprompt then
+                pcall(function() fireproximityprompt(prompt) end)
+            end
         end
         task.wait(0.03)
     end
@@ -1621,15 +1631,15 @@ end
 
 local function getNearKillPos()
     if currentFarmMob and currentFarmMob.Parent then
-        local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
+        local hrp = currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
         if hrp then return hrp.Position end
     end
     if currentFarmBoss and currentFarmBoss.Parent then
-        local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
+        local hrp = currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
         if hrp then return hrp.Position end
     end
     if currentKillPlayer and currentKillPlayer.Parent and currentKillPlayer.Character then
-        local hrp = currentKillPlayer.Character:FindFirstChild("HumanoidRootPart") or currentKillPlayer.Character:FindFirstChild("Head") or currentKillPlayer.Character:FindFirstChildWhichIsA("BasePart")
+        local hrp = currentKillPlayer.Character:FindFirstChild("Head") or currentKillPlayer.Character:FindFirstChild("HumanoidRootPart") or currentKillPlayer.Character:FindFirstChildWhichIsA("BasePart")
         if hrp then return hrp.Position end
     end
     return lastKillPos
@@ -1637,19 +1647,15 @@ end
 
 local function scanAndCollectDrops()
     if not (Config.AutoKillMobs or Config.AutoKillBosses or Config.AutoKillPlayer or Config.AutoPickupMoney) or isCollectingDrops then return end
-    local killPos = getNearKillPos()
     for _, desc in ipairs(workspace:GetDescendants()) do
         if not (Config.AutoKillMobs or Config.AutoKillBosses or Config.AutoKillPlayer or Config.AutoPickupMoney) then break end
         if desc:IsA("ProximityPrompt") then
             local action = desc.ActionText and desc.ActionText:lower() or ""
             local obj = desc.ObjectText and desc.ObjectText:lower() or ""
             local pName = desc.Parent and desc.Parent.Name:lower() or ""
-            if action:find("pick up") or action:find("take") or obj:find("money") or pName:find("money") or pName:find("bag") or pName:find("drop") then
+            if action:find("pick up") or action:find("take") or action:find("collect") or obj:find("money") or obj:find("cash") or pName:find("money") or pName:find("cash") or pName:find("bag") or pName:find("drop") then
                 local part = desc.Parent
                 if part and part:IsA("BasePart") then
-                    if not Config.AutoPickupMoney and killPos and (part.Position - killPos).Magnitude > 30 then
-                        continue
-                    end
                     isCollectingDrops = true
                     collectDrop(part, desc)
                     isCollectingDrops = false
@@ -1709,7 +1715,7 @@ task.spawn(function()
                     local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
                     local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
                     local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
-                    local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
+                    local hrp = currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
 
                     if handle and hrp and firetouchinterest then
                         lastKillPos = hrp.Position
@@ -1768,7 +1774,7 @@ task.spawn(function()
                     local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
                     local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
                     local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
-                    local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
+                    local hrp = currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
 
                     if handle and hrp and firetouchinterest then
                         lastKillPos = hrp.Position
@@ -1868,7 +1874,7 @@ task.spawn(function()
                 local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
                 local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
                 local tChar = currentKillPlayer.Character
-                local hrp = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Head") or tChar:FindFirstChildWhichIsA("BasePart"))
+                local hrp = tChar and (tChar:FindFirstChild("Head") or tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChildWhichIsA("BasePart"))
 
                 if handle and hrp and firetouchinterest then
                     lastKillPos = hrp.Position
@@ -2417,85 +2423,143 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-local function expandHeadbox(character, size, color)
-    local head = character and character:FindFirstChild("Head")
-    if not head then return end
+local processedChars = {}
 
-    if head.Size ~= size then
-        if not head:GetAttribute("StarCrowOrigHeadSize") then
-            head:SetAttribute("StarCrowOrigHeadSize", head.Size)
-            head:SetAttribute("StarCrowOrigHeadTrans", head.Transparency)
-            head:SetAttribute("StarCrowOrigHeadMat", head.Material.Name)
-            head:SetAttribute("StarCrowOrigHeadColor", head.Color)
-        end
-        head.Size = size
-        head.Transparency = 0.5
-        head.Material = Enum.Material.Neon
-        head.Color = color
-        head.CanCollide = false
-        head.Massless = true
-    end
-
-    local sb = head:FindFirstChild("StarCrowHitboxOutline")
-    if not sb then
-        sb = Instance.new("SelectionBox")
-        sb.Name = "StarCrowHitboxOutline"
-        sb.Adornee = head
-        sb.LineThickness = 0.05
-        sb.SurfaceTransparency = 0.8
-        sb.Color3 = color
-        sb.Parent = head
-    elseif sb.Color3 ~= color then
-        sb.Color3 = color
-    end
-end
-
-local function restoreHeadbox(character)
+local function removeHeadHitbox(character)
     if not character then return end
-    local head = character:FindFirstChild("Head")
-    if head then
-        local sb = head:FindFirstChild("StarCrowHitboxOutline")
-        if sb then sb:Destroy() end
-        local origSize = head:GetAttribute("StarCrowOrigHeadSize")
-        if origSize then
-            head.Size = origSize
-            head.Transparency = head:GetAttribute("StarCrowOrigHeadTrans") or 0
-            local origMat = head:GetAttribute("StarCrowOrigHeadMat")
-            if origMat then
-                pcall(function() head.Material = Enum.Material[origMat] end)
+    processedChars[character] = nil
+    local oldH = character:FindFirstChild("StarCrowOutline")
+    if oldH then oldH:Destroy() end
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+    local sb = head:FindFirstChild("StarCrowHitboxOutline")
+    if sb then sb:Destroy() end
+    local origSize = head:FindFirstChild("OriginalSize")
+    if origSize then
+        head.Size = origSize.Value
+        origSize:Destroy()
+    end
+    local origColor = head:FindFirstChild("OriginalColor")
+    if origColor then
+        head.Color = origColor.Value
+        origColor:Destroy()
+    end
+    local origTrans = head:FindFirstChild("OriginalTransparency")
+    if origTrans then
+        head.Transparency = origTrans.Value
+        origTrans:Destroy()
+    else
+        head.Transparency = 0
+    end
+    local origMat = head:FindFirstChild("OriginalMaterial")
+    if origMat then
+        pcall(function() head.Material = Enum.Material[origMat.Value] end)
+        origMat:Destroy()
+    else
+        head.Material = Enum.Material.Plastic
+    end
+    local meshBackup = head:FindFirstChild("__MeshBackup")
+    if meshBackup then
+        local realMesh = meshBackup:FindFirstChildOfClass("SpecialMesh") or meshBackup:FindFirstChildOfClass("BlockMesh")
+        if realMesh then
+            realMesh:Clone().Parent = head
+        end
+        meshBackup:Destroy()
+    end
+    for _, d in ipairs(head:GetChildren()) do
+        if d:IsA("Decal") then
+            local orig = d:FindFirstChild("OriginalTransparency")
+            if orig then
+                d.Transparency = orig.Value
+                orig:Destroy()
             else
-                head.Material = Enum.Material.Plastic
+                d.Transparency = 0
             end
-            local origCol = head:GetAttribute("StarCrowOrigHeadColor")
-            if origCol then
-                head.Color = origCol
-            end
-            head:SetAttribute("StarCrowOrigHeadSize", nil)
-            head:SetAttribute("StarCrowOrigHeadTrans", nil)
-            head:SetAttribute("StarCrowOrigHeadMat", nil)
-            head:SetAttribute("StarCrowOrigHeadColor", nil)
-            head.CanCollide = false
-            head.Massless = false
         end
     end
+    head.CanCollide = false
+    head.Massless = false
 end
 
-local function expandPartHitbox(model, size, color)
-    local head = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
-    if not head then return end
-
-    if head.Size ~= size then
-        if not head:GetAttribute("StarCrowOrigHeadSize") then
-            head:SetAttribute("StarCrowOrigHeadSize", head.Size)
-            head:SetAttribute("StarCrowOrigHeadTrans", head.Transparency)
+local function applyHeadHitbox(player, character, size, customColor)
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        if processedChars[character] then
+            removeHeadHitbox(character)
         end
-        head.Size = size
-        head.Transparency = 1
-        head.Material = Enum.Material.Plastic
-        head.CanCollide = false
-        head.Massless = true
+        return
     end
-
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+    local teamColor = customColor or Color3.fromRGB(0, 160, 255)
+    local targetSize = Vector3.new(size, size, size)
+    if not head:FindFirstChild("OriginalSize") then
+        local sv = Instance.new("Vector3Value")
+        sv.Name = "OriginalSize"
+        sv.Value = head.Size
+        sv.Parent = head
+    end
+    if not head:FindFirstChild("OriginalColor") then
+        local cv = Instance.new("Color3Value")
+        cv.Name = "OriginalColor"
+        cv.Value = head.Color
+        cv.Parent = head
+    end
+    if not head:FindFirstChild("OriginalTransparency") then
+        local tv = Instance.new("NumberValue")
+        tv.Name = "OriginalTransparency"
+        tv.Value = head.Transparency
+        tv.Parent = head
+    end
+    if not head:FindFirstChild("OriginalMaterial") then
+        local mv = Instance.new("StringValue")
+        mv.Name = "OriginalMaterial"
+        mv.Value = head.Material.Name
+        mv.Parent = head
+    end
+    local meshBackup = head:FindFirstChild("__MeshBackup")
+    if not meshBackup then
+        local existingMesh = head:FindFirstChildOfClass("SpecialMesh") or head:FindFirstChildOfClass("BlockMesh")
+        if existingMesh then
+            local folder = Instance.new("Folder")
+            folder.Name = "__MeshBackup"
+            folder.Parent = head
+            existingMesh:Clone().Parent = folder
+            existingMesh:Destroy()
+        end
+    else
+        local strayMesh = head:FindFirstChildOfClass("SpecialMesh") or head:FindFirstChildOfClass("BlockMesh")
+        if strayMesh then
+            strayMesh:Destroy()
+        end
+    end
+    if humanoid.Health <= 0 then
+        removeHeadHitbox(character)
+        return
+    end
+    for _, d in ipairs(head:GetChildren()) do
+        if d:IsA("Decal") then
+            if not d:FindFirstChild("OriginalTransparency") then
+                local dv = Instance.new("NumberValue")
+                dv.Name = "OriginalTransparency"
+                dv.Value = d.Transparency
+                dv.Parent = d
+            end
+            d.Transparency = 1
+        end
+    end
+    local needsRefresh =
+        head.Size ~= targetSize
+        or head.Transparency ~= 1
+        or head.CanCollide ~= false
+        or head.Massless ~= true
+    if needsRefresh then
+        head.Massless = true
+        head.Size = targetSize
+        head.CanCollide = false
+        head.Transparency = 1
+    end
     local sb = head:FindFirstChild("StarCrowHitboxOutline")
     if not sb then
         sb = Instance.new("SelectionBox")
@@ -2503,35 +2567,43 @@ local function expandPartHitbox(model, size, color)
         sb.Adornee = head
         sb.LineThickness = 0.05
         sb.SurfaceTransparency = 1
-        sb.Color3 = color
+        sb.Color3 = teamColor
         sb.Parent = head
-    elseif sb.Color3 ~= color then
-        sb.Color3 = color
+    else
+        sb.Adornee = head
+        sb.Color3 = teamColor
+        sb.SurfaceTransparency = 1
+        sb.LineThickness = 0.05
     end
+    local oldH = character:FindFirstChild("StarCrowOutline")
+    if oldH then oldH:Destroy() end
+    if not character:FindFirstChild("__HeadHitboxDeathHook") then
+        local tag = Instance.new("BoolValue")
+        tag.Name = "__HeadHitboxDeathHook"
+        tag.Parent = character
+        humanoid.Died:Connect(function()
+            if character and character.Parent then
+                removeHeadHitbox(character)
+            end
+        end)
+        humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            if humanoid.Health <= 0 then
+                if character and character.Parent then
+                    removeHeadHitbox(character)
+                end
+            end
+        end)
+    end
+    processedChars[character] = true
 end
 
-local function restorePartHitbox(model)
-    if not model then return end
-    local head = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
-    if head then
-        local sb = head:FindFirstChild("StarCrowHitboxOutline")
-        if sb then sb:Destroy() end
-        local origSize = head:GetAttribute("StarCrowOrigHeadSize")
-        if origSize then
-            head.Size = origSize
-            head.Transparency = head:GetAttribute("StarCrowOrigHeadTrans") or 0
-            head:SetAttribute("StarCrowOrigHeadSize", nil)
-            head:SetAttribute("StarCrowOrigHeadTrans", nil)
-            head.CanCollide = false
-            head.Massless = false
-        end
-    end
-end
+local expandHeadbox = applyHeadHitbox
+local restoreHeadbox = removeHeadHitbox
 
 local function restorePlayerHitboxes()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
-            restoreHeadbox(p.Character)
+            removeHeadHitbox(p.Character)
         end
     end
 end
@@ -2541,12 +2613,12 @@ local function restoreMobHitboxes()
     local bossFolder = workspace:FindFirstChild("BossHolder")
     if mobsFolder then
         for _, mob in ipairs(mobsFolder:GetChildren()) do
-            restorePartHitbox(mob)
+            removeHeadHitbox(mob)
         end
     end
     if bossFolder then
         for _, mob in ipairs(bossFolder:GetChildren()) do
-            restorePartHitbox(mob)
+            removeHeadHitbox(mob)
         end
     end
 end
@@ -2555,32 +2627,30 @@ task.spawn(function()
     while task.wait(0.1) do
         if Config.HitboxPlayerEnabled then
             local s = Config.HitboxPlayerSize or 15
-            local pSize = Vector3.new(s, s, s)
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and p.Character then
                     local hum = p.Character:FindFirstChildOfClass("Humanoid")
-                    local head = p.Character:FindFirstChild("Head")
+                    local head = p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
                     if hum and hum.Health > 0 and head then
-                        expandHeadbox(p.Character, pSize, Color3.fromRGB(0, 160, 255))
-                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
-                        restoreHeadbox(p.Character)
+                        applyHeadHitbox(p, p.Character, s, Color3.fromRGB(0, 160, 255))
+                    elseif head and head:FindFirstChild("OriginalSize") then
+                        removeHeadHitbox(p.Character)
                     end
                 end
             end
         end
         if Config.HitboxMobEnabled then
             local s = Config.HitboxMobSize or 15
-            local mSize = Vector3.new(s, s, s)
             local mobsFolder = workspace:FindFirstChild("MobsHolder")
             local bossFolder = workspace:FindFirstChild("BossHolder")
             if mobsFolder then
                 for _, mob in ipairs(mobsFolder:GetChildren()) do
                     local hum = mob:FindFirstChildOfClass("Humanoid")
                     local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
-                    if hum and hum.Health > 0 then
-                        expandPartHitbox(mob, mSize, Color3.fromRGB(255, 60, 60))
-                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
-                        restorePartHitbox(mob)
+                    if hum and hum.Health > 0 and head then
+                        applyHeadHitbox(nil, mob, s, Color3.fromRGB(255, 60, 60))
+                    elseif head and head:FindFirstChild("OriginalSize") then
+                        removeHeadHitbox(mob)
                     end
                 end
             end
@@ -2588,10 +2658,10 @@ task.spawn(function()
                 for _, mob in ipairs(bossFolder:GetChildren()) do
                     local hum = mob:FindFirstChildOfClass("Humanoid")
                     local head = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart")
-                    if hum and hum.Health > 0 then
-                        expandPartHitbox(mob, mSize, Color3.fromRGB(255, 60, 60))
-                    elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
-                        restorePartHitbox(mob)
+                    if hum and hum.Health > 0 and head then
+                        applyHeadHitbox(nil, mob, s, Color3.fromRGB(255, 60, 60))
+                    elseif head and head:FindFirstChild("OriginalSize") then
+                        removeHeadHitbox(mob)
                     end
                 end
             end
@@ -2836,7 +2906,7 @@ local KillSelectPlayerDropdown = Tabs.Combat:AddDropdown("KillSelectPlayer", {
 })
 
 Tabs.Combat:AddToggle("AutoKillPlayerT", {
-    Title = "Kill Player",
+    Title = "Auto Kill Player",
     Default = Config.AutoKillPlayer,
     Callback = function(v)
         Config.AutoKillPlayer = v
