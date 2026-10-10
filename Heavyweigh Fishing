@@ -1656,6 +1656,61 @@ Tabs.Main:AddToggle("AutoReelToggle", {
     end
 })
 
+Tabs.Main:AddSection("Skill")
+
+Tabs.Main:AddToggle("AutoSkillToggle", {
+    Title = "Auto Skill",
+    Default = Config.AutoSkill,
+    Callback = function(Value)
+        Config.AutoSkill = Value
+        SaveConfig()
+    end
+})
+
+local allSkillKeys = {"Z", "X", "C", "V"}
+local SkillDropdown = Tabs.Main:AddDropdown("SelectSkillDropdown", {
+    Title = "Select Skill",
+    Values = allSkillKeys,
+    Default = Config.SkillOrder,
+    Multi = true
+})
+
+local origSkillDisplay = SkillDropdown.Display
+if origSkillDisplay then
+    SkillDropdown.Display = function(self, ...)
+        local savedValues = self.Values
+        self.Values = Config.SkillOrder
+        local res = origSkillDisplay(self, ...)
+        self.Values = savedValues
+        return res
+    end
+end
+
+SkillDropdown:OnChanged(function(Value)
+    if type(Value) ~= "table" then return end
+    for i = #Config.SkillOrder, 1, -1 do
+        local k = Config.SkillOrder[i]
+        if not Value[k] then
+            table.remove(Config.SkillOrder, i)
+        end
+    end
+    for _, k in ipairs(allSkillKeys) do
+        if Value[k] and not table.find(Config.SkillOrder, k) then
+            table.insert(Config.SkillOrder, k)
+        end
+    end
+    if SkillDropdown.Display then
+        SkillDropdown:Display()
+    end
+    SaveConfig()
+end)
+
+if SkillDropdown.Display then
+    SkillDropdown:Display()
+end
+
+Tabs.Main:AddSection("Boss")
+
 local bossModes = {"Normal", "Hard", "Nightmare"}
 if not table.find(bossModes, Config.BossMode) then
     Config.BossMode = "Normal"
@@ -1710,59 +1765,6 @@ Tabs.Main:AddToggle("AntiConfuseToggle", {
         SaveConfig()
     end
 })
-
-Tabs.Main:AddSection("Skill")
-
-Tabs.Main:AddToggle("AutoSkillToggle", {
-    Title = "Auto Skill",
-    Default = Config.AutoSkill,
-    Callback = function(Value)
-        Config.AutoSkill = Value
-        SaveConfig()
-    end
-})
-
-local allSkillKeys = {"Z", "X", "C", "V"}
-local SkillDropdown = Tabs.Main:AddDropdown("SelectSkillDropdown", {
-    Title = "Select Skill",
-    Values = allSkillKeys,
-    Default = Config.SkillOrder,
-    Multi = true
-})
-
-local origSkillDisplay = SkillDropdown.Display
-if origSkillDisplay then
-    SkillDropdown.Display = function(self, ...)
-        local savedValues = self.Values
-        self.Values = Config.SkillOrder
-        local res = origSkillDisplay(self, ...)
-        self.Values = savedValues
-        return res
-    end
-end
-
-SkillDropdown:OnChanged(function(Value)
-    if type(Value) ~= "table" then return end
-    for i = #Config.SkillOrder, 1, -1 do
-        local k = Config.SkillOrder[i]
-        if not Value[k] then
-            table.remove(Config.SkillOrder, i)
-        end
-    end
-    for _, k in ipairs(allSkillKeys) do
-        if Value[k] and not table.find(Config.SkillOrder, k) then
-            table.insert(Config.SkillOrder, k)
-        end
-    end
-    if SkillDropdown.Display then
-        SkillDropdown:Display()
-    end
-    SaveConfig()
-end)
-
-if SkillDropdown.Display then
-    SkillDropdown:Display()
-end
 
 Tabs.Main:AddSection("Equipment")
 
