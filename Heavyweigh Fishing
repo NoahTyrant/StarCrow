@@ -28,8 +28,7 @@ local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
 local Config = {
     AutoCast = false,
     AutoReel = false,
-    AutoFinalPhase = false,
-    AntiConfuse = false,
+    AutoMiniGame = false,
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
@@ -301,8 +300,12 @@ local function stopFly()
     end
 end
 
+local function IsAntiConfuseActive()
+    return Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
+end
+
 local function ApplyAntiConfuse(char)
-    if not Config.AntiConfuse then return end
+    if not IsAntiConfuseActive() then return end
     if char then
         if char:GetAttribute("Confused") == true then
             pcall(function() char:SetAttribute("Confused", false) end)
@@ -340,16 +343,16 @@ local function BindCharacterAntiConfuse(char)
     table.clear(antiConfuseConns)
     if not char then return end
     table.insert(antiConfuseConns, char:GetAttributeChangedSignal("Confused"):Connect(function()
-        if Config.AntiConfuse and char:GetAttribute("Confused") == true then
+        if IsAntiConfuseActive() and char:GetAttribute("Confused") == true then
             ApplyAntiConfuse(char)
         end
     end))
     table.insert(antiConfuseConns, char:GetAttributeChangedSignal("SkillLocked"):Connect(function()
-        if Config.AntiConfuse and char:GetAttribute("SkillLocked") == true then
+        if IsAntiConfuseActive() and char:GetAttribute("SkillLocked") == true then
             ApplyAntiConfuse(char)
         end
     end))
-    if Config.AntiConfuse then
+    if IsAntiConfuseActive() then
         ApplyAntiConfuse(char)
     end
 end
@@ -393,7 +396,7 @@ local function IsGameAllowingSkill(char)
         return false
     end
 
-    if not Config.AntiConfuse then
+    if not IsAntiConfuseActive() then
         if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") then
             return false
         end
@@ -455,7 +458,7 @@ local function IsSkillKeyReady(char, key)
     end
     local lock = btn:FindFirstChild("Lock")
     if lock and lock.Visible then
-        if Config.AntiConfuse then
+        if IsAntiConfuseActive() then
             lock.Visible = false
         else
             return false
@@ -517,7 +520,7 @@ RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
 
     local activeReel = Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss
-    local activeFinal = Config.AutoFinalPhase or Config.AutoBoss or Config.AutoSecretBoss
+    local activeFinal = Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
 
     if activeReel and FishingBar then
         if math.abs(FishingBar.Position.X.Scale - 0.5) > 0.005 then
@@ -739,7 +742,35 @@ local function GetBossRequirementSummary(bossFrame, bossName)
     return missing
 end
 
+local bossSummoned = false
+local bossSummonTick = 0
+
+local function CloseBossMenuFrame(bossFrame)
+    if not bossFrame or not bossFrame.Visible then return end
+    local closed = false
+    for _, desc in ipairs(bossFrame:GetDescendants()) do
+        if desc:IsA("GuiButton") and desc.Visible then
+            local bName = string.lower(desc.Name)
+            local bTxt = string.lower(GetButtonLabelText(desc))
+            local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
+            if bName == "close" or bTxt == "x" or pName == "close" then
+                if TriggerGuiButton(desc) then
+                    closed = true
+                    break
+                end
+            end
+        end
+    end
+    if not closed then
+        pcall(function()
+            bossFrame.Visible = false
+        end)
+    end
+end
+
 local function CheckBossStatusOnToggle(wantSecret)
+    bossSummoned = false
+    bossSummonTick = 0
     local title = wantSecret and "Auto Secret Boss" or "Auto Boss"
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
     if not rodVal or rodVal.Value == "" then
@@ -826,6 +857,9 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
     scanStartButton()
 
     if inProgress then
+        bossSummoned = true
+        bossSummonTick = os.clock()
+        CloseBossMenuFrame(bossFrame)
         NotifyBoss(
             notifyTitle,
             "Requirements met! Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "] is In Progress!",
@@ -857,6 +891,9 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
     scanStartButton()
 
     if inProgress or (FishingGui and FishingGui.Visible) then
+        bossSummoned = true
+        bossSummonTick = os.clock()
+        CloseBossMenuFrame(bossFrame)
         NotifyBoss(
             notifyTitle,
             "Success! Started Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "]!",
@@ -887,6 +924,8 @@ do
             if charModel == LocalPlayer.Character then
                 lastCaughtBossTick = os.clock()
                 lastCaughtFishName = tostring(fishName or "")
+                bossSummoned = false
+                bossSummonTick = 0
                 if Config.AutoBoss or Config.AutoSecretBoss then
                     local notifyTitle = Config.AutoSecretBoss and "Auto Secret Boss" or "Auto Boss"
                     NotifyBoss(
@@ -933,6 +972,7 @@ local function MonitorBossMinigame()
         local lastFinalHp = 1
 
         while fishObj.Parent and (FishingGui and FishingGui.Visible) do
+            bossSummonTick = os.clock()
             if hpObj then
                 lastHp = hpObj.Value
             end
@@ -952,6 +992,8 @@ local function MonitorBossMinigame()
         end
 
         task.wait(0.35)
+        bossSummoned = false
+        bossSummonTick = 0
         if os.clock() - lastCaughtBossTick < 2.5 then
             trackingBossFight = false
             return
@@ -987,12 +1029,18 @@ end
 
 local function StepAutoBoss(char, isMinigame)
     if isMinigame then
+        bossSummoned = true
+        bossSummonTick = os.clock()
         MonitorBossMinigame()
         return
     end
     local now = os.clock()
     if now - lastBossActionTick < 0.8 then return end
     lastBossActionTick = now
+
+    if bossSummoned and (now - bossSummonTick > 45) then
+        bossSummoned = false
+    end
 
     local wantSecret = Config.AutoSecretBoss
     local notifyTitle = wantSecret and "Auto Secret Boss" or "Auto Boss"
@@ -1016,56 +1064,64 @@ local function StepAutoBoss(char, isMinigame)
         if dist > 12 then
             hrp.CFrame = bossPart.CFrame * CFrame.new(0, 3, -5)
         end
-
-        local prompt = bossObj and bossObj:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt and fireproximityprompt then
-            pcall(function()
-                fireproximityprompt(prompt)
-            end)
-        end
     end
 
     local bossFrame = FindBossMenuFrame()
-    if bossFrame and bossFrame.Visible then
-        ClickBossModeAndStart(bossFrame, bossName, Config.BossMode, wantSecret)
-    end
 
-    if MainGui then
-        local menu = MainGui:FindFirstChild("Menu")
-        local dialogue = menu and menu:FindFirstChild("Dialogue")
-        if dialogue and dialogue.Visible then
-            local btnFrame = dialogue:FindFirstChild("ButtonFrame")
-            if btnFrame then
-                local chosenBtn = nil
-                local modeLower = string.lower(Config.BossMode or "Normal")
-                for _, btn in ipairs(btnFrame:GetChildren()) do
-                    if btn:IsA("TextButton") and btn.Name ~= "Template" and btn.Visible then
-                        local title = btn:FindFirstChild("Title")
-                        local txt = title and string.lower(title.Text) or ""
-                        if string.find(txt, modeLower) then
-                            chosenBtn = btn
-                            break
-                        elseif not chosenBtn and not string.find(txt, "close") and not string.find(txt, "cancel") and not string.find(txt, "nevermind") and not string.find(txt, "leave") then
-                            chosenBtn = btn
+    if not bossSummoned then
+        if bossPart and hrp then
+            local prompt = bossObj and bossObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                pcall(function()
+                    fireproximityprompt(prompt)
+                end)
+            end
+        end
+
+        if bossFrame and bossFrame.Visible then
+            ClickBossModeAndStart(bossFrame, bossName, Config.BossMode, wantSecret)
+        end
+
+        if MainGui and not bossSummoned then
+            local menu = MainGui:FindFirstChild("Menu")
+            local dialogue = menu and menu:FindFirstChild("Dialogue")
+            if dialogue and dialogue.Visible then
+                local btnFrame = dialogue:FindFirstChild("ButtonFrame")
+                if btnFrame then
+                    local chosenBtn = nil
+                    local modeLower = string.lower(Config.BossMode or "Normal")
+                    for _, btn in ipairs(btnFrame:GetChildren()) do
+                        if btn:IsA("TextButton") and btn.Name ~= "Template" and btn.Visible then
+                            local title = btn:FindFirstChild("Title")
+                            local txt = title and string.lower(title.Text) or ""
+                            if string.find(txt, modeLower) then
+                                chosenBtn = btn
+                                break
+                            elseif not chosenBtn and not string.find(txt, "close") and not string.find(txt, "cancel") and not string.find(txt, "nevermind") and not string.find(txt, "leave") then
+                                chosenBtn = btn
+                            end
                         end
                     end
-                end
-                if chosenBtn then
-                    TriggerGuiButton(chosenBtn)
+                    if chosenBtn then
+                        TriggerGuiButton(chosenBtn)
+                    end
                 end
             end
         end
-    end
-
-    if char then
-        if char:GetAttribute("Type") ~= "Fishing Rod" then
-            pcall(function()
-                ToggleHotbar:InvokeServer("1")
-            end)
-        elseif not char:GetAttribute("Fishing") and hrp then
-            pcall(function()
-                FishingEvent:FireServer(hrp.CFrame)
-            end)
+    else
+        if bossFrame and bossFrame.Visible then
+            CloseBossMenuFrame(bossFrame)
+        end
+        if char then
+            if char:GetAttribute("Type") ~= "Fishing Rod" then
+                pcall(function()
+                    ToggleHotbar:InvokeServer("1")
+                end)
+            elseif not char:GetAttribute("Fishing") and hrp then
+                pcall(function()
+                    FishingEvent:FireServer(hrp.CFrame)
+                end)
+            end
         end
     end
 end
@@ -1535,6 +1591,22 @@ local CanonicalIslandOrder = {
     ["Mystic Reef Isle"] = 13
 }
 
+local CanonicalIslandPower = {
+    ["Beginning Isle"] = 1,
+    ["Bamboo Isle"] = 19,
+    ["Fallout Isle"] = 32,
+    ["Sovereign Isle"] = 39,
+    ["Perch Isle"] = 48,
+    ["Frost Isle"] = 55,
+    ["Coconut Isle"] = 65,
+    ["Amber Isle"] = 75,
+    ["Battlefield Isle"] = 90,
+    ["Mistpeak Isle"] = 100,
+    ["World Angler Isle"] = 100,
+    ["Weather Isle"] = 100,
+    ["Mystic Reef Isle"] = 100
+}
+
 local function GetCanonicalIslandRank(name)
     if CanonicalIslandOrder[name] then
         return CanonicalIslandOrder[name]
@@ -1544,6 +1616,20 @@ local function GetCanonicalIslandRank(name)
         local lk = string.lower(k)
         if lowerName == lk or string.find(lowerName, lk, 1, true) or string.find(lk, lowerName, 1, true) then
             return rank
+        end
+    end
+    return nil
+end
+
+local function GetCanonicalIslandPower(name)
+    if CanonicalIslandPower[name] then
+        return CanonicalIslandPower[name]
+    end
+    local lowerName = string.lower(name)
+    for k, pwr in pairs(CanonicalIslandPower) do
+        local lk = string.lower(k)
+        if lowerName == lk or string.find(lowerName, lk, 1, true) or string.find(lk, lowerName, 1, true) then
+            return pwr
         end
     end
     return nil
@@ -1561,6 +1647,7 @@ local function GetIslandList()
     local startPos = startPart and GetModelPart(startPart) and GetModelPart(startPart).Position or Vector3.zero
 
     local compassOrder = {}
+    local compassPower = {}
     if MainGui then
         local menu = MainGui:FindFirstChild("Menu")
         local compass = menu and menu:FindFirstChild("Compass")
@@ -1577,6 +1664,9 @@ local function GetIslandList()
                                 break
                             end
                         end
+                    end
+                    if powerVal then
+                        compassPower[item.Name] = powerVal
                     end
                     local orderScore = (powerVal or 999) * 1000 + (item.LayoutOrder or 0)
                     compassOrder[item.Name] = orderScore
@@ -1598,10 +1688,12 @@ local function GetIslandList()
             else
                 weight = 1e7 + (part.Position - startPos).Magnitude
             end
+            local pwr = compassPower[child.Name] or GetCanonicalIslandPower(child.Name)
             table.insert(rawIslands, {
                 name = child.Name,
                 part = part,
-                weight = weight
+                weight = weight,
+                power = pwr
             })
         end
     end
@@ -1614,8 +1706,8 @@ local function GetIslandList()
     end)
 
     local list = {}
-    for i, entry in ipairs(rawIslands) do
-        local label = "Island " .. tostring(i)
+    for _, entry in ipairs(rawIslands) do
+        local label = entry.power and (entry.name .. " | " .. tostring(entry.power)) or entry.name
         IslandTargets[label] = entry.part
         IslandTargets[entry.name] = entry.part
         table.insert(list, label)
@@ -2206,20 +2298,11 @@ Tabs.Main:AddToggle("AutoSecretBossToggle", {
     end
 })
 
-Tabs.Main:AddToggle("AutoFinalPhaseToggle", {
-    Title = "Auto Final Phase Boss",
-    Default = Config.AutoFinalPhase,
+Tabs.Main:AddToggle("AutoMiniGameToggle", {
+    Title = "Auto Mini Game",
+    Default = Config.AutoMiniGame,
     Callback = function(Value)
-        Config.AutoFinalPhase = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddToggle("AntiConfuseToggle", {
-    Title = "Anti Confuse",
-    Default = Config.AntiConfuse,
-    Callback = function(Value)
-        Config.AntiConfuse = Value
+        Config.AutoMiniGame = Value
         if Value and LocalPlayer.Character then
             ApplyAntiConfuse(LocalPlayer.Character)
         end
