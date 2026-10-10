@@ -14,6 +14,8 @@ elseif pid == 108567435288296 or pid == 105692919293481 or pid == 10692198272462
     loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Anime%20Ability%20Arena"))()
 elseif pid == 6490016198 then
     loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Slayer%20Tycoon"))()
+elseif pid == 98502499119821 then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Heavyweigh%20Fishing"))()
 elseif pid == 104770044244450 or pid == 118418618261207 then
     lp:Kick("Do not execute in Lobby")
 else
