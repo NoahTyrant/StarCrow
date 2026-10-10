@@ -11,6 +11,28 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
+task.spawn(function()
+    pcall(function()
+        local getconnections = getconnections or get_signal_cons
+        if getconnections then
+            for _, conn in ipairs(getconnections(LocalPlayer.Idled)) do
+                if conn.Disable then
+                    conn:Disable()
+                elseif conn.Disconnect then
+                    conn:Disconnect()
+                end
+            end
+        end
+    end)
+    LocalPlayer.Idled:Connect(function()
+        pcall(function()
+            local vu = game:GetService("VirtualUser")
+            vu:CaptureController()
+            vu:ClickButton2(Vector2.zero)
+        end)
+    end)
+end)
+
 local InvisState = { isInvisible = false }
 local setFloatStrokeActive
 local SC_invisFloatStroke
@@ -2395,6 +2417,69 @@ RunService.Stepped:Connect(function()
     end
 end)
 
+local function expandHeadbox(character, size, color)
+    local head = character and character:FindFirstChild("Head")
+    if not head then return end
+
+    if head.Size ~= size then
+        if not head:GetAttribute("StarCrowOrigHeadSize") then
+            head:SetAttribute("StarCrowOrigHeadSize", head.Size)
+            head:SetAttribute("StarCrowOrigHeadTrans", head.Transparency)
+            head:SetAttribute("StarCrowOrigHeadMat", head.Material.Name)
+            head:SetAttribute("StarCrowOrigHeadColor", head.Color)
+        end
+        head.Size = size
+        head.Transparency = 0.5
+        head.Material = Enum.Material.Neon
+        head.Color = color
+        head.CanCollide = false
+        head.Massless = true
+    end
+
+    local sb = head:FindFirstChild("StarCrowHitboxOutline")
+    if not sb then
+        sb = Instance.new("SelectionBox")
+        sb.Name = "StarCrowHitboxOutline"
+        sb.Adornee = head
+        sb.LineThickness = 0.05
+        sb.SurfaceTransparency = 0.8
+        sb.Color3 = color
+        sb.Parent = head
+    elseif sb.Color3 ~= color then
+        sb.Color3 = color
+    end
+end
+
+local function restoreHeadbox(character)
+    if not character then return end
+    local head = character:FindFirstChild("Head")
+    if head then
+        local sb = head:FindFirstChild("StarCrowHitboxOutline")
+        if sb then sb:Destroy() end
+        local origSize = head:GetAttribute("StarCrowOrigHeadSize")
+        if origSize then
+            head.Size = origSize
+            head.Transparency = head:GetAttribute("StarCrowOrigHeadTrans") or 0
+            local origMat = head:GetAttribute("StarCrowOrigHeadMat")
+            if origMat then
+                pcall(function() head.Material = Enum.Material[origMat] end)
+            else
+                head.Material = Enum.Material.Plastic
+            end
+            local origCol = head:GetAttribute("StarCrowOrigHeadColor")
+            if origCol then
+                head.Color = origCol
+            end
+            head:SetAttribute("StarCrowOrigHeadSize", nil)
+            head:SetAttribute("StarCrowOrigHeadTrans", nil)
+            head:SetAttribute("StarCrowOrigHeadMat", nil)
+            head:SetAttribute("StarCrowOrigHeadColor", nil)
+            head.CanCollide = false
+            head.Massless = false
+        end
+    end
+end
+
 local function expandPartHitbox(model, size, color)
     local head = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
     if not head then return end
@@ -2446,7 +2531,7 @@ end
 local function restorePlayerHitboxes()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
-            restorePartHitbox(p.Character)
+            restoreHeadbox(p.Character)
         end
     end
 end
@@ -2474,11 +2559,11 @@ task.spawn(function()
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and p.Character then
                     local hum = p.Character:FindFirstChildOfClass("Humanoid")
-                    local head = p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
-                    if hum and hum.Health > 0 then
-                        expandPartHitbox(p.Character, pSize, Color3.fromRGB(0, 160, 255))
+                    local head = p.Character:FindFirstChild("Head")
+                    if hum and hum.Health > 0 and head then
+                        expandHeadbox(p.Character, pSize, Color3.fromRGB(0, 160, 255))
                     elseif head and head:GetAttribute("StarCrowOrigHeadSize") then
-                        restorePartHitbox(p.Character)
+                        restoreHeadbox(p.Character)
                     end
                 end
             end
@@ -3192,7 +3277,6 @@ local ToolSelectDropdown = Tabs.Settings:AddDropdown("ToolFloatSelect", {
     end
 })
 
-local lastToolSignature = ""
 local function refreshToolList()
     local tools = {}
     local char = LocalPlayer.Character
@@ -3213,10 +3297,6 @@ local function refreshToolList()
         end
     end
     table.sort(tools)
-    local sig = table.concat(tools, "|")
-    if sig == lastToolSignature then return end
-    lastToolSignature = sig
-    
     ToolSelectDropdown:SetValues(tools)
     if #tools > 0 then
         if not Config.CustomToolName or Config.CustomToolName == "" or not table.find(tools, Config.CustomToolName) then
@@ -3228,31 +3308,12 @@ end
 
 refreshToolList()
 
-local function hookBackpackEvents()
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        bp.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
-        bp.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
+Tabs.Settings:AddButton({
+    Title = "Refresh Tools",
+    Callback = function()
+        refreshToolList()
     end
-end
-hookBackpackEvents()
-LocalPlayer.CharacterAdded:Connect(function(newChar)
-    task.wait(0.5)
-    hookBackpackEvents()
-    refreshToolList()
-    newChar.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
-    newChar.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
-end)
-if LocalPlayer.Character then
-    LocalPlayer.Character.ChildAdded:Connect(function(c) if c:IsA("Tool") then refreshToolList() end end)
-    LocalPlayer.Character.ChildRemoved:Connect(function(c) if c:IsA("Tool") then task.defer(refreshToolList) end end)
-end
-
-task.spawn(function()
-    while task.wait(1) do
-        pcall(refreshToolList)
-    end
-end)
+})
 
 Tabs.Settings:AddToggle("ToolFloat", {
     Title = "Tool Float Button",
