@@ -46,6 +46,7 @@ local Config = {
     SelectedRod = "",
     AutoCraftRod = false,
     SelectedIsland = "",
+    SelectedNPC = "",
     ESPEnabled = false,
     FullBright = false,
     NoFog = false,
@@ -174,10 +175,38 @@ RunService.Stepped:Connect(function(_, dt)
     end
 end)
 
-UserInputService.JumpRequest:Connect(function()
-    if Config.InfJumpEnabled and cachedHum then
-        cachedHum:ChangeState(Enum.HumanoidStateType.Jumping)
+local lastInfJumpTick = 0
+
+local function IsInsideOceanWater(hrp)
+    if not hrp then return false end
+    local ocean = workspace:FindFirstChild("Ocean")
+    if not ocean then return false end
+    local pos = hrp.Position
+    for _, child in ipairs(ocean:GetChildren()) do
+        if child.Name == "Water" and child:IsA("BasePart") then
+            local half = child.Size * 0.5
+            local diff = child.Position - pos
+            if math.abs(diff.X) <= half.X and math.abs(diff.Y) <= half.Y and math.abs(diff.Z) <= half.Z then
+                return true
+            end
+        end
     end
+    return false
+end
+
+UserInputService.JumpRequest:Connect(function()
+    if not Config.InfJumpEnabled then return end
+    local now = os.clock()
+    if now - lastInfJumpTick < 0.18 then return end
+    local char = cachedChar or LocalPlayer.Character
+    local hum = cachedHum or (char and char:FindFirstChildOfClass("Humanoid"))
+    local hrp = cachedHrp or (char and char:FindFirstChild("HumanoidRootPart"))
+    if not char or not hum or not hrp or hum.Health <= 0 then return end
+    if char:GetAttribute("Swimming") == true or hrp:FindFirstChildOfClass("BodyPosition") or IsInsideOceanWater(hrp) then
+        return
+    end
+    lastInfJumpTick = now
+    hum:ChangeState(Enum.HumanoidStateType.Jumping)
 end)
 
 local flyConnection = nil
@@ -566,7 +595,6 @@ end
 local function FindBossTarget(wantSecret)
     local npcFolder = workspace:FindFirstChild("NPC")
     local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
-    local fallbackTarget = nil
 
     if bossFolder then
         for _, boss in ipairs(bossFolder:GetChildren()) do
@@ -577,29 +605,45 @@ local function FindBossTarget(wantSecret)
                     return boss, part
                 elseif not wantSecret and not isSec then
                     return boss, part
-                elseif not fallbackTarget then
-                    fallbackTarget = { obj = boss, part = part }
                 end
             end
         end
     end
 
-    local wsBoss = workspace:FindFirstChild("Boss") or workspace:FindFirstChild("BossZone")
-    if wsBoss then
-        local part = GetModelPart(wsBoss)
-        if part then
-            return wsBoss, part
+    if not wantSecret then
+        local wsBoss = workspace:FindFirstChild("Boss") or workspace:FindFirstChild("BossZone")
+        if wsBoss then
+            local part = GetModelPart(wsBoss)
+            if part then
+                return wsBoss, part
+            end
         end
-    end
-
-    if fallbackTarget then
-        return fallbackTarget.obj, fallbackTarget.part
     end
 
     return nil, nil
 end
 
 local lastBossActionTick = 0
+local lastBossNotifyKey = ""
+local lastBossNotifyTick = 0
+
+local function NotifyBoss(title, content, key, cooldown)
+    local now = os.clock()
+    local cd = cooldown or 8
+    local k = key or (title .. "|" .. content)
+    if k == lastBossNotifyKey and (now - lastBossNotifyTick) < cd then
+        return
+    end
+    lastBossNotifyKey = k
+    lastBossNotifyTick = now
+    pcall(function()
+        Fluent:Notify({
+            Title = title,
+            Content = content,
+            Duration = 4
+        })
+    end)
+end
 
 local function GetButtonLabelText(obj)
     if not obj then return "" end
@@ -639,8 +683,76 @@ local function FindBossMenuFrame()
     return nil
 end
 
-local function ClickBossModeAndStart(bossFrame, bossName, mode)
+local function GetBossRequirementSummary(bossFrame, bossName)
+    local missing = {}
+    local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
+    local curRodName = rodVal and rodVal.Value or ""
+    if curRodName == "" then
+        table.insert(missing, "No Fishing Rod equipped")
+    end
+
+    local char = LocalPlayer.Character
+    local stats = char and char:FindFirstChild("Stats")
+    local inv = Info:FindFirstChild("Inventory")
+    if inv and bossName then
+        local bossMod = inv:FindFirstChild(bossName)
+        local bossData = GetModuleData(bossMod)
+        local rodMod = curRodName ~= "" and inv:FindFirstChild(curRodName) or nil
+        local rodData = GetModuleData(rodMod)
+        if bossData and tonumber(bossData.Power) and rodData and tonumber(rodData.Power) then
+            local rodBonus = stats and stats:FindFirstChild("RodPower") and tonumber(stats.RodPower.Value) or 0
+            local fishBonus = stats and stats:FindFirstChild("FishPower") and tonumber(stats.FishPower.Value) or 0
+            local playerPower = tonumber(rodData.Power) + rodBonus
+            local bossEffPower = math.max(1, tonumber(bossData.Power) - fishBonus + 4)
+            if (playerPower / bossEffPower) <= 0.5 then
+                table.insert(missing, string.format("Low Power (%d/%d)", math.floor(playerPower), math.floor(bossEffPower)))
+            end
+        end
+    end
+
+    if bossFrame then
+        for _, desc in ipairs(bossFrame:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible then
+                local txt = desc.Text or ""
+                local cur, req = string.match(txt, "^%s*(%d+)%s*/%s*(%d+)%s*$")
+                if cur and req then
+                    local nCur = tonumber(cur)
+                    local nReq = tonumber(req)
+                    if nCur and nReq and nCur < nReq then
+                        table.insert(missing, cur .. "/" .. req)
+                    end
+                end
+            end
+        end
+    end
+
+    return missing
+end
+
+local function CheckBossStatusOnToggle(wantSecret)
+    local title = wantSecret and "Auto Secret Boss" or "Auto Boss"
+    local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
+    if not rodVal or rodVal.Value == "" then
+        NotifyBoss(title, "Failed: Requirements not met (No Fishing Rod equipped)!", "toggle_norod_" .. tostring(wantSecret), 2)
+        return
+    end
+    local bossObj = FindBossTarget(wantSecret)
+    if not bossObj then
+        NotifyBoss(title, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "toggle_noboss_" .. tostring(wantSecret), 2)
+        return
+    end
+    local bossName = tostring(bossObj:GetAttribute("Name") or bossObj.Name)
+    local missing = GetBossRequirementSummary(FindBossMenuFrame(), bossName)
+    if #missing > 0 then
+        NotifyBoss(title, "Requirement Warning (" .. bossName .. "): " .. table.concat(missing, ", "), "toggle_warn_" .. bossName, 2)
+    else
+        NotifyBoss(title, "Requirements met! Hunting " .. bossName .. " [" .. tostring(Config.BossMode) .. "]", "toggle_ok_" .. bossName, 2)
+    end
+end
+
+local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
     if not bossFrame then return false end
+    local notifyTitle = wantSecret and "Auto Secret Boss" or "Auto Boss"
     local targetMode = mode or "Normal"
     local targetLower = string.lower(targetMode)
     local modeMatched = false
@@ -672,33 +784,54 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode)
 
     local inProgress = false
     local startBtn = nil
+    local startBtnText = ""
 
-    for _, desc in ipairs(bossFrame:GetDescendants()) do
-        if desc:IsA("GuiButton") and desc.Visible and desc.Name ~= "Close" then
-            local bName = string.lower(desc.Name)
-            local bTxt = string.lower(GetButtonLabelText(desc))
-            local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
-            local isModeBtn = (bName == "normal" or bName == "hard" or bName == "nightmare"
-                or bTxt == "normal" or bTxt == "hard" or bTxt == "nightmare"
-                or pName == "normal" or pName == "hard" or pName == "nightmare"
-                or bTxt == "x" or pName == "close")
-            if not isModeBtn then
-                if string.find(bTxt, "in progress") then
-                    inProgress = true
-                elseif bTxt ~= "" or bName == "start" or bName == "fight" or bName == "play" or bName == "enter" or bName == "button" then
-                    startBtn = desc
+    local function scanStartButton()
+        inProgress = false
+        startBtn = nil
+        startBtnText = ""
+        for _, desc in ipairs(bossFrame:GetDescendants()) do
+            if desc:IsA("GuiButton") and desc.Visible and desc.Name ~= "Close" then
+                local bName = string.lower(desc.Name)
+                local rawTxt = GetButtonLabelText(desc)
+                local bTxt = string.lower(rawTxt)
+                local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
+                local isModeBtn = (bName == "normal" or bName == "hard" or bName == "nightmare"
+                    or bTxt == "normal" or bTxt == "hard" or bTxt == "nightmare"
+                    or pName == "normal" or pName == "hard" or pName == "nightmare"
+                    or bTxt == "x" or pName == "close")
+                if not isModeBtn then
+                    if string.find(bTxt, "in progress") then
+                        inProgress = true
+                        startBtnText = rawTxt
+                    elseif bTxt ~= "" or bName == "start" or bName == "fight" or bName == "play" or bName == "enter" or bName == "button" then
+                        startBtn = desc
+                        startBtnText = rawTxt
+                    end
                 end
             end
         end
     end
 
-    if not inProgress and startBtn then
+    scanStartButton()
+
+    if inProgress then
+        NotifyBoss(
+            notifyTitle,
+            "Requirements met! Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "] is In Progress!",
+            "inprog_" .. tostring(bossName) .. "_" .. targetMode,
+            15
+        )
+        return true
+    end
+
+    if startBtn then
         TriggerGuiButton(startBtn)
     end
 
     for _, rName in ipairs({"BossFight", "StartBossFight", "StartBoss", "Boss", "ChallengeBoss", "FightBoss"}) do
         local ev = Events:FindFirstChild(rName)
-        if ev and not inProgress then
+        if ev then
             pcall(function()
                 if ev:IsA("RemoteEvent") then
                     ev:FireServer(targetMode)
@@ -710,17 +843,161 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode)
         end
     end
 
-    return inProgress
+    task.wait(0.25)
+    scanStartButton()
+
+    if inProgress or (FishingGui and FishingGui.Visible) then
+        NotifyBoss(
+            notifyTitle,
+            "Success! Started Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "]!",
+            "start_ok_" .. tostring(bossName) .. "_" .. targetMode,
+            12
+        )
+        return true
+    else
+        local missing = GetBossRequirementSummary(bossFrame, bossName)
+        local reason = #missing > 0 and table.concat(missing, ", ") or (startBtnText ~= "" and startBtnText or "Missing Tickets/Crystals or on Cooldown")
+        NotifyBoss(
+            notifyTitle,
+            "Failed (Requirements not met): " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "] - " .. reason,
+            "start_fail_" .. tostring(bossName) .. "_" .. targetMode,
+            10
+        )
+        return false
+    end
+end
+
+local lastCaughtBossTick = 0
+local lastCaughtFishName = ""
+
+do
+    local repEv = Events:FindFirstChild("ReplicateFishCaught")
+    if repEv and repEv:IsA("RemoteEvent") then
+        repEv.OnClientEvent:Connect(function(charModel, fishName)
+            if charModel == LocalPlayer.Character then
+                lastCaughtBossTick = os.clock()
+                lastCaughtFishName = tostring(fishName or "")
+                if Config.AutoBoss or Config.AutoSecretBoss then
+                    local notifyTitle = Config.AutoSecretBoss and "Auto Secret Boss" or "Auto Boss"
+                    NotifyBoss(
+                        notifyTitle,
+                        "Success! Caught Boss: " .. lastCaughtFishName .. "!",
+                        "caught_" .. lastCaughtFishName .. "_" .. tostring(math.floor(lastCaughtBossTick)),
+                        1
+                    )
+                end
+            end
+        end)
+    end
+end
+
+local trackingBossFight = false
+
+local function MonitorBossMinigame()
+    if trackingBossFight then return end
+    local fishId = LocalPlayer:GetAttribute("FishID")
+    local fishesFolder = workspace:FindFirstChild("Fishes")
+    local fishObj = (fishId and fishesFolder) and fishesFolder:FindFirstChild(tostring(fishId)) or nil
+    if not fishObj then return end
+
+    trackingBossFight = true
+    task.spawn(function()
+        local notifyTitle = Config.AutoSecretBoss and "Auto Secret Boss" or "Auto Boss"
+        local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
+        local fNameLbl = progBar and progBar:FindFirstChild("FishName")
+        local fName = (fNameLbl and fNameLbl.Text ~= "" and fNameLbl.Text) or "Boss"
+        local hpObj = fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
+        local maxFishHp = tonumber(fishObj:GetAttribute("MaxHealth")) or 100
+
+        NotifyBoss(
+            notifyTitle,
+            "Fighting " .. fName .. " [" .. tostring(Config.BossMode) .. "]!",
+            "pull_" .. tostring(fishId),
+            5
+        )
+
+        local lastScale = 0.5
+        local lastHp = hpObj and hpObj.Value or 100
+        local lastFishVal = fishObj:IsA("ValueBase") and fishObj.Value or 0
+        local hadFinalPhase = false
+        local lastFinalHp = 1
+
+        while fishObj.Parent and (FishingGui and FishingGui.Visible) do
+            if hpObj then
+                lastHp = hpObj.Value
+            end
+            if fishObj:IsA("ValueBase") then
+                lastFishVal = fishObj.Value
+            end
+            if fishObj:GetAttribute("FinalPhase") == true then
+                hadFinalPhase = true
+            end
+            if fishObj:GetAttribute("FinalPhaseHP") ~= nil then
+                lastFinalHp = tonumber(fishObj:GetAttribute("FinalPhaseHP")) or lastFinalHp
+            end
+            if Bar then
+                lastScale = Bar.Position.X.Scale
+            end
+            task.wait(0.1)
+        end
+
+        task.wait(0.35)
+        if os.clock() - lastCaughtBossTick < 2.5 then
+            trackingBossFight = false
+            return
+        end
+
+        local won = (hadFinalPhase and lastFinalHp <= 0) or (not hadFinalPhase and lastFishVal >= maxFishHp * 0.98 and lastHp > 0 and lastScale > 0.02 and lastScale < 0.98)
+        if won then
+            NotifyBoss(
+                notifyTitle,
+                "Success! Defeated Boss " .. fName .. "!",
+                "win_" .. tostring(fishId),
+                2
+            )
+        else
+            local failReason = "Line broke / Cancelled"
+            if lastHp <= 0 then
+                failReason = "Died (0 HP)"
+            elseif lastScale <= 0.02 or lastScale >= 0.98 then
+                failReason = "Out of bar"
+            elseif LocalPlayer.Character and LocalPlayer.Character:GetAttribute("Type") ~= "Fishing Rod" then
+                failReason = "Rod unequipped"
+            end
+            NotifyBoss(
+                notifyTitle,
+                "Failed fighting " .. fName .. ": " .. failReason .. "!",
+                "lose_" .. tostring(fishId),
+                2
+            )
+        end
+        trackingBossFight = false
+    end)
 end
 
 local function StepAutoBoss(char, isMinigame)
-    if isMinigame then return end
+    if isMinigame then
+        MonitorBossMinigame()
+        return
+    end
     local now = os.clock()
     if now - lastBossActionTick < 0.8 then return end
     lastBossActionTick = now
 
     local wantSecret = Config.AutoSecretBoss
+    local notifyTitle = wantSecret and "Auto Secret Boss" or "Auto Boss"
+    local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
+    if not rodVal or rodVal.Value == "" then
+        NotifyBoss(notifyTitle, "Failed: Requirements not met (No Fishing Rod equipped)!", "step_norod", 10)
+        return
+    end
+
     local bossObj, bossPart = FindBossTarget(wantSecret)
+    if not bossObj or not bossPart then
+        NotifyBoss(notifyTitle, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "step_noboss_" .. tostring(wantSecret), 10)
+        return
+    end
+
     local hrp = cachedHrp or (char and char:FindFirstChild("HumanoidRootPart"))
     local bossName = bossObj and (bossObj:GetAttribute("Name") or bossObj.Name) or nil
 
@@ -740,7 +1017,7 @@ local function StepAutoBoss(char, isMinigame)
 
     local bossFrame = FindBossMenuFrame()
     if bossFrame and bossFrame.Visible then
-        ClickBossModeAndStart(bossFrame, bossName, Config.BossMode)
+        ClickBossModeAndStart(bossFrame, bossName, Config.BossMode, wantSecret)
     end
 
     if MainGui then
@@ -1350,6 +1627,72 @@ local function TeleportToIsland(islandName)
     end
 end
 
+local NPCTargets = {}
+
+local function GetNPCList()
+    local list = {}
+    local seen = {}
+    table.clear(NPCTargets)
+
+    local function addNPCModel(obj)
+        if not obj then return end
+        local part = GetModelPart(obj)
+        if not part then return end
+        local rawName = tostring(obj:GetAttribute("Name") or obj.Name)
+        if rawName == "" then return end
+        NPCTargets[rawName] = part
+        if not seen[rawName] then
+            seen[rawName] = true
+            table.insert(list, rawName)
+        end
+    end
+
+    local npcFolder = workspace:FindFirstChild("NPC")
+    if npcFolder then
+        for _, child in ipairs(npcFolder:GetChildren()) do
+            if child:IsA("Folder") then
+                if child.Name ~= "Boss" then
+                    for _, sub in ipairs(child:GetChildren()) do
+                        addNPCModel(sub)
+                    end
+                end
+            elseif child.Name ~= "Boss" then
+                addNPCModel(child)
+            end
+        end
+    end
+
+    for _, folderName in ipairs({"NPCPVP", "Merchant", "God"}) do
+        local f = workspace:FindFirstChild(folderName)
+        if f then
+            if f:IsA("Model") or f:IsA("BasePart") then
+                addNPCModel(f)
+            else
+                for _, child in ipairs(f:GetChildren()) do
+                    addNPCModel(child)
+                end
+            end
+        end
+    end
+
+    table.sort(list)
+    return list
+end
+
+local function TeleportToNPC(npcName)
+    if not npcName or npcName == "" then return end
+    local targetPart = NPCTargets[npcName]
+    if not targetPart or not targetPart.Parent then
+        GetNPCList()
+        targetPart = NPCTargets[npcName]
+    end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and targetPart and targetPart.Parent then
+        hrp.CFrame = targetPart.CFrame * CFrame.new(0, 3, -4)
+    end
+end
+
 local KnownCodes = {
     "SeeYouSoon",
     "BUGTrait",
@@ -1733,6 +2076,11 @@ Tabs.Main:AddToggle("AutoBossToggle", {
     Callback = function(Value)
         Config.AutoBoss = Value
         SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(false)
+            end)
+        end
     end
 })
 
@@ -1742,6 +2090,11 @@ Tabs.Main:AddToggle("AutoSecretBossToggle", {
     Callback = function(Value)
         Config.AutoSecretBoss = Value
         SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(true)
+            end)
+        end
     end
 })
 
@@ -1880,6 +2233,74 @@ Tabs.Teleport:AddButton({
         TeleportToIsland(Config.SelectedIsland)
     end
 })
+
+Tabs.Teleport:AddSection("NPC")
+
+local npcList = GetNPCList()
+if (Config.SelectedNPC == "" or not table.find(npcList, Config.SelectedNPC)) and #npcList > 0 then
+    Config.SelectedNPC = npcList[1]
+end
+
+local lastNPCSignature = table.concat(npcList, "|")
+
+local NPCDropdown = Tabs.Teleport:AddDropdown("SelectNPCDropdown", {
+    Title = "Select NPC",
+    Values = npcList,
+    Default = Config.SelectedNPC ~= "" and Config.SelectedNPC or npcList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedNPC = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To NPC",
+    Callback = function()
+        TeleportToNPC(Config.SelectedNPC)
+    end
+})
+
+do
+    local npcRefreshPending = false
+    local function ScheduleNPCRefresh()
+        if npcRefreshPending then return end
+        npcRefreshPending = true
+        task.delay(0.8, function()
+            npcRefreshPending = false
+            local updated = GetNPCList()
+            local sig = table.concat(updated, "|")
+            if sig ~= lastNPCSignature then
+                lastNPCSignature = sig
+                if NPCDropdown and NPCDropdown.SetValues then
+                    pcall(function()
+                        NPCDropdown:SetValues(updated)
+                    end)
+                end
+                if (Config.SelectedNPC == "" or not table.find(updated, Config.SelectedNPC)) and #updated > 0 then
+                    Config.SelectedNPC = updated[1]
+                    if NPCDropdown and NPCDropdown.SetValue then
+                        pcall(function()
+                            NPCDropdown:SetValue(Config.SelectedNPC)
+                        end)
+                    end
+                end
+            end
+        end)
+    end
+
+    local npcFolder = workspace:FindFirstChild("NPC")
+    if npcFolder then
+        npcFolder.ChildAdded:Connect(ScheduleNPCRefresh)
+        npcFolder.ChildRemoved:Connect(ScheduleNPCRefresh)
+        for _, child in ipairs(npcFolder:GetChildren()) do
+            if child:IsA("Folder") and child.Name ~= "Boss" then
+                child.ChildAdded:Connect(ScheduleNPCRefresh)
+                child.ChildRemoved:Connect(ScheduleNPCRefresh)
+            end
+        end
+    end
+end
 
 Tabs.Shop:AddSection("Selling")
 
