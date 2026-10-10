@@ -54,6 +54,8 @@ local Config = {
     ClickToKill = false,
     AutoKillMobs = false,
     AutoKillBosses = false,
+    AutoKillPlayer = false,
+    AutoPickupMoney = false,
     InfStamina = false,
     AutoSteal = false,
     AutoBringItems = false,
@@ -1570,6 +1572,31 @@ local function collectDrop(dropPart, prompt)
     end
 end
 
+local currentFarmMob = nil
+local currentFarmBoss = nil
+local currentKillPlayer = nil
+local lastKillPos = nil
+
+local function isPlayerIgnored(p)
+    if not p or p == LocalPlayer then return true end
+    if Config.AimlockFriendCheck then
+        local ok, isFr = pcall(function() return LocalPlayer:IsFriendsWith(p.UserId) end)
+        if ok and isFr then return true end
+    end
+    if Config.AimlockWhitelist and Config.AimlockWhitelist ~= "" then
+        local wlList = string.split(Config.AimlockWhitelist:lower(), ",")
+        local pName = p.Name:lower()
+        local pDisplay = p.DisplayName:lower()
+        for _, rawItem in ipairs(wlList) do
+            local item = rawItem:match("^%s*(.-)%s*$")
+            if item ~= "" and (pName:find(item, 1, true) or pDisplay:find(item, 1, true)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function getNearKillPos()
     if currentFarmMob and currentFarmMob.Parent then
         local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
@@ -1579,14 +1606,18 @@ local function getNearKillPos()
         local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
         if hrp then return hrp.Position end
     end
-    return nil
+    if currentKillPlayer and currentKillPlayer.Parent and currentKillPlayer.Character then
+        local hrp = currentKillPlayer.Character:FindFirstChild("HumanoidRootPart") or currentKillPlayer.Character:FindFirstChild("Head") or currentKillPlayer.Character:FindFirstChildWhichIsA("BasePart")
+        if hrp then return hrp.Position end
+    end
+    return lastKillPos
 end
 
 local function scanAndCollectDrops()
-    if not (Config.AutoKillMobs or Config.AutoKillBosses) or isCollectingDrops then return end
+    if not (Config.AutoKillMobs or Config.AutoKillBosses or Config.AutoKillPlayer or Config.AutoPickupMoney) or isCollectingDrops then return end
     local killPos = getNearKillPos()
     for _, desc in ipairs(workspace:GetDescendants()) do
-        if not (Config.AutoKillMobs or Config.AutoKillBosses) then break end
+        if not (Config.AutoKillMobs or Config.AutoKillBosses or Config.AutoKillPlayer or Config.AutoPickupMoney) then break end
         if desc:IsA("ProximityPrompt") then
             local action = desc.ActionText and desc.ActionText:lower() or ""
             local obj = desc.ObjectText and desc.ObjectText:lower() or ""
@@ -1594,7 +1625,7 @@ local function scanAndCollectDrops()
             if action:find("pick up") or action:find("take") or obj:find("money") or pName:find("money") or pName:find("bag") or pName:find("drop") then
                 local part = desc.Parent
                 if part and part:IsA("BasePart") then
-                    if killPos and (part.Position - killPos).Magnitude > 30 then
+                    if not Config.AutoPickupMoney and killPos and (part.Position - killPos).Magnitude > 30 then
                         continue
                     end
                     isCollectingDrops = true
@@ -1614,7 +1645,7 @@ task.spawn(function()
 end)
 
 
-local currentFarmMob = nil
+currentFarmMob = nil
 local function isMobAlive(m)
     if not m or not m.Parent then return false end
     local hum = m:FindFirstChildOfClass("Humanoid")
@@ -1659,6 +1690,7 @@ task.spawn(function()
                     local hrp = currentFarmMob:FindFirstChild("HumanoidRootPart") or currentFarmMob:FindFirstChild("Head") or currentFarmMob:FindFirstChildWhichIsA("BasePart")
 
                     if handle and hrp and firetouchinterest then
+                        lastKillPos = hrp.Position
                         pcall(function()
                             firetouchinterest(handle, hrp, 0)
                             firetouchinterest(handle, hrp, 1)
@@ -1672,7 +1704,7 @@ task.spawn(function()
     end
 end)
 
-local currentFarmBoss = nil
+currentFarmBoss = nil
 local function isBossAlive(b)
     if not b or not b.Parent then return false end
     local hum = b:FindFirstChildOfClass("Humanoid")
@@ -1717,6 +1749,7 @@ task.spawn(function()
                     local hrp = currentFarmBoss:FindFirstChild("HumanoidRootPart") or currentFarmBoss:FindFirstChild("Head") or currentFarmBoss:FindFirstChildWhichIsA("BasePart")
 
                     if handle and hrp and firetouchinterest then
+                        lastKillPos = hrp.Position
                         pcall(function()
                             firetouchinterest(handle, hrp, 0)
                             firetouchinterest(handle, hrp, 1)
@@ -1731,13 +1764,11 @@ task.spawn(function()
 end)
 
 RunService.RenderStepped:Connect(function()
-    local target = (Config.AutoKillBosses and currentFarmBoss) or (Config.AutoKillMobs and currentFarmMob)
+    local target = (Config.AutoKillBosses and currentFarmBoss) or (Config.AutoKillMobs and currentFarmMob) or (Config.AutoKillPlayer and currentKillPlayer and currentKillPlayer.Character)
     local Camera = workspace.CurrentCamera
-    if target and target.Parent then
-        local hum = target:FindFirstChildOfClass("Humanoid")
-        if hum and Camera then
-            Camera.CameraSubject = hum
-        end
+    local hum = target and target.Parent and target:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 and Camera then
+        Camera.CameraSubject = hum
     else
         local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
         local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -1748,19 +1779,88 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local KillPlayerTargets = {}
-local function killSelectedPlayers()
-    for targetName, isSelected in pairs(KillPlayerTargets) do
+
+local function isPlayerCharAlive(p)
+    if not p or not p.Parent then return false end
+    local char = p.Character
+    if not char or not char.Parent then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head") or char:FindFirstChildWhichIsA("BasePart")
+    return hum ~= nil and hum.Health > 0 and hrp ~= nil
+end
+
+local function hasSelectedTargets()
+    for _, isSelected in pairs(KillPlayerTargets) do
         if isSelected then
-            local targetPlayer = Players:FindFirstChild(targetName)
-            if targetPlayer and targetPlayer.Character then
-                local hrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Head")
-                if hrp then
-                    attackTargetContinuous(hrp)
+            return true
+        end
+    end
+    return false
+end
+
+local function getNextKillPlayer()
+    if hasSelectedTargets() then
+        for targetName, isSelected in pairs(KillPlayerTargets) do
+            if isSelected then
+                local p = Players:FindFirstChild(targetName)
+                if isPlayerCharAlive(p) then
+                    return p
                 end
             end
         end
+        return nil
+    else
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and not isPlayerIgnored(p) and isPlayerCharAlive(p) then
+                return p
+            end
+        end
+        return nil
     end
 end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if Config.AutoKillPlayer then
+            if not isPlayerCharAlive(currentKillPlayer) or (hasSelectedTargets() and not KillPlayerTargets[currentKillPlayer.Name]) then
+                currentKillPlayer = getNextKillPlayer()
+            end
+
+            if isPlayerCharAlive(currentKillPlayer) then
+                local axe = equipToolByName("Hatchet")
+                if axe then
+                    axe:Activate()
+                    local remote = axe:FindFirstChild("Attack")
+                    if remote and remote:IsA("RemoteEvent") then
+                        pcall(function() remote:FireServer() end)
+                    end
+                end
+
+                for _, desc in ipairs(workspace:GetDescendants()) do
+                    if desc:IsA("RemoteEvent") and desc.Name == "Attack" and desc.Parent.Name == "Hatchet" then
+                        pcall(function() desc:FireServer() end)
+                    end
+                end
+
+                local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+                local currentTool = myChar and myChar:FindFirstChildOfClass("Tool")
+                local handle = currentTool and (currentTool:FindFirstChild("Handle") or currentTool:FindFirstChildWhichIsA("BasePart"))
+                local tChar = currentKillPlayer.Character
+                local hrp = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Head") or tChar:FindFirstChildWhichIsA("BasePart"))
+
+                if handle and hrp and firetouchinterest then
+                    lastKillPos = hrp.Position
+                    pcall(function()
+                        firetouchinterest(handle, hrp, 0)
+                        firetouchinterest(handle, hrp, 1)
+                    end)
+                end
+            end
+        else
+            currentKillPlayer = nil
+        end
+    end
+end)
 
 task.spawn(function()
     while task.wait(0.3) do
@@ -2179,25 +2279,7 @@ local currentAimlockTarget = nil
 local aimlockVisualPart = nil
 local aimlockHighlight = nil
 
-local function isPlayerIgnored(p)
-    if not p or p == LocalPlayer then return true end
-    if Config.AimlockFriendCheck then
-        local ok, isFr = pcall(function() return LocalPlayer:IsFriendsWith(p.UserId) end)
-        if ok and isFr then return true end
-    end
-    if Config.AimlockWhitelist and Config.AimlockWhitelist ~= "" then
-        local wlList = string.split(Config.AimlockWhitelist:lower(), ",")
-        local pName = p.Name:lower()
-        local pDisplay = p.DisplayName:lower()
-        for _, rawItem in ipairs(wlList) do
-            local item = rawItem:match("^%s*(.-)%s*$")
-            if item ~= "" and (pName:find(item, 1, true) or pDisplay:find(item, 1, true)) then
-                return true
-            end
-        end
-    end
-    return false
-end
+
 
 local function updateAimlockVisual()
     local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
@@ -2233,22 +2315,30 @@ local function getNearestAimlockTarget()
     local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
     local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-    local closest = nil
-    local minDist = Config.AimlockDistance or 40
+    local bestTarget = nil
+    local lowestHealth = math.huge
+    local closestDist = math.huge
+    local maxDist = Config.AimlockDistance or 40
     for _, p in ipairs(Players:GetPlayers()) do
         if not isPlayerIgnored(p) and p.Character then
             local thrp = p.Character:FindFirstChild("HumanoidRootPart")
             local hum = p.Character:FindFirstChildOfClass("Humanoid")
             if thrp and hum and hum.Health > 0 then
                 local dist = (hrp.Position - thrp.Position).Magnitude
-                if dist <= minDist then
-                    minDist = dist
-                    closest = p
+                if dist <= maxDist then
+                    if hum.Health < lowestHealth then
+                        lowestHealth = hum.Health
+                        closestDist = dist
+                        bestTarget = p
+                    elseif hum.Health == lowestHealth and dist < closestDist then
+                        closestDist = dist
+                        bestTarget = p
+                    end
                 end
             end
         end
     end
-    return closest
+    return bestTarget
 end
 
 RunService.RenderStepped:Connect(function()
@@ -2523,6 +2613,15 @@ Tabs.Main:AddToggle("AutoStealT", {
     end
 })
 
+Tabs.Main:AddToggle("AutoPickupMoneyT", {
+    Title = "Auto Pickup Money Bags",
+    Default = Config.AutoPickupMoney,
+    Callback = function(v)
+        Config.AutoPickupMoney = v
+        SaveConfig()
+    end
+})
+
 Tabs.Main:AddSection("Selling")
 
 Tabs.Main:AddButton({
@@ -2651,10 +2750,20 @@ local KillSelectPlayerDropdown = Tabs.Combat:AddDropdown("KillSelectPlayer", {
     end
 })
 
-Tabs.Combat:AddButton({
+Tabs.Combat:AddToggle("AutoKillPlayerT", {
     Title = "Kill Player",
-    Callback = function()
-        killSelectedPlayers()
+    Default = Config.AutoKillPlayer,
+    Callback = function(v)
+        Config.AutoKillPlayer = v
+        SaveConfig()
+        if not v then
+            currentKillPlayer = nil
+            local myChar = (InvisState.isInvisible and fakeCharacter) or LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if myHum and workspace.CurrentCamera then
+                workspace.CurrentCamera.CameraSubject = myHum
+            end
+        end
     end
 })
 
@@ -2731,6 +2840,9 @@ end
 refreshAllPlayerLists()
 Players.PlayerAdded:Connect(refreshAllPlayerLists)
 Players.PlayerRemoving:Connect(function(leftPlayer)
+    if currentKillPlayer == leftPlayer then
+        currentKillPlayer = nil
+    end
     if KillPlayerTargets[leftPlayer.Name] then
         KillPlayerTargets[leftPlayer.Name] = nil
     end
