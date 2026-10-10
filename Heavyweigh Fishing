@@ -6,6 +6,7 @@ local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local VirtualUser = game:GetService("VirtualUser")
 
@@ -27,6 +28,11 @@ local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
 local Config = {
     AutoCast = false,
     AutoReel = false,
+    AutoFinalPhase = false,
+    AntiConfuse = false,
+    BossMode = "Normal",
+    AutoBoss = false,
+    AutoSecretBoss = false,
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
     AutoSell = false,
@@ -39,7 +45,10 @@ local Config = {
     AutoCraftBait = false,
     SelectedRod = "",
     AutoCraftRod = false,
+    SelectedIsland = "",
     ESPEnabled = false,
+    FullBright = false,
+    NoFog = false,
     LoopSpeedEnabled = false,
     WalkSpeed = 30,
     NoclipEnabled = false,
@@ -76,15 +85,27 @@ if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 end
 
+local ModuleCache = {}
+
+local function GetModuleData(mod)
+    if not mod or not mod:IsA("ModuleScript") then return nil end
+    local cached = ModuleCache[mod]
+    if cached ~= nil then
+        return cached ~= false and cached or nil
+    end
+    local ok, data = pcall(require, mod)
+    if ok and type(data) == "table" then
+        ModuleCache[mod] = data
+        return data
+    end
+    ModuleCache[mod] = false
+    return nil
+end
+
 LocalPlayer.Idled:Connect(function()
     pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
-    end)
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, true, game, 1)
-        task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, false, game, 1)
     end)
 end)
 
@@ -101,12 +122,16 @@ end
 local cachedChar = LocalPlayer.Character
 local cachedHum = cachedChar and cachedChar:FindFirstChildOfClass("Humanoid")
 local cachedHrp = cachedChar and cachedChar:FindFirstChild("HumanoidRootPart")
+local cachedSkillsFolder = cachedChar and cachedChar:FindFirstChild("Skills")
+local cachedStatsFolder = cachedChar and cachedChar:FindFirstChild("Stats")
+local FishesFolder = workspace:FindFirstChild("Fishes")
 
 local MainGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("MainGui")
 local FishingGui = MainGui:WaitForChild("Fishing")
 local BarFrame = FishingGui:WaitForChild("BarFrame")
 local FishingBar = BarFrame:WaitForChild("Bar")
 local SkillBtnFrame = FishingGui:WaitForChild("SkillButton"):WaitForChild("Frame")
+local RhythmGui = FishingGui:FindFirstChild("Rhythm")
 
 local function RefreshGuiCache()
     if not MainGui or not MainGui.Parent then
@@ -117,6 +142,12 @@ local function RefreshGuiCache()
         FishingBar = BarFrame and BarFrame:FindFirstChild("Bar")
         local sb = FishingGui and FishingGui:FindFirstChild("SkillButton")
         SkillBtnFrame = sb and sb:FindFirstChild("Frame")
+        RhythmGui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+    elseif not RhythmGui or not RhythmGui.Parent then
+        RhythmGui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+    end
+    if not FishesFolder or not FishesFolder.Parent then
+        FishesFolder = workspace:FindFirstChild("Fishes")
     end
 end
 
@@ -124,7 +155,7 @@ local _noclipThrottle = 0
 RunService.Stepped:Connect(function(_, dt)
     if not Config.NoclipEnabled and not Config.LoopSpeedEnabled then return end
     _noclipThrottle = _noclipThrottle + dt
-    if _noclipThrottle < 0.05 then return end
+    if _noclipThrottle < 0.08 then return end
     _noclipThrottle = 0
 
     local char = cachedChar
@@ -231,10 +262,70 @@ local function stopFly()
     end
 end
 
+local function ApplyAntiConfuse(char)
+    if not Config.AntiConfuse then return end
+    if char then
+        if char:GetAttribute("Confused") == true then
+            pcall(function() char:SetAttribute("Confused", false) end)
+        end
+        if char:GetAttribute("SkillLocked") == true then
+            pcall(function() char:SetAttribute("SkillLocked", false) end)
+        end
+    end
+    if SkillBtnFrame then
+        for _, btn in ipairs(SkillBtnFrame:GetChildren()) do
+            if btn:IsA("TextButton") then
+                local lock = btn:FindFirstChild("Lock")
+                if lock and lock.Visible then
+                    lock.Visible = false
+                end
+            end
+        end
+    end
+    if FishingGui then
+        local hpPlayer = FishingGui:FindFirstChild("HPPlayer")
+        local debuff = hpPlayer and hpPlayer:FindFirstChild("Debuff")
+        local confusedGui = debuff and debuff:FindFirstChild("Confused")
+        if confusedGui then
+            pcall(function() confusedGui:Destroy() end)
+        end
+    end
+end
+
+local antiConfuseConns = {}
+
+local function BindCharacterAntiConfuse(char)
+    for _, c in ipairs(antiConfuseConns) do
+        pcall(function() c:Disconnect() end)
+    end
+    table.clear(antiConfuseConns)
+    if not char then return end
+    table.insert(antiConfuseConns, char:GetAttributeChangedSignal("Confused"):Connect(function()
+        if Config.AntiConfuse and char:GetAttribute("Confused") == true then
+            ApplyAntiConfuse(char)
+        end
+    end))
+    table.insert(antiConfuseConns, char:GetAttributeChangedSignal("SkillLocked"):Connect(function()
+        if Config.AntiConfuse and char:GetAttribute("SkillLocked") == true then
+            ApplyAntiConfuse(char)
+        end
+    end))
+    if Config.AntiConfuse then
+        ApplyAntiConfuse(char)
+    end
+end
+
+if cachedChar then
+    BindCharacterAntiConfuse(cachedChar)
+end
+
 LocalPlayer.CharacterAdded:Connect(function(newChar)
     cachedChar = newChar
     cachedHum = newChar:WaitForChild("Humanoid", 5)
     cachedHrp = newChar:WaitForChild("HumanoidRootPart", 5)
+    cachedSkillsFolder = newChar:WaitForChild("Skills", 5)
+    cachedStatsFolder = newChar:WaitForChild("Stats", 5)
+    BindCharacterAntiConfuse(newChar)
     task.wait(0.3)
     if Config.FlyEnabled then
         startFly()
@@ -245,7 +336,6 @@ local minigameOpenTick = 0
 local wasMinigameVisible = false
 
 local function IsGameAllowingSkill(char)
-    RefreshGuiCache()
     if not FishingGui or not FishingGui.Visible then
         wasMinigameVisible = false
         return false
@@ -256,23 +346,29 @@ local function IsGameAllowingSkill(char)
         minigameOpenTick = os.clock()
     end
 
-    local rhythm = FishingGui:FindFirstChild("Rhythm")
-    if rhythm and rhythm.Visible then
+    if RhythmGui and RhythmGui.Visible then
         return false
     end
 
-    if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") or char:GetAttribute("Phase2") then
+    if char:GetAttribute("Phase2") then
         return false
     end
 
-    local stats = char:FindFirstChild("Stats")
+    if not Config.AntiConfuse then
+        if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") then
+            return false
+        end
+    else
+        ApplyAntiConfuse(char)
+    end
+
+    local stats = cachedStatsFolder or char:FindFirstChild("Stats")
     if stats and stats:FindFirstChild("Stun") and stats.Stun.Value == true then
         return false
     end
 
     local fishId = LocalPlayer:GetAttribute("FishID")
-    local fishesFolder = workspace:FindFirstChild("Fishes")
-    local fishObj = (fishId and fishesFolder) and fishesFolder:FindFirstChild(fishId) or nil
+    local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(fishId) or nil
     if fishObj then
         local readyVal = fishObj:FindFirstChild("Ready")
         if readyVal then
@@ -300,7 +396,7 @@ local function IsGameAllowingSkill(char)
         end
     end
 
-    local skillsFolder = char:FindFirstChild("Skills")
+    local skillsFolder = cachedSkillsFolder or char:FindFirstChild("Skills")
     if skillsFolder then
         for _, s in ipairs(skillsFolder:GetChildren()) do
             if s:IsA("NumberValue") and (s:GetAttribute("UsingSkill") or 0) > 0 then
@@ -320,13 +416,17 @@ local function IsSkillKeyReady(char, key)
     end
     local lock = btn:FindFirstChild("Lock")
     if lock and lock.Visible then
-        return false
+        if Config.AntiConfuse then
+            lock.Visible = false
+        else
+            return false
+        end
     end
     local cd = btn:FindFirstChild("CD")
     if cd and cd.Visible then
         return false
     end
-    local skillsFolder = char:FindFirstChild("Skills")
+    local skillsFolder = cachedSkillsFolder or char:FindFirstChild("Skills")
     if skillsFolder then
         for _, s in ipairs(skillsFolder:GetChildren()) do
             if s:IsA("NumberValue") and s:GetAttribute("Key") == key then
@@ -339,31 +439,368 @@ local function IsSkillKeyReady(char, key)
     return true
 end
 
+local rhythmLanes = {"A", "S", "D"}
+local rhythmKeyMap = {
+    A = Enum.KeyCode.A,
+    S = Enum.KeyCode.S,
+    D = Enum.KeyCode.D
+}
+local lastRhythmLaneHit = { A = 0, S = 0, D = 0 }
+local lastRhythmScan = 0
+local lastReelTween = 0
+
+local function TriggerGuiButton(btn)
+    if not btn then return false end
+    local triggered = false
+    if firesignal then
+        pcall(function()
+            firesignal(btn.MouseButton1Click)
+            triggered = true
+        end)
+    end
+    if not triggered and getconnections then
+        pcall(function()
+            for _, conn in pairs(getconnections(btn.MouseButton1Click)) do
+                if conn.Function then
+                    task.spawn(conn.Function)
+                    triggered = true
+                elseif conn.Fire then
+                    conn:Fire()
+                    triggered = true
+                end
+            end
+        end)
+    end
+    return triggered
+end
+
 RunService.Heartbeat:Connect(function()
-    if not Config.AutoReel then return end
-    if FishingGui and FishingGui.Visible and FishingBar then
+    if not FishingGui or not FishingGui.Visible then return end
+
+    local activeReel = Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss
+    local activeFinal = Config.AutoFinalPhase or Config.AutoBoss or Config.AutoSecretBoss
+
+    if activeReel and FishingBar then
         if math.abs(FishingBar.Position.X.Scale - 0.5) > 0.005 then
-            FishingBar:TweenPosition(UDim2.new(0.5, 0, 0.5, 0), Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
+            local now = os.clock()
+            if now - lastReelTween >= 0.25 then
+                lastReelTween = now
+                FishingBar:TweenPosition(UDim2.new(0.5, 0, 0.5, 0), Enum.EasingDirection.InOut, Enum.EasingStyle.Linear, 0, true)
+            end
             FishingBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+        end
+    end
+
+    if activeFinal and RhythmGui and RhythmGui.Visible then
+        local now = os.clock()
+        if now - lastRhythmScan < 0.035 then return end
+        lastRhythmScan = now
+
+        for _, lane in ipairs(rhythmLanes) do
+            if now - (lastRhythmLaneHit[lane] or 0) >= 0.06 then
+                local laneFrame = RhythmGui:FindFirstChild("Progression" .. lane)
+                if laneFrame then
+                    local barFrame = laneFrame:FindFirstChild("BarFrame")
+                    local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
+                    local shouldHit = false
+                    for _, child in ipairs(laneFrame:GetChildren()) do
+                        if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
+                            if math.abs(child.Position.Y.Scale - targetY) <= 0.16 then
+                                shouldHit = true
+                                break
+                            end
+                        end
+                    end
+                    if shouldHit then
+                        lastRhythmLaneHit[lane] = now
+                        local btn = laneFrame:FindFirstChild("Button")
+                        if not TriggerGuiButton(btn) then
+                            local kc = rhythmKeyMap[lane]
+                            if kc then
+                                pcall(function()
+                                    VirtualInputManager:SendKeyEvent(true, kc, false, game)
+                                    task.delay(0.02, function()
+                                        VirtualInputManager:SendKeyEvent(false, kc, false, game)
+                                    end)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
         end
     end
 end)
 
+local function GetModelPart(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        return obj:FindFirstChild("HumanoidRootPart")
+            or obj:FindFirstChild("Head")
+            or obj.PrimaryPart
+            or obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return obj:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function IsSecretBossEntity(obj)
+    if not obj then return false end
+    if obj:GetAttribute("Secret") == true or obj:GetAttribute("Rarity") == "Secret" then
+        return true
+    end
+    local rawName = tostring(obj:GetAttribute("Name") or obj:GetAttribute("FishName") or obj.Name)
+    local lowerName = string.lower(rawName)
+    if string.find(lowerName, "secret") or string.find(lowerName, "long diaohai") or string.find(lowerName, "wuzhi") then
+        return true
+    end
+    local inv = Info:FindFirstChild("Inventory")
+    local mod = inv and inv:FindFirstChild(rawName)
+    local data = GetModuleData(mod)
+    if data and (data.Secret == true or data.Rarity == "Secret" or (data.Boss == true and (tonumber(data.Chance) or 100) <= 1)) then
+        return true
+    end
+    return false
+end
+
+local function FindBossTarget(wantSecret)
+    local npcFolder = workspace:FindFirstChild("NPC")
+    local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
+    local fallbackTarget = nil
+
+    if bossFolder then
+        for _, boss in ipairs(bossFolder:GetChildren()) do
+            local part = GetModelPart(boss)
+            if part then
+                local isSec = IsSecretBossEntity(boss)
+                if wantSecret and isSec then
+                    return boss, part
+                elseif not wantSecret and not isSec then
+                    return boss, part
+                elseif not fallbackTarget then
+                    fallbackTarget = { obj = boss, part = part }
+                end
+            end
+        end
+    end
+
+    local wsBoss = workspace:FindFirstChild("Boss") or workspace:FindFirstChild("BossZone")
+    if wsBoss then
+        local part = GetModelPart(wsBoss)
+        if part then
+            return wsBoss, part
+        end
+    end
+
+    if fallbackTarget then
+        return fallbackTarget.obj, fallbackTarget.part
+    end
+
+    return nil, nil
+end
+
+local lastBossActionTick = 0
+
+local function GetButtonLabelText(obj)
+    if not obj then return "" end
+    if obj:IsA("TextButton") or obj:IsA("TextLabel") then
+        if obj.Text and obj.Text ~= "" then
+            return obj.Text
+        end
+    end
+    local lbl = obj:FindFirstChild("Title") or obj:FindFirstChild("TextLabel") or obj:FindFirstChildWhichIsA("TextLabel", true)
+    if lbl and lbl.Text then
+        return lbl.Text
+    end
+    return ""
+end
+
+local function FindBossMenuFrame()
+    if not MainGui then return nil end
+    local menu = MainGui:FindFirstChild("Menu")
+    if not menu then return nil end
+    for _, name in ipairs({"BossFight", "Boss", "BossMenu", "Raid", "SecretBoss"}) do
+        local f = menu:FindFirstChild(name)
+        if f and f:IsA("GuiObject") then
+            return f
+        end
+    end
+    for _, child in ipairs(menu:GetChildren()) do
+        if child:IsA("Frame") and child.Name ~= "Info" and child.Name ~= "Black" and child.Name ~= "Dialogue" then
+            local title = child:FindFirstChild("Title")
+            if title and title:IsA("TextLabel") and string.find(string.lower(title.Text), "boss") then
+                return child
+            end
+            if child:FindFirstChild("Normal", true) and child:FindFirstChild("Hard", true) and child:FindFirstChild("Nightmare", true) then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function ClickBossModeAndStart(bossFrame, bossName, mode)
+    if not bossFrame then return false end
+    local targetMode = mode or "Normal"
+    local targetLower = string.lower(targetMode)
+    local modeMatched = false
+
+    for _, desc in ipairs(bossFrame:GetDescendants()) do
+        if desc:IsA("TextLabel") then
+            local txt = string.lower(desc.Text or "")
+            if string.find(txt, "mode:") and string.find(txt, targetLower) then
+                modeMatched = true
+                break
+            end
+        end
+    end
+
+    if not modeMatched then
+        for _, desc in ipairs(bossFrame:GetDescendants()) do
+            if desc:IsA("GuiButton") and desc.Visible then
+                local bName = string.lower(desc.Name)
+                local bTxt = string.lower(GetButtonLabelText(desc))
+                local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
+                if bName == targetLower or bTxt == targetLower or pName == targetLower then
+                    TriggerGuiButton(desc)
+                    task.wait(0.1)
+                    break
+                end
+            end
+        end
+    end
+
+    local inProgress = false
+    local startBtn = nil
+
+    for _, desc in ipairs(bossFrame:GetDescendants()) do
+        if desc:IsA("GuiButton") and desc.Visible and desc.Name ~= "Close" then
+            local bName = string.lower(desc.Name)
+            local bTxt = string.lower(GetButtonLabelText(desc))
+            local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
+            local isModeBtn = (bName == "normal" or bName == "hard" or bName == "nightmare"
+                or bTxt == "normal" or bTxt == "hard" or bTxt == "nightmare"
+                or pName == "normal" or pName == "hard" or pName == "nightmare"
+                or bTxt == "x" or pName == "close")
+            if not isModeBtn then
+                if string.find(bTxt, "in progress") then
+                    inProgress = true
+                elseif bTxt ~= "" or bName == "start" or bName == "fight" or bName == "play" or bName == "enter" or bName == "button" then
+                    startBtn = desc
+                end
+            end
+        end
+    end
+
+    if not inProgress and startBtn then
+        TriggerGuiButton(startBtn)
+    end
+
+    for _, rName in ipairs({"BossFight", "StartBossFight", "StartBoss", "Boss", "ChallengeBoss", "FightBoss"}) do
+        local ev = Events:FindFirstChild(rName)
+        if ev and not inProgress then
+            pcall(function()
+                if ev:IsA("RemoteEvent") then
+                    ev:FireServer(targetMode)
+                    if bossName then ev:FireServer(bossName, targetMode) end
+                elseif ev:IsA("RemoteFunction") then
+                    ev:InvokeServer(targetMode)
+                end
+            end)
+        end
+    end
+
+    return inProgress
+end
+
+local function StepAutoBoss(char, isMinigame)
+    if isMinigame then return end
+    local now = os.clock()
+    if now - lastBossActionTick < 0.8 then return end
+    lastBossActionTick = now
+
+    local wantSecret = Config.AutoSecretBoss
+    local bossObj, bossPart = FindBossTarget(wantSecret)
+    local hrp = cachedHrp or (char and char:FindFirstChild("HumanoidRootPart"))
+    local bossName = bossObj and (bossObj:GetAttribute("Name") or bossObj.Name) or nil
+
+    if bossPart and hrp then
+        local dist = (hrp.Position - bossPart.Position).Magnitude
+        if dist > 12 then
+            hrp.CFrame = bossPart.CFrame * CFrame.new(0, 3, -5)
+        end
+
+        local prompt = bossObj and bossObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt and fireproximityprompt then
+            pcall(function()
+                fireproximityprompt(prompt)
+            end)
+        end
+    end
+
+    local bossFrame = FindBossMenuFrame()
+    if bossFrame and bossFrame.Visible then
+        ClickBossModeAndStart(bossFrame, bossName, Config.BossMode)
+    end
+
+    if MainGui then
+        local menu = MainGui:FindFirstChild("Menu")
+        local dialogue = menu and menu:FindFirstChild("Dialogue")
+        if dialogue and dialogue.Visible then
+            local btnFrame = dialogue:FindFirstChild("ButtonFrame")
+            if btnFrame then
+                local chosenBtn = nil
+                local modeLower = string.lower(Config.BossMode or "Normal")
+                for _, btn in ipairs(btnFrame:GetChildren()) do
+                    if btn:IsA("TextButton") and btn.Name ~= "Template" and btn.Visible then
+                        local title = btn:FindFirstChild("Title")
+                        local txt = title and string.lower(title.Text) or ""
+                        if string.find(txt, modeLower) then
+                            chosenBtn = btn
+                            break
+                        elseif not chosenBtn and not string.find(txt, "close") and not string.find(txt, "cancel") and not string.find(txt, "nevermind") and not string.find(txt, "leave") then
+                            chosenBtn = btn
+                        end
+                    end
+                end
+                if chosenBtn then
+                    TriggerGuiButton(chosenBtn)
+                end
+            end
+        end
+    end
+
+    if char then
+        if char:GetAttribute("Type") ~= "Fishing Rod" then
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
+        elseif not char:GetAttribute("Fishing") and hrp then
+            pcall(function()
+                FishingEvent:FireServer(hrp.CFrame)
+            end)
+        end
+    end
+end
+
 task.spawn(function()
     local lastCastTry = 0
     local lastSkillTry = 0
-    while task.wait(0.1) do
+    while task.wait(0.12) do
         local now = os.clock()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
+        local activeReel = Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss
+        local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss
+        local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss
 
-        if Config.AutoReel and isMinigame then
+        if activeReel and isMinigame then
             pcall(function()
                 UpdateFishProgression:FireServer()
             end)
         end
 
-        if Config.AutoSkill and isMinigame and (now - lastSkillTry >= 0.45) then
+        if activeSkill and isMinigame and (now - lastSkillTry >= 0.45) then
             local char = cachedChar
             if char and IsGameAllowingSkill(char) then
                 for _, key in ipairs(Config.SkillOrder) do
@@ -378,7 +815,9 @@ task.spawn(function()
             end
         end
 
-        if Config.AutoCast and not isMinigame and (now - lastCastTry >= 0.6) then
+        if Config.AutoBoss or Config.AutoSecretBoss then
+            StepAutoBoss(cachedChar, isMinigame)
+        elseif activeCast and not isMinigame and (now - lastCastTry >= 0.6) then
             local char = cachedChar
             if char then
                 if char:GetAttribute("Type") ~= "Fishing Rod" then
@@ -401,7 +840,7 @@ task.spawn(function()
 end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
-    if Config.AutoReel and remote then
+    if (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
         task.wait(0.05)
         pcall(function()
             remote:FireServer("Perfect")
@@ -410,7 +849,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
-    if Config.AutoReel and remote then
+    if (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
         task.wait(0.05)
         pcall(function()
             remote:FireServer()
@@ -436,69 +875,272 @@ local function updateESP()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             local char = player.Character
-            if char and char:FindFirstChild("Head") and char:FindFirstChild("Humanoid") then
-                local hum = char.Humanoid
-                local head = char.Head
-                local esp = head:FindFirstChild("StarCrowESP")
-
-                if hum.Health > 0 then
-                    if not esp then
-                        esp = Instance.new("BillboardGui")
-                        esp.Name = "StarCrowESP"
-                        esp.Adornee = head
-                        esp.Size = UDim2.new(0, 200, 0, 25)
-                        esp.StudsOffset = Vector3.new(0, 2.5, 0)
-                        esp.AlwaysOnTop = true
-                        esp.MaxDistance = math.huge
-                        local text = Instance.new("TextLabel")
-                        text.Name = "NameText"
-                        text.Parent = esp
-                        text.Size = UDim2.new(1, 0, 1, 0)
-                        text.BackgroundTransparency = 1
-                        text.TextScaled = false
-                        text.TextSize = 13
-                        text.Font = Enum.Font.GothamBold
-                        text.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        text.TextStrokeTransparency = 0
-                        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                        text.TextXAlignment = Enum.TextXAlignment.Center
-                        esp.Parent = head
+            if char then
+                local head = char:FindFirstChild("Head")
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if head and hum then
+                    local esp = head:FindFirstChild("StarCrowESP")
+                    if hum.Health > 0 then
+                        if not esp then
+                            esp = Instance.new("BillboardGui")
+                            esp.Name = "StarCrowESP"
+                            esp.Adornee = head
+                            esp.Size = UDim2.new(0, 200, 0, 25)
+                            esp.StudsOffset = Vector3.new(0, 2.5, 0)
+                            esp.AlwaysOnTop = true
+                            esp.MaxDistance = math.huge
+                            local text = Instance.new("TextLabel")
+                            text.Name = "NameText"
+                            text.Parent = esp
+                            text.Size = UDim2.new(1, 0, 1, 0)
+                            text.BackgroundTransparency = 1
+                            text.TextScaled = false
+                            text.TextSize = 13
+                            text.Font = Enum.Font.GothamBold
+                            text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            text.TextStrokeTransparency = 0
+                            text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            text.TextXAlignment = Enum.TextXAlignment.Center
+                            esp.Parent = head
+                        end
+                        esp.NameText.Text = player.DisplayName
+                    else
+                        if esp then esp:Destroy() end
                     end
-                    esp.NameText.Text = player.DisplayName
-                else
-                    if esp then esp:Destroy() end
                 end
             end
         end
     end
 end
 
-local _espThrottle = 0
-RunService.RenderStepped:Connect(function(dt)
-    if not Config.ESPEnabled then return end
-    _espThrottle = _espThrottle + dt
-    if _espThrottle < 0.05 then return end
-    _espThrottle = 0
-    updateESP()
+task.spawn(function()
+    while task.wait(0.4) do
+        if Config.ESPEnabled then
+            updateESP()
+        end
+    end
 end)
 
 local lastSellTime = 0
+local RemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+
+local function FindRemote(name)
+    return Events:FindFirstChild(name) or (RemotesFolder and RemotesFolder:FindFirstChild(name))
+end
+
+local function FireOrInvokeEvent(ev, ...)
+    if not ev then return false end
+    local args = {...}
+    local ok = pcall(function()
+        if ev:IsA("RemoteEvent") then
+            ev:FireServer(unpack(args))
+        elseif ev:IsA("RemoteFunction") then
+            ev:InvokeServer(unpack(args))
+        end
+    end)
+    return ok
+end
+
+local function ClickInventoryUIItem(targetName)
+    if not MainGui or not targetName or targetName == "" then return false end
+    local mainNode = MainGui:FindFirstChild("Main")
+    local fishInv = mainNode and mainNode:FindFirstChild("Fishing_INV")
+    local invMain = fishInv and fishInv:FindFirstChild("Main")
+    if not invMain then return false end
+    for _, desc in ipairs(invMain:GetDescendants()) do
+        if desc.Name == targetName or desc:GetAttribute("ItemName") == targetName then
+            local btn = (desc:IsA("GuiButton") and desc)
+                or desc:FindFirstChild("Equip", true)
+                or desc:FindFirstChild("Select", true)
+                or desc:FindFirstChild("Choose", true)
+                or desc:FindFirstChild("Button", true)
+                or desc:FindFirstChildWhichIsA("GuiButton", true)
+            if btn and TriggerGuiButton(btn) then
+                local equipBtn = invMain:FindFirstChild("Equip", true)
+                if equipBtn and equipBtn:IsA("GuiButton") then
+                    TriggerGuiButton(equipBtn)
+                end
+                return true
+            end
+        end
+    end
+    return false
+end
 
 local function DoBuyBait(baitName, amount)
     if not baitName or baitName == "" then return end
     local amt = math.max(1, math.floor(tonumber(amount) or 1))
-    local buyEvent = Events:FindFirstChild("BuyBait") or Events:FindFirstChild("Bait") or Events:FindFirstChild("PurchaseBait") or Events:FindFirstChild("BaitShop") or Events:FindFirstChild("BuyItem")
-    pcall(function()
-        if buyEvent then
-            if buyEvent:IsA("RemoteEvent") then
-                buyEvent:FireServer(baitName, amt)
-            elseif buyEvent:IsA("RemoteFunction") then
-                buyEvent:InvokeServer(baitName, amt)
-            end
-        else
+    local buyEvent = FindRemote("BuyBait") or FindRemote("Bait") or FindRemote("PurchaseBait") or FindRemote("BaitShop") or FindRemote("BuyItem")
+    if buyEvent then
+        FireOrInvokeEvent(buyEvent, baitName, amt)
+    else
+        pcall(function()
             CraftBaitEvent:FireServer(baitName, amt)
+        end)
+    end
+end
+
+local function GetBestOwnedRod()
+    local rodInv = PlayerData:FindFirstChild("FishingRodInventory")
+    local invInfo = Info:FindFirstChild("Inventory")
+    if not rodInv or not invInfo then return nil end
+    local bestRod = nil
+    local bestPower = -1
+    for _, rodFolder in ipairs(rodInv:GetChildren()) do
+        local owned = rodFolder:FindFirstChild("Owned")
+        if owned and owned.Value == true then
+            local data = GetModuleData(invInfo:FindFirstChild(rodFolder.Name))
+            if data then
+                local pwr = tonumber(data.Power) or 0
+                if pwr > bestPower then
+                    bestPower = pwr
+                    bestRod = rodFolder.Name
+                end
+            end
         end
-    end)
+    end
+    return bestRod
+end
+
+local function ScoreItemData(data)
+    if type(data) ~= "table" then return 0 end
+    local score = (tonumber(data.Power) or 0) * 1000
+        + (tonumber(data.Boost) or 0) * 500
+        + (tonumber(data.Luck) or 0) * 200
+        + (tonumber(data.Price) or 0) * 0.01
+    if data.Ingredient then
+        score = score + 50000
+    end
+    if data.Rarity == "Secret" then
+        score = score + 1000000
+    elseif data.Rarity == "Mythical" then
+        score = score + 500000
+    elseif data.Rarity == "Legendary" then
+        score = score + 100000
+    end
+    return score
+end
+
+local function IsItemOwnedInFolder(folder, itemName)
+    if not folder then return false end
+    local entry = folder:FindFirstChild(itemName)
+    if not entry then return false end
+    if entry:IsA("BoolValue") then return entry.Value == true end
+    if entry:IsA("NumberValue") or entry:IsA("IntValue") then return entry.Value > 0 end
+    local owned = entry:FindFirstChild("Owned")
+    if owned and owned:IsA("BoolValue") then return owned.Value == true end
+    local qty = entry:FindFirstChild("Quantity") or entry:FindFirstChild("Amount") or entry:FindFirstChild("Value")
+    if qty and (qty:IsA("NumberValue") or qty:IsA("IntValue")) then return qty.Value > 0 end
+    return true
+end
+
+local function GetBestOwnedBait()
+    local baitInfo = Info:FindFirstChild("Bait")
+    if not baitInfo then return nil end
+    local bestBait = nil
+    local bestScore = -1
+    local baitDataFolder = PlayerData:FindFirstChild("Bait") or PlayerData:FindFirstChild("BaitInventory") or PlayerData:FindFirstChild("Baits")
+    local genInv = PlayerData:FindFirstChild("Inventory")
+    for _, mod in ipairs(baitInfo:GetChildren()) do
+        if mod:IsA("ModuleScript") then
+            local isOwned = IsItemOwnedInFolder(baitDataFolder, mod.Name) or IsItemOwnedInFolder(genInv, mod.Name)
+            if isOwned then
+                local data = GetModuleData(mod)
+                if data then
+                    local sc = ScoreItemData(data)
+                    if sc > bestScore then
+                        bestScore = sc
+                        bestBait = mod.Name
+                    end
+                end
+            end
+        end
+    end
+    return bestBait
+end
+
+local function GetBestOwnedOrb()
+    local orbInfo = Info:FindFirstChild("Orb")
+    if not orbInfo then return nil end
+    local bestOrb = nil
+    local bestScore = -1
+    local orbDataFolder = PlayerData:FindFirstChild("Orb") or PlayerData:FindFirstChild("OrbInventory") or PlayerData:FindFirstChild("Orbs")
+    local genInv = PlayerData:FindFirstChild("Inventory")
+    for _, mod in ipairs(orbInfo:GetChildren()) do
+        if mod:IsA("ModuleScript") then
+            local isOwned = IsItemOwnedInFolder(orbDataFolder, mod.Name) or IsItemOwnedInFolder(genInv, mod.Name)
+            if isOwned then
+                local data = GetModuleData(mod)
+                if data then
+                    local sc = ScoreItemData(data)
+                    if sc > bestScore then
+                        bestScore = sc
+                        bestOrb = mod.Name
+                    end
+                end
+            end
+        end
+    end
+    return bestOrb
+end
+
+local function TryEquipBestRod()
+    local bestRod = GetBestOwnedRod()
+    if not bestRod then return end
+    local curRodVal = PlayerData:FindFirstChild("FishingRod")
+    if curRodVal and curRodVal.Value == bestRod then return end
+    ClickInventoryUIItem(bestRod)
+    local ev = FindRemote("EquipRod")
+        or FindRemote("EquipFishingRod")
+        or FindRemote("ChangeRod")
+        or FindRemote("SelectRod")
+        or FindRemote("FishingRodInventory")
+        or FindRemote("FishingRod")
+        or FindRemote("Equip")
+    if ev then
+        FireOrInvokeEvent(ev, bestRod)
+        FireOrInvokeEvent(ev, "Rod", bestRod)
+    end
+end
+
+local function TryEquipBestBait()
+    local bestBait = GetBestOwnedBait()
+    if not bestBait then return end
+    local curRod = PlayerData:FindFirstChild("FishingRod") and PlayerData.FishingRod.Value or ""
+    ClickInventoryUIItem(bestBait)
+    local ev = FindRemote("EquipBait")
+        or FindRemote("ChangeBait")
+        or FindRemote("SelectBait")
+        or FindRemote("Bait")
+        or FindRemote("FishingRodInventory")
+        or FindRemote("Equip")
+    if ev then
+        FireOrInvokeEvent(ev, bestBait)
+        FireOrInvokeEvent(ev, "Bait", bestBait)
+        if curRod ~= "" then
+            FireOrInvokeEvent(ev, curRod, bestBait)
+        end
+    end
+end
+
+local function TryEquipBestOrb()
+    local bestOrb = GetBestOwnedOrb()
+    if not bestOrb then return end
+    local curRod = PlayerData:FindFirstChild("FishingRod") and PlayerData.FishingRod.Value or ""
+    ClickInventoryUIItem(bestOrb)
+    local ev = FindRemote("EquipOrb")
+        or FindRemote("ChangeOrb")
+        or FindRemote("SelectOrb")
+        or FindRemote("Orb")
+        or FindRemote("FishingRodInventory")
+        or FindRemote("Equip")
+    if ev then
+        FireOrInvokeEvent(ev, bestOrb)
+        FireOrInvokeEvent(ev, "Orb", bestOrb)
+        if curRod ~= "" then
+            FireOrInvokeEvent(ev, curRod, bestOrb)
+        end
+    end
 end
 
 task.spawn(function()
@@ -534,32 +1176,20 @@ local function GetBuyableBaits()
     local seen = {}
     local baitFolder = Info:FindFirstChild("Bait")
     if baitFolder then
-        for _, child in pairs(baitFolder:GetChildren()) do
-            local ok, data = pcall(require, child)
-            if ok and type(data) == "table" and not data.Ingredient then
+        for _, child in ipairs(baitFolder:GetChildren()) do
+            local data = GetModuleData(child)
+            if data and not data.Ingredient then
                 seen[child.Name] = true
                 table.insert(list, child.Name)
             end
         end
     end
-    local invFolder = Info:FindFirstChild("Inventory")
-    if invFolder then
-        for _, child in pairs(invFolder:GetChildren()) do
-            if not seen[child.Name] then
-                local ok, data = pcall(require, child)
-                if ok and type(data) == "table" and data.Type == "Bait" and not data.Ingredient then
-                    seen[child.Name] = true
-                    table.insert(list, child.Name)
-                end
-            end
-        end
-    end
     local itemFolder = Info:FindFirstChild("Item")
     if itemFolder then
-        for _, child in pairs(itemFolder:GetChildren()) do
+        for _, child in ipairs(itemFolder:GetChildren()) do
             if not seen[child.Name] then
-                local ok, data = pcall(require, child)
-                if ok and type(data) == "table" and data.Type == "Bait" and not data.Ingredient then
+                local data = GetModuleData(child)
+                if data and data.Type == "Bait" and not data.Ingredient then
                     seen[child.Name] = true
                     table.insert(list, child.Name)
                 end
@@ -574,9 +1204,9 @@ local function GetCraftableBaits()
     local list = {}
     local baitFolder = Info:FindFirstChild("Bait")
     if baitFolder then
-        for _, child in pairs(baitFolder:GetChildren()) do
-            local ok, data = pcall(require, child)
-            if ok and type(data) == "table" and data.Ingredient then
+        for _, child in ipairs(baitFolder:GetChildren()) do
+            local data = GetModuleData(child)
+            if data and data.Ingredient then
                 table.insert(list, child.Name)
             end
         end
@@ -589,15 +1219,135 @@ local function GetCraftableRods()
     local list = {}
     local invFolder = Info:FindFirstChild("Inventory")
     if invFolder then
-        for _, child in pairs(invFolder:GetChildren()) do
-            local ok, data = pcall(require, child)
-            if ok and type(data) == "table" and data.Ingredient and data.Type == "Fishing Rod" then
+        for _, child in ipairs(invFolder:GetChildren()) do
+            local data = GetModuleData(child)
+            if data and data.Ingredient and data.Type == "Fishing Rod" then
                 table.insert(list, child.Name)
             end
         end
     end
     table.sort(list)
     return list
+end
+
+local IslandTargets = {}
+
+local CanonicalIslandOrder = {
+    ["Beginning Isle"] = 1,
+    ["Bamboo Isle"] = 2,
+    ["Fallout Isle"] = 3,
+    ["Sovereign Isle"] = 4,
+    ["Perch Isle"] = 5,
+    ["Frost Isle"] = 6,
+    ["Coconut Isle"] = 7,
+    ["Amber Isle"] = 8,
+    ["Battlefield Isle"] = 9,
+    ["Mistpeak Isle"] = 10,
+    ["World Angler Isle"] = 11,
+    ["Weather Isle"] = 12,
+    ["Mystic Reef Isle"] = 13
+}
+
+local function GetCanonicalIslandRank(name)
+    if CanonicalIslandOrder[name] then
+        return CanonicalIslandOrder[name]
+    end
+    local lowerName = string.lower(name)
+    for k, rank in pairs(CanonicalIslandOrder) do
+        local lk = string.lower(k)
+        if lowerName == lk or string.find(lowerName, lk, 1, true) or string.find(lk, lowerName, 1, true) then
+            return rank
+        end
+    end
+    return nil
+end
+
+local function GetIslandList()
+    local rawIslands = {}
+    local seen = {}
+    table.clear(IslandTargets)
+
+    local sp = workspace:FindFirstChild("Spawnpoint")
+    if not sp then return {} end
+
+    local startPart = sp:FindFirstChild("Beginning Isle")
+    local startPos = startPart and GetModelPart(startPart) and GetModelPart(startPart).Position or Vector3.zero
+
+    local compassOrder = {}
+    if MainGui then
+        local menu = MainGui:FindFirstChild("Menu")
+        local compass = menu and menu:FindFirstChild("Compass")
+        local areaList = compass and compass:FindFirstChild("AreaList")
+        if areaList then
+            for _, item in ipairs(areaList:GetChildren()) do
+                if item:IsA("GuiObject") and item:FindFirstChild("Track") then
+                    local powerVal = nil
+                    for _, desc in ipairs(item:GetDescendants()) do
+                        if desc:IsA("TextLabel") and desc.Text then
+                            local m = string.match(desc.Text, "Power:%s*(%d+)")
+                            if m then
+                                powerVal = tonumber(m)
+                                break
+                            end
+                        end
+                    end
+                    local orderScore = (powerVal or 999) * 1000 + (item.LayoutOrder or 0)
+                    compassOrder[item.Name] = orderScore
+                end
+            end
+        end
+    end
+
+    for _, child in ipairs(sp:GetChildren()) do
+        local part = GetModelPart(child)
+        if part and not seen[child.Name] then
+            seen[child.Name] = true
+            local rank = GetCanonicalIslandRank(child.Name)
+            local weight
+            if rank then
+                weight = rank
+            elseif compassOrder[child.Name] then
+                weight = 1000 + compassOrder[child.Name]
+            else
+                weight = 1e7 + (part.Position - startPos).Magnitude
+            end
+            table.insert(rawIslands, {
+                name = child.Name,
+                part = part,
+                weight = weight
+            })
+        end
+    end
+
+    table.sort(rawIslands, function(a, b)
+        if a.weight ~= b.weight then
+            return a.weight < b.weight
+        end
+        return a.name < b.name
+    end)
+
+    local list = {}
+    for i, entry in ipairs(rawIslands) do
+        local label = "Island " .. tostring(i)
+        IslandTargets[label] = entry.part
+        IslandTargets[entry.name] = entry.part
+        table.insert(list, label)
+    end
+
+    return list
+end
+
+local function TeleportToIsland(islandName)
+    if not islandName or islandName == "" then return end
+    if not IslandTargets[islandName] then
+        GetIslandList()
+    end
+    local targetPart = IslandTargets[islandName]
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and targetPart then
+        hrp.CFrame = targetPart.CFrame + Vector3.new(0, 5, 0)
+    end
 end
 
 local KnownCodes = {
@@ -658,6 +1408,98 @@ local function RedeemAllCodes()
         end
     end)
 end
+
+local OriginalLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    FogEnd = Lighting.FogEnd,
+    FogStart = Lighting.FogStart,
+    GlobalShadows = Lighting.GlobalShadows,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient
+}
+
+local OriginalAtmosphere = {}
+for _, child in ipairs(Lighting:GetChildren()) do
+    if child:IsA("Atmosphere") then
+        OriginalAtmosphere[child] = {
+            Density = child.Density,
+            Haze = child.Haze,
+            Glare = child.Glare
+        }
+    end
+end
+
+local applyingLighting = false
+
+local function ApplyLightingSettings()
+    if applyingLighting then return end
+    applyingLighting = true
+    pcall(function()
+        if Config.FullBright then
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 14
+            Lighting.GlobalShadows = false
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        end
+        if Config.NoFog then
+            Lighting.FogStart = 100000
+            Lighting.FogEnd = 100000
+            for _, child in ipairs(Lighting:GetChildren()) do
+                if child:IsA("Atmosphere") then
+                    if not OriginalAtmosphere[child] then
+                        OriginalAtmosphere[child] = {
+                            Density = child.Density,
+                            Haze = child.Haze,
+                            Glare = child.Glare
+                        }
+                    end
+                    child.Density = 0
+                    child.Haze = 0
+                    child.Glare = 0
+                end
+            end
+        end
+    end)
+    applyingLighting = false
+end
+
+local function RestoreFullBright()
+    applyingLighting = true
+    pcall(function()
+        Lighting.Brightness = OriginalLighting.Brightness
+        Lighting.ClockTime = OriginalLighting.ClockTime
+        Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+        Lighting.Ambient = OriginalLighting.Ambient
+        Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+    end)
+    applyingLighting = false
+end
+
+local function RestoreNoFog()
+    applyingLighting = true
+    pcall(function()
+        Lighting.FogStart = OriginalLighting.FogStart
+        Lighting.FogEnd = OriginalLighting.FogEnd
+        for atm, orig in pairs(OriginalAtmosphere) do
+            if atm and atm.Parent then
+                atm.Density = orig.Density
+                atm.Haze = orig.Haze
+                atm.Glare = orig.Glare
+            end
+        end
+    end)
+    applyingLighting = false
+end
+
+Lighting.Changed:Connect(function()
+    if Config.FullBright or Config.NoFog then
+        ApplyLightingSettings()
+    end
+end)
+
+ApplyLightingSettings()
 
 local LogoGui = Instance.new("ScreenGui")
 LogoGui.Name = "StarCrowLogoGui"
@@ -787,6 +1629,7 @@ local Window = Fluent:CreateWindow({
 local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Shop = Window:AddTab({ Title = "Shop", Icon = "shopping-cart" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Misc = Window:AddTab({ Title = "Misc", Icon = "layers" }),
@@ -809,6 +1652,61 @@ Tabs.Main:AddToggle("AutoReelToggle", {
     Default = Config.AutoReel,
     Callback = function(Value)
         Config.AutoReel = Value
+        SaveConfig()
+    end
+})
+
+local bossModes = {"Normal", "Hard", "Nightmare"}
+if not table.find(bossModes, Config.BossMode) then
+    Config.BossMode = "Normal"
+end
+
+Tabs.Main:AddDropdown("SelectBossModeDropdown", {
+    Title = "Select Boss Mode",
+    Values = bossModes,
+    Default = Config.BossMode,
+    Multi = false,
+    Callback = function(Value)
+        Config.BossMode = Value or "Normal"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoBossToggle", {
+    Title = "Auto Boss",
+    Default = Config.AutoBoss,
+    Callback = function(Value)
+        Config.AutoBoss = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoSecretBossToggle", {
+    Title = "Auto Secret Boss",
+    Default = Config.AutoSecretBoss,
+    Callback = function(Value)
+        Config.AutoSecretBoss = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AutoFinalPhaseToggle", {
+    Title = "Auto Final Phase Boss",
+    Default = Config.AutoFinalPhase,
+    Callback = function(Value)
+        Config.AutoFinalPhase = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("AntiConfuseToggle", {
+    Title = "Anti Confuse",
+    Default = Config.AntiConfuse,
+    Callback = function(Value)
+        Config.AntiConfuse = Value
+        if Value and LocalPlayer.Character then
+            ApplyAntiConfuse(LocalPlayer.Character)
+        end
         SaveConfig()
     end
 })
@@ -865,6 +1763,29 @@ end)
 if SkillDropdown.Display then
     SkillDropdown:Display()
 end
+
+Tabs.Main:AddSection("Equipment")
+
+Tabs.Main:AddButton({
+    Title = "Equip Best Rod",
+    Callback = function()
+        TryEquipBestRod()
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Equip Best Bait",
+    Callback = function()
+        TryEquipBestBait()
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Equip Best Orb",
+    Callback = function()
+        TryEquipBestOrb()
+    end
+})
 
 Tabs.Player:AddSection("Movement")
 
@@ -930,6 +1851,31 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     Callback = function(Value)
         Config.InfJumpEnabled = Value
         SaveConfig()
+    end
+})
+
+Tabs.Teleport:AddSection("Island")
+
+local islandList = GetIslandList()
+if (Config.SelectedIsland == "" or not table.find(islandList, Config.SelectedIsland)) and #islandList > 0 then
+    Config.SelectedIsland = islandList[1]
+end
+
+Tabs.Teleport:AddDropdown("SelectIslandDropdown", {
+    Title = "Select Island",
+    Values = islandList,
+    Default = Config.SelectedIsland ~= "" and Config.SelectedIsland or islandList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedIsland = Value or ""
+        SaveConfig()
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport To Island",
+    Callback = function()
+        TeleportToIsland(Config.SelectedIsland)
     end
 })
 
@@ -1111,6 +2057,42 @@ Tabs.ESP:AddToggle("ESPPlayers", {
         SaveConfig()
         if not Value then
             clearPlayerESP()
+        end
+    end
+})
+
+Tabs.Misc:AddSection("Visual")
+
+Tabs.Misc:AddToggle("FullBrightToggle", {
+    Title = "FullBright",
+    Default = Config.FullBright,
+    Callback = function(Value)
+        Config.FullBright = Value
+        SaveConfig()
+        if Value then
+            ApplyLightingSettings()
+        else
+            RestoreFullBright()
+            if Config.NoFog then
+                ApplyLightingSettings()
+            end
+        end
+    end
+})
+
+Tabs.Misc:AddToggle("NoFogToggle", {
+    Title = "No Fog",
+    Default = Config.NoFog,
+    Callback = function(Value)
+        Config.NoFog = Value
+        SaveConfig()
+        if Value then
+            ApplyLightingSettings()
+        else
+            RestoreNoFog()
+            if Config.FullBright then
+                ApplyLightingSettings()
+            end
         end
     end
 })
