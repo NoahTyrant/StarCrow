@@ -55,7 +55,17 @@ local Config = {
     NoclipEnabled = false,
     InfJumpEnabled = false,
     FlyEnabled = false,
-    FlySpeed = 2
+    FlySpeed = 2,
+    FloatSize = 46,
+    NoclipFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = -54 },
+    NoclipFloatVisible = false,
+    FlyFloatPos = { xs = 0.85, xo = 0, ys = 0.5, yo = -108 },
+    FlyFloatVisible = false,
+    FlyKeybind = "F",
+    FlyKeybindEnabled = true,
+    NoclipKeybind = "J",
+    NoclipKeybindEnabled = true,
+    DisableAllKeybinds = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -1979,6 +1989,104 @@ local Tabs = {
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
+local noclipFloatBtn, flyFloatBtn
+local noclipFloatStroke, flyFloatStroke
+local FlyToggleObj, NoclipToggleObj
+local updateFloatButtonsSize
+
+local function makeDraggableFloat(b, posKey)
+    local dragging, moved, startPos, startBtnPos, activeInput = false, false, nil, nil, nil
+    b.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved, startPos, startBtnPos, activeInput = true, false, input.Position, b.Position, input
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    activeInput = nil
+                    if moved and posKey then
+                        local p = b.Position
+                        Config[posKey] = { xs = p.X.Scale, xo = p.X.Offset, ys = p.Y.Scale, yo = p.Y.Offset }
+                        SaveConfig()
+                    end
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input == activeInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - startPos
+            if delta.Magnitude > 6 then moved = true end
+            b.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
+        end
+    end)
+    return function() return moved end, function() moved = false end
+end
+
+local function setFloatStrokeActive(stroke, active)
+    if not stroke then return end
+    local oldGradient = stroke:FindFirstChildOfClass("UIGradient")
+    if oldGradient then oldGradient:Destroy() end
+    local gradient = Instance.new("UIGradient")
+    if active then
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 2.2
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 70, 255)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 180, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 70, 255)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 }):Play()
+        end)
+    else
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 1.6
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 0, 120)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 100, 200)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 0, 120)),
+        })
+        gradient.Parent = stroke
+        task.spawn(function()
+            TweenService:Create(gradient, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 180 }):Play()
+        end)
+    end
+end
+
+local lastFlyToggleTime = 0
+local function toggleFly()
+    local now = tick()
+    if now - lastFlyToggleTime < 0.25 then return end
+    lastFlyToggleTime = now
+    if FlyToggleObj then
+        FlyToggleObj:SetValue(not Config.FlyEnabled)
+    else
+        Config.FlyEnabled = not Config.FlyEnabled
+        SaveConfig()
+        if Config.FlyEnabled then startFly() else stopFly() end
+        if flyFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(flyFloatStroke, Config.FlyEnabled)
+        end
+    end
+end
+
+local lastNoclipToggleTime = 0
+local function toggleNoclip()
+    local now = tick()
+    if now - lastNoclipToggleTime < 0.25 then return end
+    lastNoclipToggleTime = now
+    if NoclipToggleObj then
+        NoclipToggleObj:SetValue(not Config.NoclipEnabled)
+    else
+        Config.NoclipEnabled = not Config.NoclipEnabled
+        SaveConfig()
+        if noclipFloatStroke and setFloatStrokeActive then
+            setFloatStrokeActive(noclipFloatStroke, Config.NoclipEnabled)
+        end
+    end
+end
+
 Tabs.Main:AddSection("Fishing")
 
 Tabs.Main:AddToggle("AutoCastToggle", {
@@ -2165,7 +2273,7 @@ Tabs.Player:AddSlider("WalkSpeedSlider", {
     end
 })
 
-Tabs.Player:AddToggle("FlyToggle", {
+FlyToggleObj = Tabs.Player:AddToggle("FlyToggle", {
     Title = "Fly",
     Default = Config.FlyEnabled,
     Callback = function(Value)
@@ -2175,6 +2283,9 @@ Tabs.Player:AddToggle("FlyToggle", {
             startFly()
         else
             stopFly()
+        end
+        if flyFloatStroke then
+            setFloatStrokeActive(flyFloatStroke, Value)
         end
     end
 })
@@ -2191,12 +2302,15 @@ Tabs.Player:AddSlider("FlySpeedSlider", {
     end
 })
 
-Tabs.Player:AddToggle("NoclipToggle", {
+NoclipToggleObj = Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
     Default = Config.NoclipEnabled,
     Callback = function(Value)
         Config.NoclipEnabled = Value
         SaveConfig()
+        if noclipFloatStroke then
+            setFloatStrokeActive(noclipFloatStroke, Value)
+        end
     end
 })
 
@@ -2529,8 +2643,6 @@ Tabs.Misc:AddButton({
     end
 })
 
-Tabs.Settings:AddSection("Keybinds")
-
 Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     Title = "Minimize UI Keybind",
     Mode = "Toggle",
@@ -2541,6 +2653,190 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
         Window.MinimizeKey = keyCode
     end
 })
+
+Tabs.Settings:AddSection("Keybinds")
+
+Tabs.Settings:AddToggle("DisableAllKeybindsToggle", {
+    Title = "Disable Keybinds",
+    Default = Config.DisableAllKeybinds or false,
+    Callback = function(Value)
+        Config.DisableAllKeybinds = Value
+        SaveConfig()
+    end
+})
+
+local function getFlyKey()
+    local k = Config.FlyKeybind or "F"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.F
+end
+
+Tabs.Settings:AddKeybind("FlyKeybind", {
+    Title = "Fly Keybind",
+    Mode = "Toggle",
+    Default = Config.FlyKeybind or "F",
+    Callback = function()
+        if not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
+            toggleFly()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.FlyKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+local function getNoclipKey()
+    local k = Config.NoclipKeybind or "J"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.J
+end
+
+Tabs.Settings:AddKeybind("NoclipKeybind", {
+    Title = "Noclip Keybind",
+    Mode = "Toggle",
+    Default = Config.NoclipKeybind or "J",
+    Callback = function()
+        if not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
+            toggleNoclip()
+        end
+    end,
+    ChangedCallback = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.NoclipKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if Config.DisableAllKeybinds then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if Config.FlyKeybindEnabled ~= false and input.KeyCode == getFlyKey() then
+            toggleFly()
+        elseif Config.NoclipKeybindEnabled ~= false and input.KeyCode == getNoclipKey() then
+            toggleNoclip()
+        end
+    end
+end)
+
+Tabs.Settings:AddSection("Float Buttons")
+
+Tabs.Settings:AddSlider("FloatSizeSlider", {
+    Title = "Float Size",
+    Default = Config.FloatSize or 46,
+    Min = 25,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(Value)
+        if updateFloatButtonsSize then
+            updateFloatButtonsSize(Value)
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddToggle("FloatNoclipToggle", {
+    Title = "Float Noclip",
+    Default = Config.NoclipFloatVisible or false,
+    Callback = function(Value)
+        if noclipFloatBtn then
+            noclipFloatBtn.Visible = Value
+        end
+        Config.NoclipFloatVisible = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddToggle("FloatFlyToggle", {
+    Title = "Float Fly",
+    Default = Config.FlyFloatVisible or false,
+    Callback = function(Value)
+        if flyFloatBtn then
+            flyFloatBtn.Visible = Value
+        end
+        Config.FlyFloatVisible = Value
+        SaveConfig()
+    end
+})
+
+local fSize = Config.FloatSize or 46
+local tSize = math.clamp(math.floor(fSize * 0.28), 10, 18)
+
+noclipFloatBtn = Instance.new("TextButton")
+local np = Config.NoclipFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = -54 }
+noclipFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
+noclipFloatBtn.Position = UDim2.new(np.xs, np.xo, np.ys, np.yo)
+noclipFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+noclipFloatBtn.BackgroundTransparency = 0.88
+noclipFloatBtn.BorderSizePixel = 0
+noclipFloatBtn.Text = "Noclip"
+noclipFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+noclipFloatBtn.TextScaled = false
+noclipFloatBtn.TextSize = tSize
+noclipFloatBtn.Font = Enum.Font.GothamBold
+noclipFloatBtn.ZIndex = 15
+noclipFloatBtn.Visible = Config.NoclipFloatVisible or false
+noclipFloatBtn.Parent = LogoGui
+Instance.new("UICorner", noclipFloatBtn).CornerRadius = UDim.new(0, 8)
+noclipFloatStroke = Instance.new("UIStroke", noclipFloatBtn)
+noclipFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(noclipFloatStroke, Config.NoclipEnabled)
+
+local getNoclipMoved, resetNoclipMoved = makeDraggableFloat(noclipFloatBtn, "NoclipFloatPos")
+
+noclipFloatBtn.MouseButton1Click:Connect(function()
+    if getNoclipMoved() then resetNoclipMoved() return end
+    toggleNoclip()
+end)
+
+flyFloatBtn = Instance.new("TextButton")
+local fp = Config.FlyFloatPos or { xs = 0.85, xo = 0, ys = 0.5, yo = -108 }
+flyFloatBtn.Size = UDim2.new(0, fSize, 0, fSize)
+flyFloatBtn.Position = UDim2.new(fp.xs, fp.xo, fp.ys, fp.yo)
+flyFloatBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+flyFloatBtn.BackgroundTransparency = 0.88
+flyFloatBtn.BorderSizePixel = 0
+flyFloatBtn.Text = "Fly"
+flyFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+flyFloatBtn.TextScaled = false
+flyFloatBtn.TextSize = tSize
+flyFloatBtn.Font = Enum.Font.GothamBold
+flyFloatBtn.ZIndex = 15
+flyFloatBtn.Visible = Config.FlyFloatVisible or false
+flyFloatBtn.Parent = LogoGui
+Instance.new("UICorner", flyFloatBtn).CornerRadius = UDim.new(0, 8)
+flyFloatStroke = Instance.new("UIStroke", flyFloatBtn)
+flyFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+setFloatStrokeActive(flyFloatStroke, Config.FlyEnabled)
+
+local getFlyMoved, resetFlyMoved = makeDraggableFloat(flyFloatBtn, "FlyFloatPos")
+
+flyFloatBtn.MouseButton1Click:Connect(function()
+    if getFlyMoved() then resetFlyMoved() return end
+    toggleFly()
+end)
+
+updateFloatButtonsSize = function(size)
+    local s = tonumber(size) or 46
+    Config.FloatSize = s
+    local ts = math.clamp(math.floor(s * 0.28), 10, 18)
+    if noclipFloatBtn then
+        noclipFloatBtn.Size = UDim2.new(0, s, 0, s)
+        noclipFloatBtn.TextSize = ts
+    end
+    if flyFloatBtn then
+        flyFloatBtn.Size = UDim2.new(0, s, 0, s)
+        flyFloatBtn.TextSize = ts
+    end
+end
 
 Window:SelectTab(1)
 
