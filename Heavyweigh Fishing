@@ -142,6 +142,10 @@ local BarFrame = FishingGui:WaitForChild("BarFrame")
 local FishingBar = BarFrame:WaitForChild("Bar")
 local SkillBtnFrame = FishingGui:WaitForChild("SkillButton"):WaitForChild("Frame")
 local RhythmGui = FishingGui:FindFirstChild("Rhythm")
+local BossFightBar = FishingGui:FindFirstChild("BossFightBar")
+local MobileGui = MainGui:FindFirstChild("Mobile")
+local MobileFishingBtn = MobileGui and MobileGui:FindFirstChild("Fishing")
+local RhythmHitEvent = Events:FindFirstChild("RhythmHit")
 
 local function RefreshGuiCache()
     if not MainGui or not MainGui.Parent then
@@ -153,8 +157,23 @@ local function RefreshGuiCache()
         local sb = FishingGui and FishingGui:FindFirstChild("SkillButton")
         SkillBtnFrame = sb and sb:FindFirstChild("Frame")
         RhythmGui = FishingGui and FishingGui:FindFirstChild("Rhythm")
-    elseif not RhythmGui or not RhythmGui.Parent then
-        RhythmGui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+        BossFightBar = FishingGui and FishingGui:FindFirstChild("BossFightBar")
+        MobileGui = MainGui and MainGui:FindFirstChild("Mobile")
+        MobileFishingBtn = MobileGui and MobileGui:FindFirstChild("Fishing")
+    else
+        if not RhythmGui or not RhythmGui.Parent then
+            RhythmGui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+        end
+        if not BossFightBar or not BossFightBar.Parent then
+            BossFightBar = FishingGui and FishingGui:FindFirstChild("BossFightBar")
+        end
+        if not MobileFishingBtn or not MobileFishingBtn.Parent then
+            MobileGui = MainGui and MainGui:FindFirstChild("Mobile")
+            MobileFishingBtn = MobileGui and MobileGui:FindFirstChild("Fishing")
+        end
+    end
+    if not RhythmHitEvent then
+        RhythmHitEvent = Events:FindFirstChild("RhythmHit")
     end
     if not FishesFolder or not FishesFolder.Parent then
         FishesFolder = workspace:FindFirstChild("Fishes")
@@ -388,7 +407,7 @@ local function IsGameAllowingSkill(char)
         minigameOpenTick = os.clock()
     end
 
-    if RhythmGui and RhythmGui.Visible then
+    if (RhythmGui and RhythmGui.Visible) or (BossFightBar and BossFightBar.Visible) then
         return false
     end
 
@@ -489,6 +508,8 @@ local rhythmKeyMap = {
 }
 local lastRhythmLaneHit = { A = 0, S = 0, D = 0 }
 local lastRhythmScan = 0
+local lastPhase2HitTick = 0
+local phase2BarHistory = {}
 local CENTER_BAR_POS = UDim2.new(0.5, 0, 0.5, 0)
 local isLockingBar = false
 local barPosConn = nil
@@ -497,7 +518,7 @@ local boundBar = nil
 local function LockFishingBar()
     if isLockingBar then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
-    if not (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) then return end
+    if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss) then return end
     isLockingBar = true
     local char = cachedChar
     if char and (tonumber(char:GetAttribute("GuildPower")) or 0) < 99999999 then
@@ -539,32 +560,225 @@ BindFishingBarLock()
 local function TriggerGuiButton(btn)
     if not btn then return false end
     local triggered = false
+    if getconnections then
+        for _, sig in ipairs({btn.MouseButton1Click, btn.Activated}) do
+            if sig then
+                pcall(function()
+                    for _, conn in pairs(getconnections(sig)) do
+                        if conn.Function then
+                            task.spawn(conn.Function)
+                            triggered = true
+                        elseif conn.Fire then
+                            conn:Fire()
+                            triggered = true
+                        end
+                    end
+                end)
+            end
+        end
+    end
     if firesignal then
         pcall(function()
             firesignal(btn.MouseButton1Click)
             triggered = true
         end)
-    end
-    if not triggered and getconnections then
         pcall(function()
-            for _, conn in pairs(getconnections(btn.MouseButton1Click)) do
-                if conn.Function then
-                    task.spawn(conn.Function)
-                    triggered = true
-                elseif conn.Fire then
-                    conn:Fire()
-                    triggered = true
+            firesignal(btn.Activated)
+            triggered = true
+        end)
+    end
+    return triggered
+end
+
+local getupval = (debug and debug.getupvalue) or getupvalue
+
+local function StepPhase2MiniGame()
+    if not BossFightBar or not BossFightBar.Visible then
+        if #phase2BarHistory > 0 then
+            table.clear(phase2BarHistory)
+        end
+        return
+    end
+
+    local bar = BossFightBar:FindFirstChild("Bar")
+    local hitbox = BossFightBar:FindFirstChild("Hitbox")
+    if not bar or not hitbox then return end
+
+    local barW = bar.Size.X.Scale
+    local barCenter = bar.Position.X.Scale + barW * (0.5 - bar.AnchorPoint.X)
+    local hbW = hitbox.Size.X.Scale
+    local hbLeft = hitbox.Position.X.Scale - hbW * hitbox.AnchorPoint.X
+
+    local now = os.clock()
+    table.insert(phase2BarHistory, { t = now, x = barCenter })
+    while #phase2BarHistory > 1 and (now - phase2BarHistory[1].t) > 0.15 do
+        table.remove(phase2BarHistory, 1)
+    end
+
+    local handledViaUpval = false
+    local onClickFn = nil
+
+    if getconnections and getupval and MobileFishingBtn then
+        pcall(function()
+            for _, conn in pairs(getconnections(MobileFishingBtn.MouseButton1Down)) do
+                local fn = conn.Function and getupval(conn.Function, 1)
+                if type(fn) == "function" then
+                    onClickFn = fn
+                    local u12 = getupval(fn, 1)
+                    local u14 = getupval(fn, 2)
+                    local u27 = getupval(fn, 3)
+                    local u26 = getupval(fn, 4)
+                    local u1 = getupval(fn, 5)
+                    local u25 = getupval(fn, 6)
+                    local u23 = getupval(fn, 7)
+                    local u2 = getupval(fn, 8)
+                    local u15 = getupval(fn, 9)
+                    if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
+                        if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
+                            handledViaUpval = true
+                            if now - u14 >= 0.035 and now - lastPhase2HitTick >= 0.035 then
+                                local v91 = (now - 0.025 - u27) % u26 * u1
+                                if u25 < v91 then
+                                    v91 = u25 * 2 - v91
+                                end
+                                local v92 = u23 + v91
+                                local v93 = u2 * 0.3
+                                if v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8) then
+                                    lastPhase2HitTick = now
+                                    fn(false)
+                                end
+                            end
+                        end
+                        break
+                    end
                 end
             end
         end)
     end
-    return triggered
+
+    if handledViaUpval then return end
+    if now - lastPhase2HitTick < 0.04 then return end
+
+    local evalX = barCenter
+    local targetTime = now - 0.041
+    for i = #phase2BarHistory, 1, -1 do
+        if phase2BarHistory[i].t <= targetTime then
+            evalX = phase2BarHistory[i].x
+            break
+        end
+    end
+
+    local pad = hbW * 0.2
+
+    local badBox = BossFightBar:FindFirstChild("HitboxBad")
+    if badBox and badBox.Visible then
+        local badW = badBox.Size.X.Scale
+        local badLeft = badBox.Position.X.Scale - badW * badBox.AnchorPoint.X
+        if evalX >= (badLeft - 0.01) and evalX <= (badLeft + badW + 0.01) then
+            return
+        end
+    end
+
+    if evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad) then
+        lastPhase2HitTick = now
+        local clicked = false
+        if onClickFn then
+            pcall(function()
+                onClickFn(false)
+                clicked = true
+            end)
+        end
+        if not clicked and MobileFishingBtn then
+            if getconnections then
+                pcall(function()
+                    for _, conn in pairs(getconnections(MobileFishingBtn.MouseButton1Down)) do
+                        if conn.Function then
+                            task.spawn(conn.Function)
+                            clicked = true
+                        elseif conn.Fire then
+                            conn:Fire()
+                            clicked = true
+                        end
+                    end
+                end)
+            end
+            if not clicked and firesignal then
+                pcall(function()
+                    firesignal(MobileFishingBtn.MouseButton1Down)
+                    clicked = true
+                end)
+            end
+        end
+        if not clicked then
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                task.delay(0.01, function()
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                end)
+            end)
+        end
+    end
+end
+
+local function StepRhythmMiniGame()
+    if not RhythmGui or not RhythmGui.Visible then return end
+    local now = os.clock()
+    if now - lastRhythmScan < 0.025 then return end
+    lastRhythmScan = now
+
+    for _, lane in ipairs(rhythmLanes) do
+        if now - (lastRhythmLaneHit[lane] or 0) >= 0.05 then
+            local laneFrame = RhythmGui:FindFirstChild("Progression" .. lane)
+            if laneFrame then
+                local barFrame = laneFrame:FindFirstChild("BarFrame")
+                local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
+                local targetNote = nil
+                local bestDist = 0.18
+                for _, child in ipairs(laneFrame:GetChildren()) do
+                    if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
+                        local dist = math.abs(child.Position.Y.Scale - targetY)
+                        if dist <= bestDist then
+                            bestDist = dist
+                            targetNote = child
+                        end
+                    end
+                end
+                if targetNote then
+                    lastRhythmLaneHit[lane] = now
+                    local btn = laneFrame:FindFirstChild("Button")
+                    if btn then
+                        TriggerGuiButton(btn)
+                    end
+                    if targetNote.Parent ~= nil then
+                        local kc = rhythmKeyMap[lane]
+                        if kc then
+                            pcall(function()
+                                VirtualInputManager:SendKeyEvent(true, kc, false, game)
+                                task.delay(0.02, function()
+                                    VirtualInputManager:SendKeyEvent(false, kc, false, game)
+                                end)
+                            end)
+                        end
+                    end
+                    if targetNote.Parent ~= nil and bestDist <= 0.1 and RhythmHitEvent then
+                        pcall(function()
+                            targetNote:Destroy()
+                            RhythmHitEvent:FireServer("hit")
+                        end)
+                    end
+                end
+            end
+        end
+    end
 end
 
 RunService.RenderStepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
+    if Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss then
+        StepPhase2MiniGame()
+    end
 end)
 
 RunService.Stepped:Connect(function()
@@ -575,50 +789,11 @@ end)
 
 RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
-
-    local activeFinal = Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
-
     BindFishingBarLock()
     LockFishingBar()
-
-    if activeFinal and RhythmGui and RhythmGui.Visible then
-        local now = os.clock()
-        if now - lastRhythmScan < 0.035 then return end
-        lastRhythmScan = now
-
-        for _, lane in ipairs(rhythmLanes) do
-            if now - (lastRhythmLaneHit[lane] or 0) >= 0.06 then
-                local laneFrame = RhythmGui:FindFirstChild("Progression" .. lane)
-                if laneFrame then
-                    local barFrame = laneFrame:FindFirstChild("BarFrame")
-                    local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
-                    local shouldHit = false
-                    for _, child in ipairs(laneFrame:GetChildren()) do
-                        if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
-                            if math.abs(child.Position.Y.Scale - targetY) <= 0.16 then
-                                shouldHit = true
-                                break
-                            end
-                        end
-                    end
-                    if shouldHit then
-                        lastRhythmLaneHit[lane] = now
-                        local btn = laneFrame:FindFirstChild("Button")
-                        if not TriggerGuiButton(btn) then
-                            local kc = rhythmKeyMap[lane]
-                            if kc then
-                                pcall(function()
-                                    VirtualInputManager:SendKeyEvent(true, kc, false, game)
-                                    task.delay(0.02, function()
-                                        VirtualInputManager:SendKeyEvent(false, kc, false, game)
-                                    end)
-                                end)
-                            end
-                        end
-                    end
-                end
-            end
-        end
+    if Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss then
+        StepPhase2MiniGame()
+        StepRhythmMiniGame()
     end
 end)
 
@@ -1181,7 +1356,7 @@ task.spawn(function()
         local now = os.clock()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
-        local activeReel = Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss
+        local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
         local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss
         local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss
 
@@ -1231,29 +1406,47 @@ task.spawn(function()
 end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
-    if (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
         task.wait(0.05)
-        pcall(function()
-            remote:FireServer("Perfect")
-        end)
+        local handled = false
         pcall(function()
             local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
             local slamGui = tc and tc:FindFirstChild("Slam")
-            if slamGui then slamGui:Destroy() end
+            local btn = slamGui and slamGui:FindFirstChild("Button")
+            local line = btn and btn:FindFirstChild("Line")
+            if line then
+                line.Size = UDim2.new(1, 0, 1, 0)
+            end
+            if btn then
+                TriggerGuiButton(btn)
+                if not slamGui.Parent then
+                    handled = true
+                end
+            end
+            if not handled then
+                remote:FireServer("Perfect")
+                if slamGui and slamGui.Parent then
+                    slamGui:Destroy()
+                end
+            end
         end)
     end
 end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
-    if (Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
-        task.wait(0.05)
-        pcall(function()
-            remote:FireServer()
-        end)
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
+        task.wait(1.05)
         pcall(function()
             local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
             local chargeGui = tc and tc:FindFirstChild("Charge")
-            if chargeGui then chargeGui:Destroy() end
+            local btn = chargeGui and chargeGui:FindFirstChild("Button")
+            if btn and chargeGui.Parent then
+                TriggerGuiButton(btn)
+            end
+            if chargeGui and chargeGui.Parent then
+                remote:FireServer()
+                chargeGui:Destroy()
+            end
         end)
     end
 end)
