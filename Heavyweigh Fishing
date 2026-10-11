@@ -64,7 +64,10 @@ local Config = {
     FlyKeybindEnabled = true,
     NoclipKeybind = "J",
     NoclipKeybindEnabled = true,
-    DisableAllKeybinds = false
+    DisableAllKeybinds = false,
+    SavedPos = false,
+    AutoTPPos = false,
+    AutoExecute = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -93,6 +96,68 @@ end
 LoadConfig()
 if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
+end
+
+local queueTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
+local autoExecQueued = false
+local autoExecPayload = [[
+task.spawn(function()
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+    local Players = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local lp = Players.LocalPlayer
+    while not lp do
+        task.wait(0.2)
+        lp = Players.LocalPlayer
+    end
+    repeat task.wait(0.2) until lp.Character and lp:FindFirstChild("PlayerGui")
+    local allow = true
+    pcall(function()
+        if isfile then
+            if isfile("StarCrowHub/HeavyweighFishingConfig.json") then
+                local dec = HttpService:JSONDecode(readfile("StarCrowHub/HeavyweighFishingConfig.json"))
+                allow = (type(dec) == "table" and dec.AutoExecute == true)
+            else
+                allow = false
+            end
+        end
+    end)
+    if allow then
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Loader"))()
+    end
+end)
+]]
+
+local function QueueAutoExecute()
+    if not Config.AutoExecute or autoExecQueued or not queueTeleport then return end
+    autoExecQueued = true
+    pcall(function()
+        queueTeleport(autoExecPayload)
+    end)
+end
+
+if Config.AutoExecute then
+    QueueAutoExecute()
+end
+
+pcall(function()
+    LocalPlayer.OnTeleport:Connect(function()
+        if Config.AutoExecute then
+            QueueAutoExecute()
+        end
+    end)
+end)
+
+local function GetSavedCFrame()
+    if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
+        local ok, cf = pcall(CFrame.new, unpack(Config.SavedPos))
+        if ok and cf then
+            return cf
+        end
+    end
+    return nil
 end
 
 local ModuleCache = {}
@@ -376,8 +441,23 @@ local function BindCharacterAntiConfuse(char)
     end
 end
 
+local function StepAutoTPPos(char)
+    if not Config.AutoTPPos then return end
+    if Config.AutoBoss or Config.AutoSecretBoss then return end
+    local targetCF = GetSavedCFrame()
+    if not targetCF then return end
+    local c = char or cachedChar or LocalPlayer.Character
+    local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
+        hrp.CFrame = targetCF
+    end
+end
+
 if cachedChar then
     BindCharacterAntiConfuse(cachedChar)
+    task.spawn(function()
+        StepAutoTPPos(cachedChar)
+    end)
 end
 
 LocalPlayer.CharacterAdded:Connect(function(newChar)
@@ -388,6 +468,7 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     cachedStatsFolder = newChar:WaitForChild("Stats", 5)
     BindCharacterAntiConfuse(newChar)
     task.wait(0.3)
+    StepAutoTPPos(newChar)
     if Config.FlyEnabled then
         startFly()
     end
@@ -1514,21 +1595,26 @@ task.spawn(function()
 
         if Config.AutoBoss or Config.AutoSecretBoss then
             StepAutoBoss(cachedChar, isMinigame)
-        elseif activeCast and not isMinigame and (now - lastCastTry >= 0.6) then
-            local char = cachedChar
-            if char then
-                if char:GetAttribute("Type") ~= "Fishing Rod" then
-                    lastCastTry = now
-                    pcall(function()
-                        ToggleHotbar:InvokeServer("1")
-                    end)
-                elseif not char:GetAttribute("Fishing") then
-                    local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        lastCastTry = now + 0.9
+        else
+            if not isMinigame then
+                StepAutoTPPos(cachedChar)
+            end
+            if activeCast and not isMinigame and (now - lastCastTry >= 0.6) then
+                local char = cachedChar
+                if char then
+                    if char:GetAttribute("Type") ~= "Fishing Rod" then
+                        lastCastTry = now
                         pcall(function()
-                            FishingEvent:FireServer(hrp.CFrame)
+                            ToggleHotbar:InvokeServer("1")
                         end)
+                    elseif not char:GetAttribute("Fishing") then
+                        local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            lastCastTry = now + 0.9
+                            pcall(function()
+                                FishingEvent:FireServer(hrp.CFrame)
+                            end)
+                        end
                     end
                 end
             end
@@ -2503,6 +2589,66 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
             ApplyAntiConfuse(LocalPlayer.Character)
         end
         SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Position")
+
+Tabs.Main:AddButton({
+    Title = "Save Position",
+    Callback = function()
+        local char = LocalPlayer.Character
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if hrp then
+            Config.SavedPos = {hrp.CFrame:GetComponents()}
+            SaveConfig()
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Position",
+                    Content = "Saved Position!",
+                    Duration = 3
+                })
+            end)
+        end
+    end
+})
+
+Tabs.Main:AddToggle("AutoTPPosToggle", {
+    Title = "Auto TP Position",
+    Default = Config.AutoTPPos,
+    Callback = function(Value)
+        Config.AutoTPPos = Value
+        SaveConfig()
+        if Value then
+            StepAutoTPPos(LocalPlayer.Character)
+        end
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Delete Position",
+    Callback = function()
+        Config.SavedPos = false
+        SaveConfig()
+        pcall(function()
+            Fluent:Notify({
+                Title = "Position",
+                Content = "Deleted Position!",
+                Duration = 3
+            })
+        end)
+    end
+})
+
+Tabs.Main:AddToggle("AutoExecuteToggle", {
+    Title = "Auto Execute",
+    Default = Config.AutoExecute,
+    Callback = function(Value)
+        Config.AutoExecute = Value
+        SaveConfig()
+        if Value then
+            QueueAutoExecute()
+        end
     end
 })
 
