@@ -819,7 +819,7 @@ end
 local function CheckBossStatusOnToggle(wantSecret)
     bossSummoned = false
     bossSummonTick = 0
-    local title = wantSecret and "Auto Secret Boss" or "Auto Boss"
+    local title = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
     if not rodVal or rodVal.Value == "" then
         NotifyBoss(title, "Failed: Requirements not met (No Fishing Rod equipped)!", "toggle_norod_" .. tostring(wantSecret), 2)
@@ -841,7 +841,7 @@ end
 
 local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
     if not bossFrame then return false end
-    local notifyTitle = wantSecret and "Auto Secret Boss" or "Auto Boss"
+    local notifyTitle = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local targetMode = mode or "Normal"
     local targetLower = string.lower(targetMode)
     local modeMatched = false
@@ -975,7 +975,7 @@ do
                 bossSummoned = false
                 bossSummonTick = 0
                 if Config.AutoBoss or Config.AutoSecretBoss then
-                    local notifyTitle = Config.AutoSecretBoss and "Auto Secret Boss" or "Auto Boss"
+                    local notifyTitle = Config.AutoSecretBoss and "Auto Long DiaoHai" or "Auto Enzo"
                     NotifyBoss(
                         notifyTitle,
                         "Success! Caught Boss: " .. lastCaughtFishName .. "!",
@@ -999,7 +999,7 @@ local function MonitorBossMinigame()
 
     trackingBossFight = true
     task.spawn(function()
-        local notifyTitle = Config.AutoSecretBoss and "Auto Secret Boss" or "Auto Boss"
+        local notifyTitle = Config.AutoSecretBoss and "Auto Long DiaoHai" or "Auto Enzo"
         local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
         local fNameLbl = progBar and progBar:FindFirstChild("FishName")
         local fName = (fNameLbl and fNameLbl.Text ~= "" and fNameLbl.Text) or "Boss"
@@ -1091,7 +1091,7 @@ local function StepAutoBoss(char, isMinigame)
     end
 
     local wantSecret = Config.AutoSecretBoss
-    local notifyTitle = wantSecret and "Auto Secret Boss" or "Auto Boss"
+    local notifyTitle = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
     if not rodVal or rodVal.Value == "" then
         NotifyBoss(notifyTitle, "Failed: Requirements not met (No Fishing Rod equipped)!", "step_norod", 10)
@@ -2329,7 +2329,7 @@ Tabs.Main:AddDropdown("SelectBossModeDropdown", {
 })
 
 Tabs.Main:AddToggle("AutoBossToggle", {
-    Title = "Auto Boss",
+    Title = "Auto Enzo",
     Default = Config.AutoBoss,
     Callback = function(Value)
         Config.AutoBoss = Value
@@ -2343,7 +2343,7 @@ Tabs.Main:AddToggle("AutoBossToggle", {
 })
 
 Tabs.Main:AddToggle("AutoSecretBossToggle", {
-    Title = "Auto Secret Boss",
+    Title = "Auto Long DiaoHai",
     Default = Config.AutoSecretBoss,
     Callback = function(Value)
         Config.AutoSecretBoss = Value
