@@ -320,7 +320,7 @@ local function stopFly()
 end
 
 local function IsAntiConfuseActive()
-    return Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
+    return Config.AutoSkill or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
 end
 
 local function ApplyAntiConfuse(char)
@@ -395,6 +395,49 @@ end)
 
 local minigameOpenTick = 0
 local wasMinigameVisible = false
+local bossPhase2SetupUntil = 0
+
+do
+    local bp2 = Events:FindFirstChild("BossPhase2Setup")
+    if bp2 and bp2:IsA("RemoteEvent") then
+        bp2.OnClientEvent:Connect(function()
+            bossPhase2SetupUntil = os.clock() + 5
+        end)
+    end
+end
+
+local function FindSkillNumberValue(char, key)
+    local skillsFolder = cachedSkillsFolder or (char and char:FindFirstChild("Skills"))
+    if not skillsFolder then return nil, nil end
+    for _, s in ipairs(skillsFolder:GetChildren()) do
+        if s:IsA("NumberValue") then
+            local k = s:GetAttribute("Key") or s.Name
+            if tostring(k) == key then
+                return s, skillsFolder
+            end
+        end
+    end
+    return nil, skillsFolder
+end
+
+local function FindSkillButton(key)
+    if not SkillBtnFrame then return nil end
+    local direct = SkillBtnFrame:FindFirstChild(key)
+    if direct then return direct end
+    for _, child in ipairs(SkillBtnFrame:GetChildren()) do
+        if child:IsA("GuiObject") then
+            if tostring(child:GetAttribute("Key") or "") == key then
+                return child
+            end
+            for _, desc in ipairs(child:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Name ~= "CD" and desc.Text == key then
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
 
 local function IsGameAllowingSkill(char)
     if not FishingGui or not FishingGui.Visible then
@@ -411,7 +454,12 @@ local function IsGameAllowingSkill(char)
         return false
     end
 
-    if char:GetAttribute("Phase2") then
+    if char:GetAttribute("Phase2") == true then
+        bossPhase2SetupUntil = 0
+        return false
+    end
+
+    if bossPhase2SetupUntil > 0 and os.clock() < bossPhase2SetupUntil then
         return false
     end
 
@@ -429,7 +477,7 @@ local function IsGameAllowingSkill(char)
     end
 
     local fishId = LocalPlayer:GetAttribute("FishID")
-    local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(fishId) or nil
+    local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
     if fishObj then
         local readyVal = fishObj:FindFirstChild("Ready")
         if readyVal then
@@ -446,17 +494,6 @@ local function IsGameAllowingSkill(char)
         return false
     end
 
-    if SkillBtnFrame then
-        for _, btn in ipairs(SkillBtnFrame:GetChildren()) do
-            if btn:IsA("TextButton") and btn.Visible then
-                local cd = btn:FindFirstChild("CD")
-                if cd and cd.Visible and cd.Text == "" then
-                    return false
-                end
-            end
-        end
-    end
-
     local skillsFolder = cachedSkillsFolder or char:FindFirstChild("Skills")
     if skillsFolder then
         for _, s in ipairs(skillsFolder:GetChildren()) do
@@ -466,38 +503,89 @@ local function IsGameAllowingSkill(char)
         end
     end
 
-    return true
-end
-
-local function IsSkillKeyReady(char, key)
-    if not SkillBtnFrame then return false end
-    local btn = SkillBtnFrame:FindFirstChild(key)
-    if not btn or not btn.Visible then
-        return false
-    end
-    local lock = btn:FindFirstChild("Lock")
-    if lock and lock.Visible then
-        if IsAntiConfuseActive() then
-            lock.Visible = false
-        else
-            return false
-        end
-    end
-    local cd = btn:FindFirstChild("CD")
-    if cd and cd.Visible then
-        return false
-    end
-    local skillsFolder = cachedSkillsFolder or char:FindFirstChild("Skills")
-    if skillsFolder then
-        for _, s in ipairs(skillsFolder:GetChildren()) do
-            if s:IsA("NumberValue") and s:GetAttribute("Key") == key then
-                if s.Value > 0 or (s:GetAttribute("UsingSkill") or 0) > 0 then
+    if SkillBtnFrame then
+        for _, btn in ipairs(SkillBtnFrame:GetChildren()) do
+            if btn:IsA("TextButton") and btn.Visible and btn.Name ~= "R" and btn.Name ~= "T" then
+                local cd = btn:FindFirstChild("CD")
+                if cd and cd.Visible and cd.Text == "" then
                     return false
                 end
             end
         end
     end
+
     return true
+end
+
+local function IsSkillSlotAvailable(char, key)
+    if PlayerData then
+        local rodVal = PlayerData:FindFirstChild("FishingRod")
+        local rodInv = PlayerData:FindFirstChild("FishingRodInventory")
+        local rf = (rodVal and rodVal.Value ~= "" and rodInv) and rodInv:FindFirstChild(rodVal.Value) or nil
+        local skFolder = rf and rf:FindFirstChild("Skill")
+        local skVal = skFolder and skFolder:FindFirstChild(key)
+        if skVal and skVal:IsA("StringValue") then
+            return skVal.Value ~= ""
+        end
+    end
+    local btn = FindSkillButton(key)
+    if btn then
+        return btn.Visible == true
+    end
+    local s = FindSkillNumberValue(char, key)
+    return s ~= nil
+end
+
+local function IsSkillConfirmedUsed(char, key)
+    local s = FindSkillNumberValue(char, key)
+    if s then
+        return s.Value > 0
+    end
+    local btn = FindSkillButton(key)
+    local cd = btn and btn:FindFirstChild("CD")
+    if cd and cd.Visible and (tonumber(cd.Text) or 0) > 0 then
+        return true
+    end
+    return false
+end
+
+local function IsSkillKeyReady(char, key)
+    if not IsSkillSlotAvailable(char, key) then
+        return false
+    end
+
+    local btn = FindSkillButton(key)
+    if btn then
+        if not btn.Visible then
+            return false
+        end
+        local lock = btn:FindFirstChild("Lock")
+        if lock and lock.Visible then
+            if IsAntiConfuseActive() then
+                lock.Visible = false
+            else
+                return false
+            end
+        end
+        local cd = btn:FindFirstChild("CD")
+        if cd and cd.Visible then
+            return false
+        end
+    end
+
+    local s, skillsFolder = FindSkillNumberValue(char, key)
+    if s then
+        if s.Value > 0 or (s:GetAttribute("UsingSkill") or 0) > 0 then
+            return false
+        end
+        return true
+    end
+
+    if skillsFolder and #skillsFolder:GetChildren() > 0 then
+        return false
+    end
+
+    return btn ~= nil and btn.Visible == true
 end
 
 local rhythmLanes = {"A", "S", "D"}
@@ -559,10 +647,16 @@ BindFishingBarLock()
 
 local function TriggerGuiButton(btn)
     if not btn then return false end
+    if not btn:IsA("GuiButton") then
+        btn = btn:FindFirstChildWhichIsA("GuiButton", true) or (btn.Parent and btn.Parent:IsA("GuiButton") and btn.Parent) or nil
+        if not btn then return false end
+    end
     local triggered = false
+    local sigNames = {"MouseButton1Click", "Activated", "MouseButton1Down", "MouseButton1Up"}
     if getconnections then
-        for _, sig in ipairs({btn.MouseButton1Click, btn.Activated}) do
-            if sig then
+        for _, sName in ipairs(sigNames) do
+            local okSig, sig = pcall(function() return btn[sName] end)
+            if okSig and sig then
                 pcall(function()
                     for _, conn in pairs(getconnections(sig)) do
                         if conn.Function then
@@ -578,14 +672,12 @@ local function TriggerGuiButton(btn)
         end
     end
     if firesignal then
-        pcall(function()
-            firesignal(btn.MouseButton1Click)
-            triggered = true
-        end)
-        pcall(function()
-            firesignal(btn.Activated)
-            triggered = true
-        end)
+        for _, sName in ipairs(sigNames) do
+            pcall(function()
+                firesignal(btn[sName])
+                triggered = true
+            end)
+        end
     end
     return triggered
 end
@@ -1352,7 +1444,9 @@ end
 task.spawn(function()
     local lastCastTry = 0
     local lastSkillTry = 0
-    while task.wait(0.12) do
+    local skillSeqIndex = 1
+    local pendingSkillKey = nil
+    while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
@@ -1360,22 +1454,59 @@ task.spawn(function()
         local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss
         local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss
 
+        if not isMinigame then
+            skillSeqIndex = 1
+            pendingSkillKey = nil
+        end
+
         if activeReel and isMinigame then
             pcall(function()
                 UpdateFishProgression:FireServer()
             end)
         end
 
-        if activeSkill and isMinigame and (now - lastSkillTry >= 0.45) then
+        if activeSkill and isMinigame then
             local char = cachedChar
-            if char and IsGameAllowingSkill(char) then
-                for _, key in ipairs(Config.SkillOrder) do
-                    if IsSkillKeyReady(char, key) then
-                        lastSkillTry = os.clock()
-                        pcall(function()
-                            UseSkill:FireServer(key)
-                        end)
+            local order = Config.SkillOrder
+            local orderCount = type(order) == "table" and #order or 0
+            if char and orderCount > 0 then
+                if skillSeqIndex < 1 or skillSeqIndex > orderCount then
+                    skillSeqIndex = 1
+                end
+
+                local validIdx = nil
+                for step = 1, orderCount do
+                    local idx = ((skillSeqIndex - 1 + (step - 1)) % orderCount) + 1
+                    if IsSkillSlotAvailable(char, order[idx]) then
+                        validIdx = idx
                         break
+                    end
+                end
+
+                if validIdx then
+                    skillSeqIndex = validIdx
+                    local currentKey = order[skillSeqIndex]
+                    if pendingSkillKey and pendingSkillKey ~= currentKey then
+                        pendingSkillKey = nil
+                    end
+                    if pendingSkillKey == currentKey and IsSkillConfirmedUsed(char, currentKey) then
+                        skillSeqIndex = (skillSeqIndex % orderCount) + 1
+                        pendingSkillKey = nil
+                        for step = 1, orderCount do
+                            local idx = ((skillSeqIndex - 1 + (step - 1)) % orderCount) + 1
+                            if IsSkillSlotAvailable(char, order[idx]) then
+                                skillSeqIndex = idx
+                                break
+                            end
+                        end
+                        currentKey = order[skillSeqIndex]
+                    end
+                    if IsGameAllowingSkill(char) and IsSkillKeyReady(char, currentKey) and (now - lastSkillTry >= 0.25) then
+                        lastSkillTry = os.clock()
+                        pendingSkillKey = currentKey
+                        pcall(function()
+                            UseSkill:FireServer(currentKey)
+                        end)
                     end
                 end
             end
@@ -1535,32 +1666,6 @@ local function FireOrInvokeEvent(ev, ...)
     return ok
 end
 
-local function ClickInventoryUIItem(targetName)
-    if not MainGui or not targetName or targetName == "" then return false end
-    local mainNode = MainGui:FindFirstChild("Main")
-    local fishInv = mainNode and mainNode:FindFirstChild("Fishing_INV")
-    local invMain = fishInv and fishInv:FindFirstChild("Main")
-    if not invMain then return false end
-    for _, desc in ipairs(invMain:GetDescendants()) do
-        if desc.Name == targetName or desc:GetAttribute("ItemName") == targetName then
-            local btn = (desc:IsA("GuiButton") and desc)
-                or desc:FindFirstChild("Equip", true)
-                or desc:FindFirstChild("Select", true)
-                or desc:FindFirstChild("Choose", true)
-                or desc:FindFirstChild("Button", true)
-                or desc:FindFirstChildWhichIsA("GuiButton", true)
-            if btn and TriggerGuiButton(btn) then
-                local equipBtn = invMain:FindFirstChild("Equip", true)
-                if equipBtn and equipBtn:IsA("GuiButton") then
-                    TriggerGuiButton(equipBtn)
-                end
-                return true
-            end
-        end
-    end
-    return false
-end
-
 local function DoBuyBait(baitName, amount)
     if not baitName or baitName == "" then return end
     local amt = math.max(1, math.floor(tonumber(amount) or 1))
@@ -1571,169 +1676,6 @@ local function DoBuyBait(baitName, amount)
         pcall(function()
             CraftBaitEvent:FireServer(baitName, amt)
         end)
-    end
-end
-
-local function GetBestOwnedRod()
-    local rodInv = PlayerData:FindFirstChild("FishingRodInventory")
-    local invInfo = Info:FindFirstChild("Inventory")
-    if not rodInv or not invInfo then return nil end
-    local bestRod = nil
-    local bestPower = -1
-    for _, rodFolder in ipairs(rodInv:GetChildren()) do
-        local owned = rodFolder:FindFirstChild("Owned")
-        if owned and owned.Value == true then
-            local data = GetModuleData(invInfo:FindFirstChild(rodFolder.Name))
-            if data then
-                local pwr = tonumber(data.Power) or 0
-                if pwr > bestPower then
-                    bestPower = pwr
-                    bestRod = rodFolder.Name
-                end
-            end
-        end
-    end
-    return bestRod
-end
-
-local function ScoreItemData(data)
-    if type(data) ~= "table" then return 0 end
-    local score = (tonumber(data.Power) or 0) * 1000
-        + (tonumber(data.Boost) or 0) * 500
-        + (tonumber(data.Luck) or 0) * 200
-        + (tonumber(data.Price) or 0) * 0.01
-    if data.Ingredient then
-        score = score + 50000
-    end
-    if data.Rarity == "Secret" then
-        score = score + 1000000
-    elseif data.Rarity == "Mythical" then
-        score = score + 500000
-    elseif data.Rarity == "Legendary" then
-        score = score + 100000
-    end
-    return score
-end
-
-local function IsItemOwnedInFolder(folder, itemName)
-    if not folder then return false end
-    local entry = folder:FindFirstChild(itemName)
-    if not entry then return false end
-    if entry:IsA("BoolValue") then return entry.Value == true end
-    if entry:IsA("NumberValue") or entry:IsA("IntValue") then return entry.Value > 0 end
-    local owned = entry:FindFirstChild("Owned")
-    if owned and owned:IsA("BoolValue") then return owned.Value == true end
-    local qty = entry:FindFirstChild("Quantity") or entry:FindFirstChild("Amount") or entry:FindFirstChild("Value")
-    if qty and (qty:IsA("NumberValue") or qty:IsA("IntValue")) then return qty.Value > 0 end
-    return true
-end
-
-local function GetBestOwnedBait()
-    local baitInfo = Info:FindFirstChild("Bait")
-    if not baitInfo then return nil end
-    local bestBait = nil
-    local bestScore = -1
-    local baitDataFolder = PlayerData:FindFirstChild("Bait") or PlayerData:FindFirstChild("BaitInventory") or PlayerData:FindFirstChild("Baits")
-    local genInv = PlayerData:FindFirstChild("Inventory")
-    for _, mod in ipairs(baitInfo:GetChildren()) do
-        if mod:IsA("ModuleScript") then
-            local isOwned = IsItemOwnedInFolder(baitDataFolder, mod.Name) or IsItemOwnedInFolder(genInv, mod.Name)
-            if isOwned then
-                local data = GetModuleData(mod)
-                if data then
-                    local sc = ScoreItemData(data)
-                    if sc > bestScore then
-                        bestScore = sc
-                        bestBait = mod.Name
-                    end
-                end
-            end
-        end
-    end
-    return bestBait
-end
-
-local function GetBestOwnedOrb()
-    local orbInfo = Info:FindFirstChild("Orb")
-    if not orbInfo then return nil end
-    local bestOrb = nil
-    local bestScore = -1
-    local orbDataFolder = PlayerData:FindFirstChild("Orb") or PlayerData:FindFirstChild("OrbInventory") or PlayerData:FindFirstChild("Orbs")
-    local genInv = PlayerData:FindFirstChild("Inventory")
-    for _, mod in ipairs(orbInfo:GetChildren()) do
-        if mod:IsA("ModuleScript") then
-            local isOwned = IsItemOwnedInFolder(orbDataFolder, mod.Name) or IsItemOwnedInFolder(genInv, mod.Name)
-            if isOwned then
-                local data = GetModuleData(mod)
-                if data then
-                    local sc = ScoreItemData(data)
-                    if sc > bestScore then
-                        bestScore = sc
-                        bestOrb = mod.Name
-                    end
-                end
-            end
-        end
-    end
-    return bestOrb
-end
-
-local function TryEquipBestRod()
-    local bestRod = GetBestOwnedRod()
-    if not bestRod then return end
-    local curRodVal = PlayerData:FindFirstChild("FishingRod")
-    if curRodVal and curRodVal.Value == bestRod then return end
-    ClickInventoryUIItem(bestRod)
-    local ev = FindRemote("EquipRod")
-        or FindRemote("EquipFishingRod")
-        or FindRemote("ChangeRod")
-        or FindRemote("SelectRod")
-        or FindRemote("FishingRodInventory")
-        or FindRemote("FishingRod")
-        or FindRemote("Equip")
-    if ev then
-        FireOrInvokeEvent(ev, bestRod)
-        FireOrInvokeEvent(ev, "Rod", bestRod)
-    end
-end
-
-local function TryEquipBestBait()
-    local bestBait = GetBestOwnedBait()
-    if not bestBait then return end
-    local curRod = PlayerData:FindFirstChild("FishingRod") and PlayerData.FishingRod.Value or ""
-    ClickInventoryUIItem(bestBait)
-    local ev = FindRemote("EquipBait")
-        or FindRemote("ChangeBait")
-        or FindRemote("SelectBait")
-        or FindRemote("Bait")
-        or FindRemote("FishingRodInventory")
-        or FindRemote("Equip")
-    if ev then
-        FireOrInvokeEvent(ev, bestBait)
-        FireOrInvokeEvent(ev, "Bait", bestBait)
-        if curRod ~= "" then
-            FireOrInvokeEvent(ev, curRod, bestBait)
-        end
-    end
-end
-
-local function TryEquipBestOrb()
-    local bestOrb = GetBestOwnedOrb()
-    if not bestOrb then return end
-    local curRod = PlayerData:FindFirstChild("FishingRod") and PlayerData.FishingRod.Value or ""
-    ClickInventoryUIItem(bestOrb)
-    local ev = FindRemote("EquipOrb")
-        or FindRemote("ChangeOrb")
-        or FindRemote("SelectOrb")
-        or FindRemote("Orb")
-        or FindRemote("FishingRodInventory")
-        or FindRemote("Equip")
-    if ev then
-        FireOrInvokeEvent(ev, bestOrb)
-        FireOrInvokeEvent(ev, "Orb", bestOrb)
-        if curRod ~= "" then
-            FireOrInvokeEvent(ev, curRod, bestOrb)
-        end
     end
 end
 
@@ -2457,6 +2399,9 @@ Tabs.Main:AddToggle("AutoSkillToggle", {
     Default = Config.AutoSkill,
     Callback = function(Value)
         Config.AutoSkill = Value
+        if Value and LocalPlayer.Character then
+            ApplyAntiConfuse(LocalPlayer.Character)
+        end
         SaveConfig()
     end
 })
@@ -2558,29 +2503,6 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
             ApplyAntiConfuse(LocalPlayer.Character)
         end
         SaveConfig()
-    end
-})
-
-Tabs.Main:AddSection("Equipment")
-
-Tabs.Main:AddButton({
-    Title = "Equip Best Rod",
-    Callback = function()
-        TryEquipBestRod()
-    end
-})
-
-Tabs.Main:AddButton({
-    Title = "Equip Best Bait",
-    Callback = function()
-        TryEquipBestBait()
-    end
-})
-
-Tabs.Main:AddButton({
-    Title = "Equip Best Orb",
-    Callback = function()
-        TryEquipBestOrb()
     end
 })
 
