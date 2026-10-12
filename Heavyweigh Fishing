@@ -436,7 +436,7 @@ local function stopFly()
 end
 
 local function IsAntiConfuseActive()
-    return Config.AutoSkill or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
+    return Config.AutoSkill or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
 end
 
 local function ApplyAntiConfuse(char)
@@ -752,7 +752,7 @@ local boundBar = nil
 local function LockFishingBar()
     if isLockingBar then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
-    if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss) then return end
+    if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) then return end
     isLockingBar = true
     local char = cachedChar
     if char and (tonumber(char:GetAttribute("GuildPower")) or 0) < 99999999 then
@@ -1014,7 +1014,7 @@ RunService.RenderStepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss then
+    if Config.AutoMiniGame then
         StepPhase2MiniGame()
     end
 end)
@@ -1029,7 +1029,7 @@ RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss then
+    if Config.AutoMiniGame then
         StepPhase2MiniGame()
         StepRhythmMiniGame()
     end
@@ -1617,9 +1617,9 @@ task.spawn(function()
         local now = os.clock()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
-        local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss
-        local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss
-        local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss
+        local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+        local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+        local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
 
         if not isMinigame then
             skillSeqIndex = 1
@@ -1710,7 +1710,7 @@ task.spawn(function()
 end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
-    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and remote then
         task.wait(0.05)
         local handled = false
         pcall(function()
@@ -1738,7 +1738,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
-    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss) and remote then
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and remote then
         task.wait(1.05)
         pcall(function()
             local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
@@ -2591,8 +2591,6 @@ Tabs.Main:AddDropdown("SelectIslandFarmDropdown", {
     end
 })
 
-local AutoCastToggleObj, AutoReelToggleObj, AutoSkillToggleObj
-
 Tabs.Main:AddToggle("AutoFarmIslandToggle", {
     Title = "Auto Farm",
     Default = Config.AutoFarmIsland,
@@ -2601,29 +2599,9 @@ Tabs.Main:AddToggle("AutoFarmIslandToggle", {
         SaveConfig()
         if Value then
             StepAutoFarmIsland(LocalPlayer.Character)
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(true)
-            else
-                Config.AutoCast = true
+            if LocalPlayer.Character then
+                ApplyAntiConfuse(LocalPlayer.Character)
             end
-            if AutoReelToggleObj then
-                AutoReelToggleObj:SetValue(true)
-            else
-                Config.AutoReel = true
-            end
-            if AutoSkillToggleObj then
-                AutoSkillToggleObj:SetValue(true)
-            else
-                Config.AutoSkill = true
-            end
-            SaveConfig()
-        else
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(false)
-            else
-                Config.AutoCast = false
-            end
-            SaveConfig()
         end
     end
 })
@@ -2642,7 +2620,7 @@ Tabs.Main:AddToggle("AutoExecuteToggle", {
 
 Tabs.Main:AddSection("Fishing")
 
-AutoCastToggleObj = Tabs.Main:AddToggle("AutoCastToggle", {
+Tabs.Main:AddToggle("AutoCastToggle", {
     Title = "Auto Cast",
     Default = Config.AutoCast,
     Callback = function(Value)
@@ -2651,7 +2629,7 @@ AutoCastToggleObj = Tabs.Main:AddToggle("AutoCastToggle", {
     end
 })
 
-AutoReelToggleObj = Tabs.Main:AddToggle("AutoReelToggle", {
+Tabs.Main:AddToggle("AutoReelToggle", {
     Title = "Auto Reel",
     Default = Config.AutoReel,
     Callback = function(Value)
@@ -2662,7 +2640,7 @@ AutoReelToggleObj = Tabs.Main:AddToggle("AutoReelToggle", {
 
 Tabs.Main:AddSection("Skill")
 
-AutoSkillToggleObj = Tabs.Main:AddToggle("AutoSkillToggle", {
+Tabs.Main:AddToggle("AutoSkillToggle", {
     Title = "Auto Skill",
     Default = Config.AutoSkill,
     Callback = function(Value)
@@ -2746,32 +2724,9 @@ Tabs.Main:AddToggle("AutoBossToggle", {
         Config.AutoBoss = Value
         SaveConfig()
         if Value then
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(true)
-            else
-                Config.AutoCast = true
-            end
-            if AutoReelToggleObj then
-                AutoReelToggleObj:SetValue(true)
-            else
-                Config.AutoReel = true
-            end
-            if AutoSkillToggleObj then
-                AutoSkillToggleObj:SetValue(true)
-            else
-                Config.AutoSkill = true
-            end
-            SaveConfig()
             task.spawn(function()
                 CheckBossStatusOnToggle(false)
             end)
-        else
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(false)
-            else
-                Config.AutoCast = false
-            end
-            SaveConfig()
         end
     end
 })
@@ -2783,32 +2738,9 @@ Tabs.Main:AddToggle("AutoSecretBossToggle", {
         Config.AutoSecretBoss = Value
         SaveConfig()
         if Value then
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(true)
-            else
-                Config.AutoCast = true
-            end
-            if AutoReelToggleObj then
-                AutoReelToggleObj:SetValue(true)
-            else
-                Config.AutoReel = true
-            end
-            if AutoSkillToggleObj then
-                AutoSkillToggleObj:SetValue(true)
-            else
-                Config.AutoSkill = true
-            end
-            SaveConfig()
             task.spawn(function()
                 CheckBossStatusOnToggle(true)
             end)
-        else
-            if AutoCastToggleObj then
-                AutoCastToggleObj:SetValue(false)
-            else
-                Config.AutoCast = false
-            end
-            SaveConfig()
         end
     end
 })
