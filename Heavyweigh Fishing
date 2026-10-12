@@ -177,35 +177,35 @@ local function GetSavedCFrame()
 end
 
 local IslandFarmPositions = {
-    ["Beginning Isle"] = Vector3.new(-313.20, -0.00, 35.42),
-    ["Bamboo Isle"] = Vector3.new(-1338.34, -0.00, -47.13),
-    ["Fallout Isle"] = Vector3.new(55.06, -0.00, 1304.38),
-    ["Sovereign Isle"] = Vector3.new(-1273.04, -0.00, 1314.81),
-    ["Perch Isle"] = Vector3.new(-57.85, -0.00, -1379.74),
-    ["Frost Isle"] = Vector3.new(-1404.97, -0.00, -1423.02),
-    ["Coconut Isle"] = Vector3.new(1332.38, -0.00, -1431.00),
-    ["Amber Isle"] = Vector3.new(1090.68, -0.00, 1417.20),
-    ["Battlefield Isle"] = Vector3.new(1189.69, -0.00, 13.99),
-    ["Mistpeak Isle"] = Vector3.new(2529.83, -0.00, -122.36),
-    ["World Angler Isle"] = Vector3.new(-2493.15, -0.00, -97.49),
-    ["Weather Isle"] = Vector3.new(-2830.97, -0.00, 1201.83),
-    ["Mystic Reef Isle"] = Vector3.new(-2552.03, -0.00, -1313.19)
+    ["Beginning Isle"] = CFrame.new(-297.48, 9.28, 58.78, 0.00, 0.00, 1.00, -0.00, 1.00, -0.00, -1.00, -0.00, 0.00),
+    ["Bamboo Isle"] = CFrame.new(-1310.04, 9.28, 29.79, -0.28, -0.00, 0.96, -0.00, 1.00, 0.00, -0.96, -0.00, -0.28),
+    ["Fallout Isle"] = CFrame.new(76.47, 9.28, 1265.92, -1.00, 0.00, 0.01, 0.00, 1.00, -0.00, -0.01, -0.00, -1.00),
+    ["Sovereign Isle"] = CFrame.new(-1254.18, 9.28, 1301.79, -1.00, 0.00, -0.07, 0.00, 1.00, -0.00, 0.07, -0.00, -1.00),
+    ["Perch Isle"] = CFrame.new(-38.55, 9.28, -1343.82, 0.99, -0.00, -0.12, 0.00, 1.00, 0.00, 0.12, -0.00, 0.99),
+    ["Frost Isle"] = CFrame.new(-1348.71, 9.28, -1446.51, -1.00, -0.00, -0.03, -0.00, 1.00, 0.00, 0.03, 0.00, -1.00),
+    ["Coconut Isle"] = CFrame.new(1431.00, 9.28, -1430.22, -0.17, 0.00, 0.98, -0.00, 1.00, -0.00, -0.98, -0.00, -0.17),
+    ["Amber Isle"] = CFrame.new(1122.07, 9.28, 1414.54, 0.03, -0.00, 1.00, -0.00, 1.00, 0.00, -1.00, -0.00, 0.03),
+    ["Battlefield Isle"] = CFrame.new(1249.73, 19.56, 68.87, 0.01, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, 0.01),
+    ["Mistpeak Isle"] = CFrame.new(2549.02, 9.28, -80.77, -0.03, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, -0.03),
+    ["World Angler Isle"] = CFrame.new(-2345.67, 9.28, -203.65, -0.09, -0.00, -1.00, 0.00, 1.00, -0.00, 1.00, -0.00, -0.09),
+    ["Weather Isle"] = CFrame.new(-2886.12, 6.76, 1199.79, -0.04, -0.00, -1.00, -0.00, 1.00, -0.00, 1.00, 0.00, -0.04),
+    ["Mystic Reef Isle"] = CFrame.new(-2561.58, 9.28, -1288.64, -0.07, -0.00, -1.00, 0.00, 1.00, -0.00, 1.00, -0.00, -0.07)
 }
 
 local function GetIslandFarmCFrame(islandKey)
     local key = islandKey or Config.SelectedFarmIsland or ""
     if IslandFarmPositions[key] then
-        return CFrame.new(IslandFarmPositions[key])
+        return IslandFarmPositions[key]
     end
     local cleanKey = tostring(key):gsub("%s*|%s*%d+", ""):gsub("^%s+", ""):gsub("%s+$", "")
     if IslandFarmPositions[cleanKey] then
-        return CFrame.new(IslandFarmPositions[cleanKey])
+        return IslandFarmPositions[cleanKey]
     end
     local lowerClean = string.lower(cleanKey)
-    for name, pos in pairs(IslandFarmPositions) do
+    for name, cf in pairs(IslandFarmPositions) do
         local lName = string.lower(name)
         if lowerClean == lName or string.find(lowerClean, lName, 1, true) or string.find(lName, lowerClean, 1, true) then
-            return CFrame.new(pos)
+            return cf
         end
     end
     return nil
