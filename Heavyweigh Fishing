@@ -67,7 +67,9 @@ local Config = {
     DisableAllKeybinds = false,
     SavedPos = false,
     AutoTPPos = false,
-    AutoExecute = false
+    AutoExecute = false,
+    AutoFarmIsland = false,
+    SelectedFarmIsland = "Beginning Isle"
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -94,8 +96,22 @@ local function LoadConfig()
 end
 
 LoadConfig()
-if type(Config.SkillOrder) ~= "table" then
+if type(Config.SkillOrder) ~= "table" or #Config.SkillOrder == 0 then
     Config.SkillOrder = {"Z", "X", "C", "V"}
+else
+    local validKeys = {Z = true, X = true, C = true, V = true}
+    local filtered = {}
+    for _, k in ipairs(Config.SkillOrder) do
+        if validKeys[k] and not table.find(filtered, k) then
+            table.insert(filtered, k)
+        end
+    end
+    for _, k in ipairs({"Z", "X", "C", "V"}) do
+        if not table.find(filtered, k) then
+            table.insert(filtered, k)
+        end
+    end
+    Config.SkillOrder = filtered
 end
 
 local queueTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
@@ -155,6 +171,41 @@ local function GetSavedCFrame()
         local ok, cf = pcall(CFrame.new, unpack(Config.SavedPos))
         if ok and cf then
             return cf
+        end
+    end
+    return nil
+end
+
+local IslandFarmPositions = {
+    ["Beginning Isle"] = Vector3.new(-313.20, -0.00, 35.42),
+    ["Bamboo Isle"] = Vector3.new(-1338.34, -0.00, -47.13),
+    ["Fallout Isle"] = Vector3.new(55.06, -0.00, 1304.38),
+    ["Sovereign Isle"] = Vector3.new(-1273.04, -0.00, 1314.81),
+    ["Perch Isle"] = Vector3.new(-57.85, -0.00, -1379.74),
+    ["Frost Isle"] = Vector3.new(-1404.97, -0.00, -1423.02),
+    ["Coconut Isle"] = Vector3.new(1332.38, -0.00, -1431.00),
+    ["Amber Isle"] = Vector3.new(1090.68, -0.00, 1417.20),
+    ["Battlefield Isle"] = Vector3.new(1189.69, -0.00, 13.99),
+    ["Mistpeak Isle"] = Vector3.new(2529.83, -0.00, -122.36),
+    ["World Angler Isle"] = Vector3.new(-2493.15, -0.00, -97.49),
+    ["Weather Isle"] = Vector3.new(-2830.97, -0.00, 1201.83),
+    ["Mystic Reef Isle"] = Vector3.new(-2552.03, -0.00, -1313.19)
+}
+
+local function GetIslandFarmCFrame(islandKey)
+    local key = islandKey or Config.SelectedFarmIsland or ""
+    if IslandFarmPositions[key] then
+        return CFrame.new(IslandFarmPositions[key])
+    end
+    local cleanKey = tostring(key):gsub("%s*|%s*%d+", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if IslandFarmPositions[cleanKey] then
+        return CFrame.new(IslandFarmPositions[cleanKey])
+    end
+    local lowerClean = string.lower(cleanKey)
+    for name, pos in pairs(IslandFarmPositions) do
+        local lName = string.lower(name)
+        if lowerClean == lName or string.find(lowerClean, lName, 1, true) or string.find(lName, lowerClean, 1, true) then
+            return CFrame.new(pos)
         end
     end
     return nil
@@ -453,10 +504,23 @@ local function StepAutoTPPos(char)
     end
 end
 
+local function StepAutoFarmIsland(char)
+    if not Config.AutoFarmIsland then return end
+    if Config.AutoBoss or Config.AutoSecretBoss then return end
+    local targetCF = GetIslandFarmCFrame()
+    if not targetCF then return end
+    local c = char or cachedChar or LocalPlayer.Character
+    local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
+        hrp.CFrame = targetCF
+    end
+end
+
 if cachedChar then
     BindCharacterAntiConfuse(cachedChar)
     task.spawn(function()
         StepAutoTPPos(cachedChar)
+        StepAutoFarmIsland(cachedChar)
     end)
 end
 
@@ -469,6 +533,7 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     BindCharacterAntiConfuse(newChar)
     task.wait(0.3)
     StepAutoTPPos(newChar)
+    StepAutoFarmIsland(newChar)
     if Config.FlyEnabled then
         startFly()
     end
@@ -1598,6 +1663,7 @@ task.spawn(function()
         else
             if not isMinigame then
                 StepAutoTPPos(cachedChar)
+                StepAutoFarmIsland(cachedChar)
             end
             if activeCast and not isMinigame and (now - lastCastTry >= 0.6) then
                 local char = cachedChar
@@ -2006,6 +2072,31 @@ local function TeleportToIsland(islandName)
     if hrp and targetPart then
         hrp.CFrame = targetPart.CFrame + Vector3.new(0, 5, 0)
     end
+end
+
+local function TeleportUnderIslandWater(islandName)
+    if not islandName or islandName == "" then return end
+    if not IslandTargets[islandName] then
+        GetIslandList()
+    end
+    local targetPart = IslandTargets[islandName]
+    if not targetPart then return end
+    local char = LocalPlayer.Character or cachedChar
+    local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    if not hrp then return end
+    local waterY = -25
+    local ocean = workspace:FindFirstChild("Ocean")
+    if ocean then
+        for _, child in ipairs(ocean:GetChildren()) do
+            if child.Name == "Water" and child:IsA("BasePart") then
+                local topY = child.Position.Y + (child.Size.Y * 0.5)
+                waterY = topY - 12
+                break
+            end
+        end
+    end
+    local targetPos = Vector3.new(targetPart.Position.X, math.min(waterY, targetPart.Position.Y - 15), targetPart.Position.Z)
+    hrp.CFrame = CFrame.new(targetPos)
 end
 
 local NPCTargets = {}
@@ -2458,9 +2549,79 @@ local function toggleNoclip()
     end
 end
 
+Tabs.Main:AddSection("Auto Farm Fish")
+
+local farmIslandList = GetIslandList()
+if (Config.SelectedFarmIsland == "" or not table.find(farmIslandList, Config.SelectedFarmIsland)) and #farmIslandList > 0 then
+    Config.SelectedFarmIsland = farmIslandList[1]
+end
+
+Tabs.Main:AddDropdown("SelectIslandFarmDropdown", {
+    Title = "Select Island",
+    Values = farmIslandList,
+    Default = Config.SelectedFarmIsland ~= "" and Config.SelectedFarmIsland or farmIslandList[1],
+    Multi = false,
+    Callback = function(Value)
+        Config.SelectedFarmIsland = Value or ""
+        SaveConfig()
+        if Config.AutoFarmIsland then
+            StepAutoFarmIsland(LocalPlayer.Character)
+        end
+    end
+})
+
+local AutoCastToggleObj, AutoReelToggleObj, AutoSkillToggleObj
+
+Tabs.Main:AddToggle("AutoFarmIslandToggle", {
+    Title = "Auto Farm",
+    Default = Config.AutoFarmIsland,
+    Callback = function(Value)
+        Config.AutoFarmIsland = Value
+        SaveConfig()
+        if Value then
+            StepAutoFarmIsland(LocalPlayer.Character)
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(true)
+            else
+                Config.AutoCast = true
+            end
+            if AutoReelToggleObj then
+                AutoReelToggleObj:SetValue(true)
+            else
+                Config.AutoReel = true
+            end
+            if AutoSkillToggleObj then
+                AutoSkillToggleObj:SetValue(true)
+            else
+                Config.AutoSkill = true
+            end
+            SaveConfig()
+        else
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(false)
+            else
+                Config.AutoCast = false
+            end
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Main:AddToggle("AutoExecuteToggle", {
+    Title = "Auto Execute",
+    Default = Config.AutoExecute,
+    Callback = function(Value)
+        Config.AutoExecute = Value
+        SaveConfig()
+        if Value then
+            QueueAutoExecute()
+        end
+    end
+})
+
 Tabs.Main:AddSection("Fishing")
 
-Tabs.Main:AddToggle("AutoCastToggle", {
+AutoCastToggleObj = Tabs.Main:AddToggle("AutoCastToggle", {
     Title = "Auto Cast",
     Default = Config.AutoCast,
     Callback = function(Value)
@@ -2469,7 +2630,7 @@ Tabs.Main:AddToggle("AutoCastToggle", {
     end
 })
 
-Tabs.Main:AddToggle("AutoReelToggle", {
+AutoReelToggleObj = Tabs.Main:AddToggle("AutoReelToggle", {
     Title = "Auto Reel",
     Default = Config.AutoReel,
     Callback = function(Value)
@@ -2480,7 +2641,7 @@ Tabs.Main:AddToggle("AutoReelToggle", {
 
 Tabs.Main:AddSection("Skill")
 
-Tabs.Main:AddToggle("AutoSkillToggle", {
+AutoSkillToggleObj = Tabs.Main:AddToggle("AutoSkillToggle", {
     Title = "Auto Skill",
     Default = Config.AutoSkill,
     Callback = function(Value)
@@ -2493,10 +2654,15 @@ Tabs.Main:AddToggle("AutoSkillToggle", {
 })
 
 local allSkillKeys = {"Z", "X", "C", "V"}
+local defaultSkillSelection = {}
+for _, k in ipairs(Config.SkillOrder) do
+    defaultSkillSelection[k] = true
+end
+
 local SkillDropdown = Tabs.Main:AddDropdown("SelectSkillDropdown", {
     Title = "Select Skill",
     Values = allSkillKeys,
-    Default = Config.SkillOrder,
+    Default = defaultSkillSelection,
     Multi = true
 })
 
@@ -2637,18 +2803,6 @@ Tabs.Main:AddButton({
                 Duration = 3
             })
         end)
-    end
-})
-
-Tabs.Main:AddToggle("AutoExecuteToggle", {
-    Title = "Auto Execute",
-    Default = Config.AutoExecute,
-    Callback = function(Value)
-        Config.AutoExecute = Value
-        SaveConfig()
-        if Value then
-            QueueAutoExecute()
-        end
     end
 })
 
