@@ -2167,7 +2167,7 @@ local function GetNPCList()
         end
     end
 
-    for _, folderName in ipairs({"NPCPVP", "Merchant", "God"}) do
+    for _, folderName in ipairs({"NPCPVP", "Merchant", "God", "Taoist"}) do
         local f = workspace:FindFirstChild(folderName)
         if f then
             if f:IsA("Model") or f:IsA("BasePart") then
@@ -2970,17 +2970,28 @@ do
         end)
     end
 
-    local npcFolder = workspace:FindFirstChild("NPC")
-    if npcFolder then
-        npcFolder.ChildAdded:Connect(ScheduleNPCRefresh)
-        npcFolder.ChildRemoved:Connect(ScheduleNPCRefresh)
-        for _, child in ipairs(npcFolder:GetChildren()) do
+    local function bindFolder(f)
+        if not f then return end
+        f.ChildAdded:Connect(ScheduleNPCRefresh)
+        f.ChildRemoved:Connect(ScheduleNPCRefresh)
+        for _, child in ipairs(f:GetChildren()) do
             if child:IsA("Folder") and child.Name ~= "Boss" then
                 child.ChildAdded:Connect(ScheduleNPCRefresh)
                 child.ChildRemoved:Connect(ScheduleNPCRefresh)
             end
         end
     end
+
+    bindFolder(workspace:FindFirstChild("NPC"))
+    for _, folderName in ipairs({"NPCPVP", "Merchant", "God", "Taoist"}) do
+        bindFolder(workspace:FindFirstChild(folderName))
+    end
+    workspace.ChildAdded:Connect(function(child)
+        if table.find({"NPC", "NPCPVP", "Merchant", "God", "Taoist"}, child.Name) then
+            bindFolder(child)
+            ScheduleNPCRefresh()
+        end
+    end)
 end
 
 Tabs.Shop:AddSection("Selling")
