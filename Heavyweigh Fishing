@@ -1257,6 +1257,12 @@ local function CheckBossStatusOnToggle(wantSecret)
     if hrp and targetCF then
         hrp.CFrame = targetCF
     end
+    local char = cachedChar or LocalPlayer.Character
+    if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+        pcall(function()
+            ToggleHotbar:InvokeServer("1")
+        end)
+    end
     local bossName = bossObj and tostring(bossObj:GetAttribute("Name") or bossObj.Name) or (wantSecret and "Long DiaoHai" or "Enzo")
     local missing = GetBossRequirementSummary(FindBossMenuFrame(), bossName)
     if #missing > 0 then
@@ -1546,6 +1552,12 @@ local function StepAutoBoss(char, isMinigame)
                 hrp.CFrame = bossPart.CFrame * CFrame.new(0, 3, -5)
             end
         end
+    end
+
+    if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+        pcall(function()
+            ToggleHotbar:InvokeServer("1")
+        end)
     end
 
     local bossFrame = FindBossMenuFrame()
