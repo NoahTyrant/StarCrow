@@ -2987,7 +2987,7 @@ Tabs.Shop:AddToggle("AutoSellToggle", {
 })
 
 Tabs.Shop:AddSlider("AutoSellDelaySlider", {
-    Title = "Sell Delay",
+    Title = "Sell Delay Min",
     Default = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10),
     Min = 1,
     Max = 10,
