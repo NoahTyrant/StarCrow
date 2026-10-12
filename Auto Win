@@ -529,27 +529,7 @@ local function getModelRoot(model)
 end
 
 local function bringBoss(b, offset)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not (hrp and b and b.Parent) then return end
-    local targetCFrame = hrp.CFrame * (offset or CFrame.new(0, -35, 0))
-    pcall(function()
-        if not noCollideCache[b] then
-            noCollideCache[b] = true
-            for _, p in ipairs(b:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.CanCollide = false
-                end
-            end
-        end
-        local root = getModelRoot(b)
-        if root then
-            lastBossBroughtTick = tick()
-            root.CFrame = targetCFrame
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end
-    end)
+    return
 end
 
 local function requestStreamTeleport(cf)
@@ -570,8 +550,7 @@ RunService.Heartbeat:Connect(function()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     if currentHoverCFrame then
-        local pos = currentHoverCFrame.Position
-        hrp.CFrame = CFrame.new(pos) * hrp.CFrame.Rotation
+        hrp.CFrame = currentHoverCFrame
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
@@ -926,8 +905,9 @@ end
 
 local function killCommander(name, pos)
     statusText = name
-    requestStreamTeleport(CFrame.new(pos))
-    currentHoverCFrame = CFrame.new(pos)
+    local cf = typeof(pos) == "CFrame" and pos or CFrame.new(pos)
+    requestStreamTeleport(cf)
+    currentHoverCFrame = cf
     local start = tick()
     local spawned = false
     while tick() - start < 35 do
@@ -945,7 +925,7 @@ local function killCommander(name, pos)
             local hum = b:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 spawned = true
-                bringBoss(b, CFrame.new(0, -35, 0))
+                singleAttackBurstTick = tick()
             elseif spawned and (not hum or hum.Health <= 0) then
                 break
             end
@@ -957,8 +937,15 @@ local function killCommander(name, pos)
 end
 
 task.spawn(function()
+    for sec = 5, 1, -1 do
+        statusText = "Waiting Teleport (" .. tostring(sec) .. "s)"
+        task.wait(1)
+    end
+    statusText = "Teleporting..."
+    local initialCF = CFrame.new(1.50, 127.61, 46969.94, 1.00, 0.00, 0.03, -0.00, 1.00, -0.07, -0.03, 0.07, 1.00)
+    requestStreamTeleport(initialCF)
+    currentHoverCFrame = initialCF
     statusText = "Safe Zone"
-    currentHoverCFrame = CFrame.new(-0.08, 145.29, 47059.89)
     task.wait(1.5)
 
     statusText = "Waiting Forcefield"
@@ -996,7 +983,7 @@ task.spawn(function()
     end
 
     statusText = "Safe Zone"
-    local safeZoneCFrame = CFrame.new(-0.08, 145.29, 47059.89)
+    local safeZoneCFrame = CFrame.new(1.50, 127.61, 46969.94, 1.00, 0.00, 0.03, -0.00, 1.00, -0.07, -0.03, 0.07, 1.00)
     currentHoverCFrame = safeZoneCFrame
 
     local targetCountdown = 180
@@ -1043,7 +1030,7 @@ task.spawn(function()
                 if not hum or hum.Health <= 0 then
                     break
                 end
-                bringBoss(safeBoss, CFrame.new(0, -35, 0))
+                singleAttackBurstTick = tick()
                 task.wait(0.05)
             end
             statusText = "Safe Zone"
@@ -1070,19 +1057,20 @@ task.spawn(function()
 
     task.wait(6)
 
-    killCommander("CommanderViridian", Vector3.new(-0.36, 132.56, -59349.80))
+    killCommander("CommanderViridian", CFrame.new(0.78, 93.16, -59326.96, -1.00, 0.00, -0.00, -0.00, 1.00, 0.02, 0.00, 0.02, -1.00))
     if not isPlayerAlive() then return end
 
-    killCommander("CommanderCerulean", Vector3.new(3.36, 72.74, -57509.14))
+    killCommander("CommanderCerulean", CFrame.new(5.55, 109.33, -57431.26, -1.00, -0.01, 0.05, -0.00, 0.99, 0.12, -0.05, 0.12, -0.99))
     if not isPlayerAlive() then return end
 
-    killCommander("CommanderCrimson", Vector3.new(14.65, 81.10, -55359.38))
+    killCommander("CommanderCrimson", CFrame.new(7.77, 81.51, -55348.45, -1.00, -0.00, -0.01, 0.00, 1.00, -0.08, 0.01, -0.08, -1.00))
     if not isPlayerAlive() then return end
 
     statusText = "Arena Portal"
     voidAuraEnabled = true
-    currentHoverCFrame = nil
-    requestStreamTeleport(CFrame.new(0.0, 15.8, -53100.4))
+    local portalCF = CFrame.new(3.72, 3.07, -53102.19, -1.00, 0.00, -0.03, 0.00, 1.00, 0.00, 0.03, 0.00, -1.00)
+    currentHoverCFrame = portalCF
+    requestStreamTeleport(portalCF)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
@@ -1096,9 +1084,10 @@ task.spawn(function()
 
     task.wait(2)
 
-    local arenaBasePos = Vector3.new(120.47, 1123.55, -53155.12)
-    requestStreamTeleport(CFrame.new(arenaBasePos))
-    currentHoverCFrame = CFrame.new(arenaBasePos)
+    local arenaBaseCF = CFrame.new(-20.21, 1155.28, -53216.72, -1.00, 0.01, -0.09, 0.00, 1.00, 0.08, 0.09, 0.08, -0.99)
+    local arenaBasePos = arenaBaseCF.Position
+    requestStreamTeleport(arenaBaseCF)
+    currentHoverCFrame = arenaBaseCF
 
     statusText = "VoidReaper"
     local island = workspace:FindFirstChild("Island")
@@ -1133,12 +1122,11 @@ task.spawn(function()
         if hrp then
             local currentPos = currentHoverCFrame and currentHoverCFrame.Position or arenaBasePos
             local safePos = findSafeArenaPoint(currentPos, arenaBasePos)
-            currentHoverCFrame = CFrame.new(safePos)
+            currentHoverCFrame = CFrame.new(safePos) * arenaBaseCF.Rotation
         end
 
         local priorityFound = false
         if hrp then
-            local broughtCount = 0
             for _, v in ipairs(workspace:GetDescendants()) do
                 if v:IsA("Model") and v ~= char then
                     local clean = string.gsub(string.lower(v.Name), "%s+", "")
@@ -1149,10 +1137,6 @@ task.spawn(function()
                             if vRoot and (vRoot.Position - hrp.Position).Magnitude < 1500 then
                                 if clean ~= "voidreaper" then
                                     priorityFound = true
-                                end
-                                bringBoss(v, CFrame.new(0, -35, 0))
-                                broughtCount = broughtCount + 1
-                                if broughtCount >= 4 then
                                     break
                                 end
                             end
