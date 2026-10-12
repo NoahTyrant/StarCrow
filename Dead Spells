@@ -2989,7 +2989,7 @@ end
 LocalPlayer.CharacterAdded:Connect(setupAutoHealForCharacter)
 
 
-local _tpStations = {
+local _tpBuildings = {
     { name = "0Km",        pos = Vector3.new(19.53, 21.57, -39995.31) },
     { name = "10Km",       pos = Vector3.new(18.65, 33.94, -29980.46) },
     { name = "20Km",       pos = Vector3.new(19.13, 20.87, -19994.57) },
@@ -3000,20 +3000,17 @@ local _tpStations = {
     { name = "70Km",       pos = Vector3.new(24.48, 21.44, 30021.83)  },
     { name = "80Km",       pos = Vector3.new(15.58, 24.05, 40025.31)  },
     { name = "Final",      pos = Vector3.new(-1.92, 24.94, 46813.37)  },
+    { name = "Sky Island", pos = Vector3.new(-106.83, 70.03, 37392.73) },
+    { name = "VoidLand",   pos = CFrame.new(23.26, 2.07, -61272.86, -0.98, -0.00, -0.20, -0.00, 1.00, -0.00, 0.20, -0.00, -0.98) },
+    { name = "Thief King", pos = Vector3.new(37.89,   46.74, -18019.26) },
+    { name = "Samurai",    pos = Vector3.new(-94.51,  28.16, -3432.33) },
+    { name = "Vampire",    pos = Vector3.new(-32.01,  48.85, 7525.46)  },
+    { name = "Dwarf King", pos = Vector3.new(53.52,   27.76, 13962.37) },
+    { name = "SteamPunk",  pos = Vector3.new(-8.46,   51.43, 26926.90) },
+    { name = "Ice King",   pos = Vector3.new(13.47,   54.91, 46162.40) },
 }
 
-local _tpBosses = {
-    { name = "Sky Island",  pos = Vector3.new(-106.83, 70.03, 37392.73) },
-    { name = "Thief King",  pos = Vector3.new(37.89,   46.74, -18019.26) },
-    { name = "Samurai",     pos = Vector3.new(-94.51,  28.16, -3432.33) },
-    { name = "Vampire",     pos = Vector3.new(-32.01,  48.85, 7525.46)  },
-    { name = "Dwarf King",  pos = Vector3.new(53.52,   27.76, 13962.37) },
-    { name = "SteamPunk",   pos = Vector3.new(-8.46,   51.43, 26926.90) },
-    { name = "Ice King",    pos = Vector3.new(13.47,   54.91, 46162.40) },
-}
-
-local _selectedTpStation = nil
-local _selectedTpBoss = nil
+local _selectedTpBuilding = nil
 local _freezeConn = nil
 
 local function _doFreeze()
@@ -3038,77 +3035,42 @@ local function _stopFreeze()
     end
 end
 
-local function _requestStreamTeleport(targetPos)
+local function _requestStreamTeleport(targetTarget)
     local char = LocalPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
+    local cf = typeof(targetTarget) == "CFrame" and targetTarget or CFrame.new(targetTarget)
     pcall(function()
-        LocalPlayer:RequestStreamAroundAsync(targetPos, 5)
+        LocalPlayer:RequestStreamAroundAsync(cf.Position, 5)
     end)
-    hrp.CFrame = CFrame.new(targetPos)
+    hrp.CFrame = cf
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 end
 
-Tabs.Teleport:AddSection("Stations")
+Tabs.Teleport:AddSection("Building")
 
-local _stationOptions = {}
-for _, v in ipairs(_tpStations) do table.insert(_stationOptions, v.name) end
+local _buildingOptions = {}
+for _, v in ipairs(_tpBuildings) do table.insert(_buildingOptions, v.name) end
 
-local _stationDropdown = Tabs.Teleport:AddDropdown("TpStationDropdown", {
-    Title = "Select Station",
-    Values = _stationOptions,
+local _buildingDropdown = Tabs.Teleport:AddDropdown("TpBuildingDropdown", {
+    Title = "Select Building",
+    Values = _buildingOptions,
     Multi = false,
     Default = nil,
     Callback = function(val)
-        for _, v in ipairs(_tpStations) do
-            if v.name == val then _selectedTpStation = v break end
+        for _, v in ipairs(_tpBuildings) do
+            if v.name == val then _selectedTpBuilding = v break end
         end
     end
 })
 
 Tabs.Teleport:AddButton({
-    Title = "Teleport to Station",
+    Title = "Teleport",
     Callback = function()
-        if not _selectedTpStation then return end
-        _requestStreamTeleport(_selectedTpStation.pos)
-        task.wait(0.1)
-        _doFreeze()
-        for npc in pairs(activeNPCESP) do
-            cleanupNPCESP(npc)
-        end
-        if Config.NPCESPEnabled then
-            task.delay(0.5, function()
-                scanNPCESP()
-                updateNPCESP()
-            end)
-        end
-    end
-})
-
-Tabs.Teleport:AddSection("Boss TP")
-
-local _bossOptions = {}
-for _, v in ipairs(_tpBosses) do table.insert(_bossOptions, v.name) end
-
-local _bossDropdown = Tabs.Teleport:AddDropdown("TpBossDropdown", {
-    Title = "Select Boss",
-    Values = _bossOptions,
-    Multi = false,
-    Default = nil,
-    Callback = function(val)
-        for _, v in ipairs(_tpBosses) do
-            if v.name == val then _selectedTpBoss = v break end
-        end
-    end
-})
-
-Tabs.Teleport:AddButton({
-    Title = "Teleport to Boss",
-    Callback = function()
-        if not _selectedTpBoss then return end
-        _requestStreamTeleport(_selectedTpBoss.pos)
+        if not _selectedTpBuilding then return end
+        _requestStreamTeleport(_selectedTpBuilding.pos)
         task.wait(0.1)
         _doFreeze()
         for npc in pairs(activeNPCESP) do
