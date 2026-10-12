@@ -1097,6 +1097,15 @@ local function FindBossTarget(wantSecret)
     return nil, nil
 end
 
+local BossFarmPositions = {
+    Enzo = CFrame.new(-114.81, 9.28, 1356.67, 0.05, -0.00, -1.00, -0.00, 1.00, -0.00, 1.00, 0.00, 0.05),
+    LongDiaoHai = CFrame.new(-2873.62, 32.17, 1337.38, -0.09, 0.00, -1.00, 0.00, 1.00, 0.00, 1.00, -0.00, -0.09)
+}
+
+local function GetBossFarmCFrame(wantSecret)
+    return wantSecret and BossFarmPositions.LongDiaoHai or BossFarmPositions.Enzo
+end
+
 local lastBossActionTick = 0
 local lastBossNotifyKey = ""
 local lastBossNotifyTick = 0
@@ -1243,7 +1252,12 @@ local function CheckBossStatusOnToggle(wantSecret)
         NotifyBoss(title, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "toggle_noboss_" .. tostring(wantSecret), 2)
         return
     end
-    local bossName = tostring(bossObj:GetAttribute("Name") or bossObj.Name)
+    local hrp = cachedHrp or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"))
+    local targetCF = GetBossFarmCFrame(wantSecret)
+    if hrp and targetCF then
+        hrp.CFrame = targetCF
+    end
+    local bossName = bossObj and tostring(bossObj:GetAttribute("Name") or bossObj.Name) or (wantSecret and "Long DiaoHai" or "Enzo")
     local missing = GetBossRequirementSummary(FindBossMenuFrame(), bossName)
     if #missing > 0 then
         NotifyBoss(title, "Requirement Warning (" .. bossName .. "): " .. table.concat(missing, ", "), "toggle_warn_" .. bossName, 2)
@@ -1512,18 +1526,25 @@ local function StepAutoBoss(char, isMinigame)
     end
 
     local bossObj, bossPart = FindBossTarget(wantSecret)
-    if not bossObj or not bossPart then
+    local targetCF = GetBossFarmCFrame(wantSecret)
+    if not bossObj and not targetCF then
         NotifyBoss(notifyTitle, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "step_noboss_" .. tostring(wantSecret), 10)
         return
     end
 
     local hrp = cachedHrp or (char and char:FindFirstChild("HumanoidRootPart"))
-    local bossName = bossObj and (bossObj:GetAttribute("Name") or bossObj.Name) or nil
+    local bossName = bossObj and (bossObj:GetAttribute("Name") or bossObj.Name) or (wantSecret and "Long DiaoHai" or "Enzo")
 
-    if bossPart and hrp then
-        local dist = (hrp.Position - bossPart.Position).Magnitude
-        if dist > 12 then
-            hrp.CFrame = bossPart.CFrame * CFrame.new(0, 3, -5)
+    if hrp then
+        if targetCF then
+            if (hrp.Position - targetCF.Position).Magnitude > 5 then
+                hrp.CFrame = targetCF
+            end
+        elseif bossPart then
+            local dist = (hrp.Position - bossPart.Position).Magnitude
+            if dist > 12 then
+                hrp.CFrame = bossPart.CFrame * CFrame.new(0, 3, -5)
+            end
         end
     end
 
@@ -2725,9 +2746,32 @@ Tabs.Main:AddToggle("AutoBossToggle", {
         Config.AutoBoss = Value
         SaveConfig()
         if Value then
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(true)
+            else
+                Config.AutoCast = true
+            end
+            if AutoReelToggleObj then
+                AutoReelToggleObj:SetValue(true)
+            else
+                Config.AutoReel = true
+            end
+            if AutoSkillToggleObj then
+                AutoSkillToggleObj:SetValue(true)
+            else
+                Config.AutoSkill = true
+            end
+            SaveConfig()
             task.spawn(function()
                 CheckBossStatusOnToggle(false)
             end)
+        else
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(false)
+            else
+                Config.AutoCast = false
+            end
+            SaveConfig()
         end
     end
 })
@@ -2739,9 +2783,32 @@ Tabs.Main:AddToggle("AutoSecretBossToggle", {
         Config.AutoSecretBoss = Value
         SaveConfig()
         if Value then
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(true)
+            else
+                Config.AutoCast = true
+            end
+            if AutoReelToggleObj then
+                AutoReelToggleObj:SetValue(true)
+            else
+                Config.AutoReel = true
+            end
+            if AutoSkillToggleObj then
+                AutoSkillToggleObj:SetValue(true)
+            else
+                Config.AutoSkill = true
+            end
+            SaveConfig()
             task.spawn(function()
                 CheckBossStatusOnToggle(true)
             end)
+        else
+            if AutoCastToggleObj then
+                AutoCastToggleObj:SetValue(false)
+            else
+                Config.AutoCast = false
+            end
+            SaveConfig()
         end
     end
 })
