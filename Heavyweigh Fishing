@@ -2149,15 +2149,13 @@ local function GetNPCList()
     end
 
     for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP"}) do
-        local f = workspace:FindFirstChild(folderName) or ReplicatedStorage:FindFirstChild(folderName)
+        local f = ReplicatedStorage:FindFirstChild(folderName) or workspace:FindFirstChild(folderName)
         if f then
             for _, child in ipairs(f:GetChildren()) do
                 local name = tostring(child.Name)
                 if name ~= "" and name ~= "Lamp" then
-                    local wsFolder = workspace:FindFirstChild(folderName)
-                    local liveModel = wsFolder and wsFolder:FindFirstChild(name)
-                    local targetModel = (liveModel and liveModel:IsA("Model") and liveModel) or (child:IsA("Model") and child)
-                    local part = targetModel and GetModelPart(targetModel)
+                    local liveInWs = workspace:FindFirstChild(name, true)
+                    local part = (liveInWs and GetModelPart(liveInWs)) or GetModelPart(child)
                     if part then
                         addNPC(name, part)
                     end
@@ -2172,40 +2170,8 @@ end
 
 local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
-    local targetPart = nil
-    local candidates = {}
-    for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP"}) do
-        local wsFolder = workspace:FindFirstChild(folderName)
-        if wsFolder then
-            for _, desc in ipairs(wsFolder:GetDescendants()) do
-                if (desc:IsA("Model") or desc:IsA("BasePart")) and (desc.Name == npcName or desc:GetAttribute("Name") == npcName) then
-                    local p = GetModelPart(desc)
-                    if p and p:IsDescendantOf(workspace) then
-                        table.insert(candidates, { folder = folderName, part = p })
-                    end
-                end
-            end
-        end
-    end
-    if #candidates > 0 then
-        if (npcName == "Maoshan" or npcName == "Taoist") and #candidates > 1 then
-            local daShixiong = workspace:FindFirstChild("Da Shixiong", true)
-            local dsPart = daShixiong and GetModelPart(daShixiong)
-            for _, cand in ipairs(candidates) do
-                if cand.folder == "NPC" then
-                    targetPart = cand.part
-                    break
-                end
-                if dsPart and (cand.part.Position - dsPart.Position).Magnitude > 15 then
-                    targetPart = cand.part
-                    break
-                end
-            end
-        end
-        if not targetPart then
-            targetPart = candidates[1].part
-        end
-    end
+    local live = workspace:FindFirstChild(npcName, true)
+    local targetPart = live and GetModelPart(live)
     if not targetPart or not targetPart:IsDescendantOf(workspace) then
         local cached = NPCTargets[npcName]
         if cached and cached:IsDescendantOf(workspace) then
@@ -2967,8 +2933,7 @@ local NPCDropdown = Tabs.Teleport:AddDropdown("SelectNPCDropdown", {
 Tabs.Teleport:AddButton({
     Title = "Teleport To NPC",
     Callback = function()
-        local chosen = (NPCDropdown and NPCDropdown.Value) or Config.SelectedNPC
-        TeleportToNPC(chosen)
+        TeleportToNPC(Config.SelectedNPC)
     end
 })
 
@@ -3395,4 +3360,3 @@ updateFloatButtonsSize = function(size)
 end
 
 Window:SelectTab(1)
-
