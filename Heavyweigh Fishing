@@ -2144,7 +2144,7 @@ local function GetNPCList()
         end
     end
 
-    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP"}) do
+    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP", "God"}) do
         local f = workspace:FindFirstChild(folderName) or ReplicatedStorage:FindFirstChild(folderName)
         if f then
             for _, child in ipairs(f:GetChildren()) do
@@ -2162,7 +2162,39 @@ local function GetNPCList()
         end
     end
 
-    table.sort(list)
+    local priorityOrder = {
+        "Taoist", "Taosi",
+        "Maoshan", "Maosan",
+        "Long DiaoHai", "LongDiaoHai", "Longdiaohai",
+        "Enzo",
+        "Nanjiang",
+        "Zeng Tianguo",
+        "Blue",
+        "Green",
+        "Yellow"
+    }
+
+    local priorityRank = {}
+    for rank, name in ipairs(priorityOrder) do
+        local lower = string.lower(string.gsub(name, "%s+", ""))
+        if not priorityRank[lower] then
+            priorityRank[lower] = rank
+        end
+    end
+
+    local function getRank(name)
+        local lower = string.lower(string.gsub(tostring(name), "%s+", ""))
+        return priorityRank[lower] or 9999
+    end
+
+    table.sort(list, function(a, b)
+        local rankA = getRank(a)
+        local rankB = getRank(b)
+        if rankA ~= rankB then
+            return rankA < rankB
+        end
+        return tostring(a):lower() < tostring(b):lower()
+    end)
     return list
 end
 
@@ -2170,7 +2202,7 @@ local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
     local targetPart = nil
     local candidates = {}
-    for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP"}) do
+    for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP", "God"}) do
         local wsFolder = workspace:FindFirstChild(folderName)
         if wsFolder then
             for _, desc in ipairs(wsFolder:GetDescendants()) do
@@ -2180,6 +2212,15 @@ local function TeleportToNPC(npcName)
                         table.insert(candidates, { folder = folderName, part = p })
                     end
                 end
+            end
+        end
+    end
+    if not targetPart and #candidates == 0 then
+        local directWs = workspace:FindFirstChild(npcName)
+        if directWs then
+            local p = GetModelPart(directWs)
+            if p and p:IsDescendantOf(workspace) then
+                targetPart = p
             end
         end
     end
