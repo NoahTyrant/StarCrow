@@ -39,6 +39,7 @@ local Config = {
     SellDelay = 1,
     SelectedBuyBait = "",
     BuyBaitAmount = 1,
+    BuyBaitDelay = 1,
     AutoBuyBait = false,
     SelectedBait = "",
     BaitAmount = 1,
@@ -1722,6 +1723,7 @@ task.spawn(function()
 end)
 
 local lastSellTime = 0
+local lastBuyBaitTime = 0
 local RemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
 
 local function FindRemote(name)
@@ -1767,7 +1769,12 @@ task.spawn(function()
             end
         end
         if Config.AutoBuyBait and Config.SelectedBuyBait ~= "" then
-            DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
+            local delaySec = math.max(1, tonumber(Config.BuyBaitDelay) or 1) * 60
+            local now = os.clock()
+            if now - lastBuyBaitTime >= delaySec then
+                lastBuyBaitTime = now
+                DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
+            end
         end
         if Config.AutoCraftBait and Config.SelectedBait ~= "" then
             pcall(function()
@@ -3070,11 +3077,26 @@ Tabs.Shop:AddInput("BuyBaitAmountInput", {
     end
 })
 
+Tabs.Shop:AddInput("BuyBaitDelayInput", {
+    Title = "Buy Delay Min",
+    Default = tostring(Config.BuyBaitDelay or 1),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "1",
+    Callback = function(Value)
+        Config.BuyBaitDelay = math.max(1, math.floor(tonumber(Value) or 1))
+        SaveConfig()
+    end
+})
+
 Tabs.Shop:AddToggle("AutoBuyBaitToggle", {
     Title = "Auto Buy Bait",
     Default = Config.AutoBuyBait,
     Callback = function(Value)
         Config.AutoBuyBait = Value
+        if not Value then
+            lastBuyBaitTime = 0
+        end
         SaveConfig()
     end
 })
