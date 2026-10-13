@@ -685,38 +685,21 @@ local function IsSkillSlotAvailable(char, key)
     return s ~= nil
 end
 
-local function IsSkillOnCooldown(char, key)
-    local btn = FindSkillButton(key)
-    if btn then
-        local cd = btn:FindFirstChild("CD")
-        if cd and cd.Visible then
-            local txt = cd.Text or ""
-            local num = tonumber(string.match(txt, "%d+%.?%d*"))
-            if num and num > 0 then
-                return true
-            end
-            if txt ~= "" and txt ~= "0" then
-                return true
-            end
-        end
-    end
+local function IsSkillConfirmedUsed(char, key)
     local s = FindSkillNumberValue(char, key)
-    if s and (s.Value > 0 or (s:GetAttribute("UsingSkill") or 0) > 0) then
+    if s then
+        return s.Value > 0
+    end
+    local btn = FindSkillButton(key)
+    local cd = btn and btn:FindFirstChild("CD")
+    if cd and cd.Visible and (tonumber(cd.Text) or 0) > 0 then
         return true
     end
     return false
 end
 
-local function IsSkillConfirmedUsed(char, key)
-    return IsSkillOnCooldown(char, key)
-end
-
 local function IsSkillKeyReady(char, key)
     if not IsSkillSlotAvailable(char, key) then
-        return false
-    end
-
-    if IsSkillOnCooldown(char, key) then
         return false
     end
 
@@ -733,10 +716,17 @@ local function IsSkillKeyReady(char, key)
                 return false
             end
         end
+        local cd = btn:FindFirstChild("CD")
+        if cd and cd.Visible then
+            return false
+        end
     end
 
     local s, skillsFolder = FindSkillNumberValue(char, key)
     if s then
+        if s.Value > 0 or (s:GetAttribute("UsingSkill") or 0) > 0 then
+            return false
+        end
         return true
     end
 
@@ -1571,34 +1561,39 @@ task.spawn(function()
                     skillSeqIndex = 1
                 end
 
-                local readyIdx = nil
+                local validIdx = nil
                 for step = 1, orderCount do
                     local idx = ((skillSeqIndex - 1 + (step - 1)) % orderCount) + 1
-                    local k = order[idx]
-                    if IsSkillKeyReady(char, k) then
-                        readyIdx = idx
+                    if IsSkillSlotAvailable(char, order[idx]) then
+                        validIdx = idx
                         break
                     end
                 end
 
-                if readyIdx then
-                    skillSeqIndex = readyIdx
+                if validIdx then
+                    skillSeqIndex = validIdx
                     local currentKey = order[skillSeqIndex]
-                    if IsGameAllowingSkill(char) and (now - lastSkillTry >= 0.25) then
+                    if pendingSkillKey and pendingSkillKey ~= currentKey then
+                        pendingSkillKey = nil
+                    end
+                    if pendingSkillKey == currentKey and IsSkillConfirmedUsed(char, currentKey) then
+                        skillSeqIndex = (skillSeqIndex % orderCount) + 1
+                        pendingSkillKey = nil
+                        for step = 1, orderCount do
+                            local idx = ((skillSeqIndex - 1 + (step - 1)) % orderCount) + 1
+                            if IsSkillSlotAvailable(char, order[idx]) then
+                                skillSeqIndex = idx
+                                break
+                            end
+                        end
+                        currentKey = order[skillSeqIndex]
+                    end
+                    if IsGameAllowingSkill(char) and IsSkillKeyReady(char, currentKey) and (now - lastSkillTry >= 0.25) then
                         lastSkillTry = os.clock()
                         pendingSkillKey = currentKey
                         pcall(function()
                             UseSkill:FireServer(currentKey)
                         end)
-                        skillSeqIndex = (skillSeqIndex % orderCount) + 1
-                    end
-                else
-                    for step = 1, orderCount do
-                        local idx = ((skillSeqIndex - 1 + (step - 1)) % orderCount) + 1
-                        if IsSkillSlotAvailable(char, order[idx]) and not IsSkillOnCooldown(char, order[idx]) then
-                            skillSeqIndex = idx
-                            break
-                        end
                     end
                 end
             end
