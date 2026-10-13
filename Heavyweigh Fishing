@@ -1114,21 +1114,6 @@ local lastBossNotifyKey = ""
 local lastBossNotifyTick = 0
 
 local function NotifyBoss(title, content, key, cooldown)
-    local now = os.clock()
-    local cd = cooldown or 8
-    local k = key or (title .. "|" .. content)
-    if k == lastBossNotifyKey and (now - lastBossNotifyTick) < cd then
-        return
-    end
-    lastBossNotifyKey = k
-    lastBossNotifyTick = now
-    pcall(function()
-        Fluent:Notify({
-            Title = title,
-            Content = content,
-            Duration = 4
-        })
-    end)
 end
 
 local function GetButtonLabelText(obj)
@@ -1143,6 +1128,52 @@ local function GetButtonLabelText(obj)
         return lbl.Text
     end
     return ""
+end
+
+local function TriggerGuiButton(btn)
+    if not btn then return false end
+    if not btn:IsA("GuiButton") then
+        btn = btn:FindFirstChildWhichIsA("GuiButton", true) or (btn.Parent and btn.Parent:IsA("GuiButton") and btn.Parent) or nil
+        if not btn then return false end
+    end
+    local triggered = false
+    pcall(function()
+        if btn.AbsolutePosition and btn.AbsoluteSize then
+            local pos = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+            VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+            task.wait(0.02)
+            VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+            triggered = true
+        end
+    end)
+    local sigNames = {"MouseButton1Click", "Activated", "MouseButton1Down", "MouseButton1Up"}
+    if getconnections then
+        for _, sName in ipairs(sigNames) do
+            local okSig, sig = pcall(function() return btn[sName] end)
+            if okSig and sig then
+                pcall(function()
+                    for _, conn in pairs(getconnections(sig)) do
+                        if conn.Function then
+                            task.spawn(conn.Function)
+                            triggered = true
+                        elseif conn.Fire then
+                            conn:Fire()
+                            triggered = true
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    if firesignal then
+        for _, sName in ipairs(sigNames) do
+            pcall(function()
+                firesignal(btn[sName])
+                triggered = true
+            end)
+        end
+    end
+    return triggered
 end
 
 local function FindBossMenuFrame()
@@ -1244,15 +1275,12 @@ end
 local function CheckBossStatusOnToggle(wantSecret)
     bossSummoned = false
     bossSummonTick = 0
-    local title = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
     if not rodVal or rodVal.Value == "" then
-        NotifyBoss(title, "Failed: Requirements not met (No Fishing Rod equipped)!", "toggle_norod_" .. tostring(wantSecret), 2)
         return
     end
     local bossObj = FindBossTarget(wantSecret)
     if not bossObj then
-        NotifyBoss(title, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "toggle_noboss_" .. tostring(wantSecret), 2)
         return
     end
     local hrp = cachedHrp or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"))
@@ -1266,136 +1294,68 @@ local function CheckBossStatusOnToggle(wantSecret)
             ToggleHotbar:InvokeServer("1")
         end)
     end
-    local bossName = bossObj and tostring(bossObj:GetAttribute("Name") or bossObj.Name) or (wantSecret and "Long DiaoHai" or "Enzo")
-    local missing = GetBossRequirementSummary(FindBossMenuFrame(), bossName)
-    if #missing > 0 then
-        NotifyBoss(title, "Requirement Warning (" .. bossName .. "): " .. table.concat(missing, ", "), "toggle_warn_" .. bossName, 2)
-    else
-        NotifyBoss(title, "Requirements met! Hunting " .. bossName .. " [" .. tostring(Config.BossMode) .. "]", "toggle_ok_" .. bossName, 2)
-    end
 end
 
 local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
-    if not bossFrame then return false end
-    local notifyTitle = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local targetMode = mode or "Normal"
-    local targetLower = string.lower(targetMode)
-    local modeMatched = false
 
-    for _, desc in ipairs(bossFrame:GetDescendants()) do
-        if desc:IsA("TextLabel") then
-            local txt = string.lower(desc.Text or "")
-            if string.find(txt, "mode:") and string.find(txt, targetLower) then
-                modeMatched = true
-                break
+    local remotes = {}
+    local function collectRemotes(folder)
+        if not folder then return end
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                table.insert(remotes, child)
             end
         end
     end
 
-    if not modeMatched then
-        for _, desc in ipairs(bossFrame:GetDescendants()) do
-            if desc:IsA("GuiButton") and desc.Visible then
-                local bName = string.lower(desc.Name)
-                local bTxt = string.lower(GetButtonLabelText(desc))
-                local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
-                if bName == targetLower or bTxt == targetLower or pName == targetLower then
-                    TriggerGuiButton(desc)
-                    task.wait(0.1)
-                    break
-                end
-            end
-        end
-    end
+    collectRemotes(Events)
+    local RemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    collectRemotes(RemotesFolder)
 
-    local inProgress = false
-    local startBtn = nil
-    local startBtnText = ""
+    local targetNames = {
+        ["bossfight"] = true,
+        ["startbossfight"] = true,
+        ["startboss"] = true,
+        ["boss"] = true,
+        ["challengeboss"] = true,
+        ["fightboss"] = true,
+        ["choosedialogueoption"] = true
+    }
 
-    local function scanStartButton()
-        inProgress = false
-        startBtn = nil
-        startBtnText = ""
-        for _, desc in ipairs(bossFrame:GetDescendants()) do
-            if desc:IsA("GuiButton") and desc.Visible and desc.Name ~= "Close" then
-                local bName = string.lower(desc.Name)
-                local rawTxt = GetButtonLabelText(desc)
-                local bTxt = string.lower(rawTxt)
-                local pName = desc.Parent and string.lower(desc.Parent.Name) or ""
-                local isModeBtn = (bName == "normal" or bName == "hard" or bName == "nightmare"
-                    or bTxt == "normal" or bTxt == "hard" or bTxt == "nightmare"
-                    or pName == "normal" or pName == "hard" or pName == "nightmare"
-                    or bTxt == "x" or pName == "close")
-                if not isModeBtn then
-                    if string.find(bTxt, "in progress") then
-                        inProgress = true
-                        startBtnText = rawTxt
-                    elseif bTxt ~= "" or bName == "start" or bName == "fight" or bName == "play" or bName == "enter" or bName == "button" then
-                        startBtn = desc
-                        startBtnText = rawTxt
-                    end
-                end
-            end
-        end
-    end
-
-    scanStartButton()
-
-    if inProgress then
-        bossSummoned = true
-        bossSummonTick = os.clock()
-        CloseBossMenuFrame(bossFrame)
-        NotifyBoss(
-            notifyTitle,
-            "Requirements met! Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "] is In Progress!",
-            "inprog_" .. tostring(bossName) .. "_" .. targetMode,
-            15
-        )
-        return true
-    end
-
-    if startBtn then
-        TriggerGuiButton(startBtn)
-    end
-
-    for _, rName in ipairs({"BossFight", "StartBossFight", "StartBoss", "Boss", "ChallengeBoss", "FightBoss"}) do
-        local ev = Events:FindFirstChild(rName)
-        if ev then
+    for _, ev in ipairs(remotes) do
+        local lowerName = string.lower(ev.Name)
+        if targetNames[lowerName] or string.find(lowerName, "boss") then
             pcall(function()
                 if ev:IsA("RemoteEvent") then
                     ev:FireServer(targetMode)
-                    if bossName then ev:FireServer(bossName, targetMode) end
+                    if bossName then
+                        ev:FireServer(bossName, targetMode)
+                        ev:FireServer(targetMode, bossName)
+                    end
                 elseif ev:IsA("RemoteFunction") then
                     ev:InvokeServer(targetMode)
+                    if bossName then
+                        ev:InvokeServer(bossName, targetMode)
+                        ev:InvokeServer(targetMode, bossName)
+                    end
                 end
             end)
         end
     end
 
     task.wait(0.25)
-    scanStartButton()
 
-    if inProgress or (FishingGui and FishingGui.Visible) then
+    if FishingGui and FishingGui.Visible then
         bossSummoned = true
         bossSummonTick = os.clock()
-        CloseBossMenuFrame(bossFrame)
-        NotifyBoss(
-            notifyTitle,
-            "Success! Started Boss " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "]!",
-            "start_ok_" .. tostring(bossName) .. "_" .. targetMode,
-            12
-        )
+        if bossFrame then
+            CloseBossMenuFrame(bossFrame)
+        end
         return true
-    else
-        local missing = GetBossRequirementSummary(bossFrame, bossName)
-        local reason = #missing > 0 and table.concat(missing, ", ") or (startBtnText ~= "" and startBtnText or "Missing Tickets/Crystals or on Cooldown")
-        NotifyBoss(
-            notifyTitle,
-            "Failed (Requirements not met): " .. tostring(bossName or "Boss") .. " [" .. targetMode .. "] - " .. reason,
-            "start_fail_" .. tostring(bossName) .. "_" .. targetMode,
-            10
-        )
-        return false
     end
+
+    return false
 end
 
 local lastCaughtBossTick = 0
@@ -1410,15 +1370,6 @@ do
                 lastCaughtFishName = tostring(fishName or "")
                 bossSummoned = false
                 bossSummonTick = 0
-                if Config.AutoBoss or Config.AutoSecretBoss then
-                    local notifyTitle = Config.AutoSecretBoss and "Auto Long DiaoHai" or "Auto Enzo"
-                    NotifyBoss(
-                        notifyTitle,
-                        "Success! Caught Boss: " .. lastCaughtFishName .. "!",
-                        "caught_" .. lastCaughtFishName .. "_" .. tostring(math.floor(lastCaughtBossTick)),
-                        1
-                    )
-                end
             end
         end)
     end
@@ -1435,19 +1386,11 @@ local function MonitorBossMinigame()
 
     trackingBossFight = true
     task.spawn(function()
-        local notifyTitle = Config.AutoSecretBoss and "Auto Long DiaoHai" or "Auto Enzo"
         local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
         local fNameLbl = progBar and progBar:FindFirstChild("FishName")
         local fName = (fNameLbl and fNameLbl.Text ~= "" and fNameLbl.Text) or "Boss"
         local hpObj = fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
         local maxFishHp = tonumber(fishObj:GetAttribute("MaxHealth")) or 100
-
-        NotifyBoss(
-            notifyTitle,
-            "Fighting " .. fName .. " [" .. tostring(Config.BossMode) .. "]!",
-            "pull_" .. tostring(fishId),
-            5
-        )
 
         local lastScale = 0.5
         local lastHp = hpObj and hpObj.Value or 100
@@ -1478,35 +1421,6 @@ local function MonitorBossMinigame()
         task.wait(0.35)
         bossSummoned = false
         bossSummonTick = 0
-        if os.clock() - lastCaughtBossTick < 2.5 then
-            trackingBossFight = false
-            return
-        end
-
-        local won = (hadFinalPhase and lastFinalHp <= 0) or (not hadFinalPhase and lastFishVal >= maxFishHp * 0.98 and lastHp > 0 and lastScale > 0.02 and lastScale < 0.98)
-        if won then
-            NotifyBoss(
-                notifyTitle,
-                "Success! Defeated Boss " .. fName .. "!",
-                "win_" .. tostring(fishId),
-                2
-            )
-        else
-            local failReason = "Line broke / Cancelled"
-            if lastHp <= 0 then
-                failReason = "Died (0 HP)"
-            elseif lastScale <= 0.02 or lastScale >= 0.98 then
-                failReason = "Out of bar"
-            elseif LocalPlayer.Character and LocalPlayer.Character:GetAttribute("Type") ~= "Fishing Rod" then
-                failReason = "Rod unequipped"
-            end
-            NotifyBoss(
-                notifyTitle,
-                "Failed fighting " .. fName .. ": " .. failReason .. "!",
-                "lose_" .. tostring(fishId),
-                2
-            )
-        end
         trackingBossFight = false
     end)
 end
@@ -1527,17 +1441,14 @@ local function StepAutoBoss(char, isMinigame)
     end
 
     local wantSecret = Config.AutoSecretBoss
-    local notifyTitle = wantSecret and "Auto Long DiaoHai" or "Auto Enzo"
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
     if not rodVal or rodVal.Value == "" then
-        NotifyBoss(notifyTitle, "Failed: Requirements not met (No Fishing Rod equipped)!", "step_norod", 10)
         return
     end
 
     local bossObj, bossPart = FindBossTarget(wantSecret)
     local targetCF = GetBossFarmCFrame(wantSecret)
     if not bossObj and not targetCF then
-        NotifyBoss(notifyTitle, "Failed: " .. (wantSecret and "Secret Boss" or "Boss") .. " not found on map!", "step_noboss_" .. tostring(wantSecret), 10)
         return
     end
 
@@ -1609,16 +1520,10 @@ local function StepAutoBoss(char, isMinigame)
         if bossFrame and bossFrame.Visible then
             CloseBossMenuFrame(bossFrame)
         end
-        if char then
-            if char:GetAttribute("Type") ~= "Fishing Rod" then
-                pcall(function()
-                    ToggleHotbar:InvokeServer("1")
-                end)
-            elseif not char:GetAttribute("Fishing") and hrp then
-                pcall(function()
-                    FishingEvent:FireServer(hrp.CFrame)
-                end)
-            end
+        if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
         end
     end
 end
@@ -1633,7 +1538,7 @@ task.spawn(function()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
         local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
-        local activeCast = Config.AutoCast or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+        local activeCast = Config.AutoCast or Config.AutoFarmIsland
         local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
 
         if not isMinigame then
