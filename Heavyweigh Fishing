@@ -25,6 +25,7 @@ local SellFish = Events:WaitForChild("SellFish")
 local CraftBaitEvent = Events:WaitForChild("CraftBait")
 local CraftRodEvent = Events:WaitForChild("CraftRod")
 local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
+local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
 
 local Config = {
     AutoCast = false,
@@ -70,7 +71,7 @@ local Config = {
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
-    TicketQuestDelay = 1
+    AutoEquipBestBait = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -246,6 +247,16 @@ task.spawn(function()
                     VirtualUser:ClickButton2(Vector2.new(0, 0))
                 end)
             end
+
+            pcall(function()
+                local afkVal = PlayerData and PlayerData:FindFirstChild("AFK")
+                if afkVal and afkVal.Value == true then
+                    local afkEvent = Events:FindFirstChild("AFK")
+                    if afkEvent then
+                        afkEvent:FireServer()
+                    end
+                end
+            end)
         else
             lastAfkTick = os.clock()
         end
@@ -1845,25 +1856,95 @@ local function GetTicketQuestGiverPart()
     return workspace:WaitForChild("NPC", 9e9):WaitForChild("Function", 9e9):WaitForChild("Ticket Quest Giver", 9e9)
 end
 
-local function StepTicketQuest()
-    local giver = GetTicketQuestGiverPart()
-    if not giver then return end
+local function GetActiveTicketQuest()
+    local pData = PlayerData
+    if not pData then return nil end
+    local qFolder = pData:FindFirstChild("Quest")
+    local mainFolder = qFolder and qFolder:FindFirstChild("Main")
+    if mainFolder then
+        local tq = mainFolder:FindFirstChild("Hard Ticket Quest")
+            or mainFolder:FindFirstChild("Easy Ticket Quest")
+            or mainFolder:FindFirstChild("Ticket Quest")
+        if tq then return tq end
+    end
+    for _, child in ipairs(pData:GetChildren()) do
+        if child:IsA("Folder") and (child.Name == "Hard Ticket Quest" or child.Name == "Easy Ticket Quest" or child.Name == "Ticket Quest") then
+            return child
+        end
+    end
+    return nil
+end
 
+local function IsTicketQuestCompleted(tq)
+    if not tq then return false end
+    local infoMain = Info and Info:FindFirstChild("MainQuest")
+    local questInfo = nil
+    if infoMain and infoMain:FindFirstChild(tq.Name) then
+        pcall(function()
+            questInfo = require(infoMain[tq.Name])
+        end)
+    end
+
+    local hasObjectives = false
+    for _, child in ipairs(tq:GetChildren()) do
+        if child:IsA("NumberValue") then
+            hasObjectives = true
+            local targetVal = nil
+            if questInfo and questInfo[tonumber(child.Name)] then
+                targetVal = tonumber(questInfo[tonumber(child.Name)][2])
+            elseif tq:FindFirstChild("Objective") then
+                local objVal = tq.Objective:FindFirstChild(child.Name)
+                if objVal and objVal:IsA("StringValue") then
+                    local parts = string.split(objVal.Value, ",")
+                    targetVal = tonumber(parts[2])
+                end
+            end
+
+            if targetVal and child.Value < targetVal then
+                return false
+            end
+        end
+    end
+    return hasObjectives
+end
+
+local function GetTicketQuestState()
+    local tq = GetActiveTicketQuest()
+    if not tq then
+        return "none"
+    end
+    if IsTicketQuestCompleted(tq) then
+        return "completed"
+    else
+        return "in_progress"
+    end
+end
+
+local questCooldownUntil = 0
+local lastAcceptAttempt = 0
+local lastTurnInAttempt = 0
+
+local function TurnInTicketQuest(giver)
+    local g = giver or GetTicketQuestGiverPart()
+    if not g then return end
     local turnInArgs = {
         [1] = "Ticket Quest Giver",
         [2] = 1,
         [3] = "Quest",
         [4] = {
-            [1] = giver
+            [1] = g
         }
     }
     pcall(function()
         ChooseDialogueOption:FireServer(unpack(turnInArgs))
     end)
     HideTicketDialogueUI()
+    lastTurnInAttempt = os.clock()
+end
 
-    task.wait(0.35)
-
+local function AcceptTicketQuest(giver)
+    local g = giver or GetTicketQuestGiverPart()
+    if not g then return end
     local acceptOption = (Config.TicketQuestMode == "Easy") and "EasyAcceptQuest" or "HardAcceptQuest"
     local acceptIndex = (Config.TicketQuestMode == "Easy") and 1 or 2
     local acceptArgs = {
@@ -1871,7 +1952,7 @@ local function StepTicketQuest()
         [2] = acceptIndex,
         [3] = acceptOption,
         [4] = {
-            [1] = giver,
+            [1] = g,
             [2] = "Ticket Quest"
         }
     }
@@ -1879,17 +1960,400 @@ local function StepTicketQuest()
         ChooseDialogueOption:FireServer(unpack(acceptArgs))
     end)
     HideTicketDialogueUI()
+    lastAcceptAttempt = os.clock()
+end
+
+local function StepSmartTicketQuest()
+    local now = os.clock()
+    local giver = GetTicketQuestGiverPart()
+    if not giver then return end
+
+    local state = GetTicketQuestState()
+    if state == "completed" then
+        if now - lastTurnInAttempt >= 1.5 then
+            TurnInTicketQuest(giver)
+            task.wait(0.5)
+            AcceptTicketQuest(giver)
+        end
+    elseif state == "in_progress" then
+        return
+    else
+        if now >= questCooldownUntil and (now - lastAcceptAttempt >= 2) then
+            TurnInTicketQuest(giver)
+            task.wait(0.4)
+            AcceptTicketQuest(giver)
+        end
+    end
+end
+
+pcall(function()
+    local startDialogueEvent = Events:FindFirstChild("StartDialogue")
+    if startDialogueEvent and startDialogueEvent:IsA("RemoteEvent") then
+        startDialogueEvent.OnClientEvent:Connect(function(dialogueName, npcModel, dialogueData)
+            if not Config.AutoTicketQuest then return end
+            if tostring(dialogueName) == "Ticket Quest Giver" or (npcModel and npcModel.Name == "Ticket Quest Giver") then
+                HideTicketDialogueUI()
+                if type(dialogueData) == "table" and type(dialogueData[1]) == "string" then
+                    local text = string.lower(dialogueData[1])
+                    if string.find(text, "wait") or string.find(text, "cooldown") or string.find(text, "come back") or string.find(text, "đợi") or string.find(text, "chờ") then
+                        local m = string.match(text, "(%d+)%s*m") or string.match(text, "(%d+)%s*min") or string.match(text, "(%d+)%s*phút")
+                        local s = string.match(text, "(%d+)%s*s") or string.match(text, "(%d+)%s*sec") or string.match(text, "(%d+)%s*giây")
+                        if m or s then
+                            local totalSec = (tonumber(m) or 0) * 60 + (tonumber(s) or 0)
+                            if totalSec > 0 and totalSec <= 1800 then
+                                questCooldownUntil = os.clock() + totalSec
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+local StepAutoEquipBestBait
+do
+    local function CleanBaitName(str)
+        if not str or str == "" then return "" end
+        local clean = string.split(str, "|")[1] or str
+        return string.gsub(clean, "^%s*(.-)%s*$", "%1")
+    end
+
+    local function GetSafeItemCount(obj)
+        if not obj then return 0 end
+        local count = 0
+        pcall(function()
+            if obj:IsA("ValueBase") then
+                count = tonumber(obj.Value) or 0
+            end
+        end)
+        if count and count > 0 then return count end
+        pcall(function()
+            local q = obj:FindFirstChild("Quantity") or obj:FindFirstChild("Count") or obj:FindFirstChild("Value") or obj:FindFirstChild("Amount")
+            if q and q:IsA("ValueBase") then
+                count = tonumber(q.Value) or 0
+            end
+        end)
+        if count and count > 0 then return count end
+        pcall(function()
+            local attr = obj:GetAttribute("Quantity") or obj:GetAttribute("Count") or obj:GetAttribute("Amount") or obj:GetAttribute("Value")
+            if attr then
+                count = tonumber(attr) or 0
+            end
+        end)
+        if count and count > 0 then return count end
+        pcall(function()
+            if obj:IsA("BoolValue") and obj.Value == true then
+                count = 1
+            end
+        end)
+        return count or 0
+    end
+
+    local function GetBaitLuck(cleanName)
+        local infoBait = Info and Info:FindFirstChild("Bait")
+        if not infoBait or not cleanName or cleanName == "" then return 0 end
+        local mod = infoBait:FindFirstChild(cleanName)
+        if not mod or not mod:IsA("ModuleScript") then return 0 end
+        local luck = 0
+        local success, data = pcall(require, mod)
+        if success and type(data) == "table" and data.Luck ~= nil then
+            local num = tonumber(data.Luck)
+            if not num then
+                local str = tostring(data.Luck)
+                local cleanStr = string.match(str, "%d+%.?%d*")
+                num = tonumber(cleanStr)
+            end
+            luck = num or 0
+        end
+        return luck
+    end
+
+    local function GetBestOwnedBait()
+        local pData = PlayerData
+        if not pData then return nil end
+        local infoBait = Info and Info:FindFirstChild("Bait")
+        if not infoBait then return nil end
+
+        local bestName = nil
+        local bestRawName = nil
+        local bestLuck = -1
+        local bestCount = 0
+        local bestSource = nil
+        local bestInst = nil
+
+        local function consider(rawName, count, inst, src)
+            local c = tonumber(count) or 0
+            if c > 0 then
+                local clean = CleanBaitName(rawName)
+                if infoBait:FindFirstChild(clean) then
+                    local luck = GetBaitLuck(clean)
+                    if luck > bestLuck then
+                        bestLuck = luck
+                        bestName = clean
+                        bestRawName = rawName
+                        bestCount = c
+                        bestSource = src
+                        bestInst = inst
+                    elseif not bestName then
+                        bestName = clean
+                        bestRawName = rawName
+                        bestCount = c
+                        bestSource = src
+                        bestInst = inst
+                    end
+                end
+            end
+        end
+
+        local baitFolder = pData:FindFirstChild("Bait")
+        if baitFolder then
+            for _, child in ipairs(baitFolder:GetChildren()) do
+                local cnt = GetSafeItemCount(child)
+                if cnt > 0 then
+                    consider(child.Name, cnt, child, "Bait")
+                end
+            end
+        end
+
+        local invFolder = pData:FindFirstChild("Inventory")
+        if invFolder then
+            for _, child in ipairs(invFolder:GetChildren()) do
+                local clean = CleanBaitName(child.Name)
+                if infoBait:FindFirstChild(clean) then
+                    local cnt = GetSafeItemCount(child)
+                    if cnt <= 0 then cnt = 1 end
+                    consider(child.Name, cnt, child, "Inventory")
+                end
+            end
+        end
+
+        return bestName, bestRawName, bestLuck, bestCount, bestSource, bestInst
+    end
+
+    local BaitImageMap = {}
+    local function InitBaitImageMap()
+        local infoBait = Info and Info:FindFirstChild("Bait")
+        if not infoBait then return end
+        for _, bMod in ipairs(infoBait:GetChildren()) do
+            if bMod:IsA("ModuleScript") then
+                local success, data = pcall(require, bMod)
+                if success and type(data) == "table" and data.Image then
+                    local rawImg = tostring(data.Image)
+                    BaitImageMap[rawImg] = bMod.Name
+                    BaitImageMap[string.lower(rawImg)] = bMod.Name
+                    local numId = string.match(rawImg, "%d+")
+                    if numId then
+                        BaitImageMap[numId] = bMod.Name
+                    end
+                end
+            end
+        end
+    end
+    InitBaitImageMap()
+
+    local function GetSlot2Quantity()
+        local qty = -1
+        pcall(function()
+            local mainGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+            local hotbarList = mainGui and mainGui:FindFirstChild("Main") and mainGui.Main:FindFirstChild("Hotbar") and mainGui.Main.Hotbar:FindFirstChild("List")
+            local btn2 = hotbarList and hotbarList:FindFirstChild("2")
+            if btn2 then
+                local qLabel = btn2:FindFirstChild("Quantity") or (btn2:FindFirstChild("Quantity_BG") and btn2.Quantity_BG:FindFirstChild("Quantity")) or (btn2:FindFirstChild("Detail") and btn2.Detail:FindFirstChild("Quantity")) or (btn2:FindFirstChild("Inner") and btn2.Inner:FindFirstChild("Quantity"))
+                if qLabel and qLabel:IsA("TextLabel") then
+                    if not qLabel.Visible or qLabel.Text == "" then
+                        qty = 0
+                    else
+                        local n = string.match(qLabel.Text, "%d+")
+                        qty = tonumber(n) or 0
+                    end
+                end
+            end
+        end)
+        if qty == -1 and PlayerData then
+            pcall(function()
+                local hb = PlayerData:FindFirstChild("Hotbar")
+                local slot2 = hb and hb:FindFirstChild("2")
+                if slot2 then
+                    local q = slot2:FindFirstChild("Quantity")
+                    if q and q:IsA("ValueBase") then
+                        qty = tonumber(q.Value) or 0
+                    end
+                end
+            end)
+        end
+        return math.max(0, qty)
+    end
+
+    local function GetEquippedBaitName()
+        if not next(BaitImageMap) then
+            InitBaitImageMap()
+        end
+        local foundName = nil
+        pcall(function()
+            local mainGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+            local hotbarList = mainGui and mainGui:FindFirstChild("Main") and mainGui.Main:FindFirstChild("Hotbar") and mainGui.Main.Hotbar:FindFirstChild("List")
+            local btn2 = hotbarList and hotbarList:FindFirstChild("2")
+            if btn2 then
+                local img = btn2:FindFirstChild("Image") or (btn2:FindFirstChild("Inner") and btn2.Inner:FindFirstChild("Image"))
+                if not img then
+                    img = btn2:FindFirstChildWhichIsA("ImageLabel", true)
+                end
+                if img and img.Visible and img.Image ~= "" then
+                    local raw = tostring(img.Image)
+                    local num = string.match(raw, "%d+")
+                    if num and BaitImageMap[num] then
+                        foundName = BaitImageMap[num]
+                    elseif BaitImageMap[raw] then
+                        foundName = BaitImageMap[raw]
+                    elseif BaitImageMap[string.lower(raw)] then
+                        foundName = BaitImageMap[string.lower(raw)]
+                    end
+                end
+
+                if not foundName then
+                    for _, desc in ipairs(btn2:GetDescendants()) do
+                        if desc:IsA("TextLabel") and desc.Text ~= "" then
+                            local cl = CleanBaitName(desc.Text)
+                            if Info and Info:FindFirstChild("Bait") and Info.Bait:FindFirstChild(cl) then
+                                foundName = cl
+                                break
+                            end
+                        end
+                        local attr = desc:GetAttribute("ItemName") or desc:GetAttribute("Bait")
+                        if attr and tostring(attr) ~= "" then
+                            local cl = CleanBaitName(tostring(attr))
+                            if Info and Info:FindFirstChild("Bait") and Info.Bait:FindFirstChild(cl) then
+                                foundName = cl
+                                break
+                            end
+                        end
+                    end
+                end
+
+                local qLabel = btn2:FindFirstChild("Quantity") or (btn2:FindFirstChild("Quantity_BG") and btn2.Quantity_BG:FindFirstChild("Quantity")) or (btn2:FindFirstChild("Detail") and btn2.Detail:FindFirstChild("Quantity")) or (btn2:FindFirstChild("Inner") and btn2.Inner:FindFirstChild("Quantity"))
+                if qLabel and qLabel:IsA("TextLabel") then
+                    if not qLabel.Visible or qLabel.Text == "" or qLabel.Text == "x0" or qLabel.Text == "0" then
+                        foundName = nil
+                    end
+                end
+            end
+        end)
+
+        if not foundName and PlayerData then
+            pcall(function()
+                local hb = PlayerData:FindFirstChild("Hotbar")
+                local slot2 = hb and hb:FindFirstChild("2")
+                if slot2 then
+                    local vn = slot2:FindFirstChild("ValueName")
+                    local q = slot2:FindFirstChild("Quantity")
+                    local cnt = q and tonumber(q.Value) or 0
+                    if vn and vn.Value ~= "" and cnt > 0 then
+                        local cl = CleanBaitName(vn.Value)
+                        if Info and Info:FindFirstChild("Bait") and Info.Bait:FindFirstChild(cl) then
+                            foundName = cl
+                        end
+                    end
+                end
+                if not foundName then
+                    local bVal = PlayerData:FindFirstChild("EquippedBait") or PlayerData:FindFirstChild("CurrentBait")
+                    if bVal and bVal:IsA("StringValue") and bVal.Value ~= "" then
+                        foundName = CleanBaitName(bVal.Value)
+                    end
+                end
+                if not foundName then
+                    local attr = PlayerData:GetAttribute("EquippedBait") or PlayerData:GetAttribute("Bait")
+                    if attr and tostring(attr) ~= "" then
+                        foundName = CleanBaitName(tostring(attr))
+                    end
+                end
+            end)
+        end
+
+        return foundName
+    end
+
+    local lastEquipTime = 0
+
+    function StepAutoEquipBestBait(force)
+        if not Config.AutoEquipBestBait and not force then return end
+        local now = os.clock()
+        if not force and now - lastEquipTime < 2 then return end
+
+        local bestBait, bestRaw, bestLuck, bestCount = GetBestOwnedBait()
+        if not bestBait or bestCount <= 0 then
+            if force then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Auto Equip Bait",
+                        Content = "Khong tim thay moi cau trong kho",
+                        Duration = 3
+                    })
+                end)
+            end
+            return
+        end
+
+        local curEquipped = GetEquippedBaitName()
+        local curQty = GetSlot2Quantity()
+
+        if not force and curEquipped == bestBait and curQty > 0 then
+            return
+        end
+
+        lastEquipTime = now
+        local ev = EquipBaitEvent or (Events and Events:FindFirstChild("EquipBait")) or (Events and Events:WaitForChild("EquipBait", 9e9))
+        if ev then
+            pcall(function()
+                if ev:IsA("RemoteFunction") then
+                    ev:InvokeServer(bestBait)
+                elseif ev:IsA("RemoteEvent") then
+                    ev:FireServer(bestBait)
+                else
+                    ev:InvokeServer(bestBait)
+                end
+            end)
+
+            task.delay(0.3, function()
+                local checkEq = GetEquippedBaitName()
+                local checkQ = GetSlot2Quantity()
+                if checkQ <= 0 and checkEq ~= bestBait then
+                    pcall(function()
+                        if ev:IsA("RemoteFunction") then
+                            ev:InvokeServer(bestBait)
+                        elseif ev:IsA("RemoteEvent") then
+                            ev:FireServer(bestBait)
+                        else
+                            ev:InvokeServer(bestBait)
+                        end
+                    end)
+                end
+            end)
+        end
+
+        if force then
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Auto Equip Bait",
+                    Content = "Da trang bi " .. bestBait .. " - Luck " .. bestLuck .. "%",
+                    Duration = 3
+                })
+            end)
+        end
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function()
+        lastEquipTime = 0
+    end)
 end
 
 task.spawn(function()
-    while task.wait(0.5) do
+    while task.wait(1) do
         if Config.AutoTicketQuest then
-            local delaySec = math.max(1, tonumber(Config.TicketQuestDelay) or 1) * 60
-            local now = os.clock()
-            if now - lastTicketQuestTime >= delaySec then
-                lastTicketQuestTime = now
-                StepTicketQuest()
-            end
+            StepSmartTicketQuest()
+        end
+        if Config.AutoEquipBestBait then
+            StepAutoEquipBestBait()
         end
     end
 end)
@@ -2664,38 +3128,28 @@ Tabs.Main:AddDropdown("TicketQuestModeDropdown", {
     end
 })
 
-Tabs.Main:AddInput("TicketQuestDelayInput", {
-    Title = "Claim Delay Min",
-    Default = tostring(Config.TicketQuestDelay or 1),
-    Numeric = true,
-    Finished = false,
-    Placeholder = "1",
-    Callback = function(Value)
-        Config.TicketQuestDelay = math.max(1, math.floor(tonumber(Value) or 1))
-        SaveConfig()
-    end
-})
-
 Tabs.Main:AddSection("Auto Farm Fish")
 
-local farmIslandList = GetIslandList()
-if (Config.SelectedFarmIsland == "" or not table.find(farmIslandList, Config.SelectedFarmIsland)) and #farmIslandList > 0 then
-    Config.SelectedFarmIsland = farmIslandList[1]
-end
-
-Tabs.Main:AddDropdown("SelectIslandFarmDropdown", {
-    Title = "Select Island",
-    Values = farmIslandList,
-    Default = Config.SelectedFarmIsland ~= "" and Config.SelectedFarmIsland or farmIslandList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedFarmIsland = Value or ""
-        SaveConfig()
-        if Config.AutoFarmIsland then
-            StepAutoFarmIsland(LocalPlayer.Character)
-        end
+do
+    local farmIslandList = GetIslandList()
+    if (Config.SelectedFarmIsland == "" or not table.find(farmIslandList, Config.SelectedFarmIsland)) and #farmIslandList > 0 then
+        Config.SelectedFarmIsland = farmIslandList[1]
     end
-})
+
+    Tabs.Main:AddDropdown("SelectIslandFarmDropdown", {
+        Title = "Select Island",
+        Values = farmIslandList,
+        Default = Config.SelectedFarmIsland ~= "" and Config.SelectedFarmIsland or farmIslandList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedFarmIsland = Value or ""
+            SaveConfig()
+            if Config.AutoFarmIsland then
+                StepAutoFarmIsland(LocalPlayer.Character)
+            end
+        end
+    })
+end
 
 Tabs.Main:AddToggle("AutoFarmIslandToggle", {
     Title = "Auto Farm",
@@ -2743,6 +3197,21 @@ Tabs.Main:AddToggle("AutoReelToggle", {
         SaveConfig()
     end
 })
+
+Tabs.Main:AddToggle("AutoEquipBestBaitToggle", {
+    Title = "Auto Equip Best Bait",
+    Default = Config.AutoEquipBestBait,
+    Callback = function(Value)
+        Config.AutoEquipBestBait = Value
+        if Value then
+            task.spawn(function()
+                StepAutoEquipBestBait(true)
+            end)
+        end
+        SaveConfig()
+    end
+})
+
 
 Tabs.Main:AddSection("Skill")
 
@@ -2807,21 +3276,23 @@ end
 
 Tabs.Main:AddSection("Boss")
 
-local bossModes = {"Normal", "Hard", "Nightmare"}
-if not table.find(bossModes, Config.BossMode) then
-    Config.BossMode = "Normal"
-end
-
-Tabs.Main:AddDropdown("SelectBossModeDropdown", {
-    Title = "Select Boss Mode",
-    Values = bossModes,
-    Default = Config.BossMode,
-    Multi = false,
-    Callback = function(Value)
-        Config.BossMode = Value or "Normal"
-        SaveConfig()
+do
+    local bossModes = {"Normal", "Hard", "Nightmare"}
+    if not table.find(bossModes, Config.BossMode) then
+        Config.BossMode = "Normal"
     end
-})
+
+    Tabs.Main:AddDropdown("SelectBossModeDropdown", {
+        Title = "Select Boss Mode",
+        Values = bossModes,
+        Default = Config.BossMode,
+        Multi = false,
+        Callback = function(Value)
+            Config.BossMode = Value or "Normal"
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Main:AddToggle("AutoBossToggle", {
     Title = "Auto Enzo",
@@ -2980,21 +3451,23 @@ Tabs.Player:AddToggle("InfJumpToggle", {
 
 Tabs.Teleport:AddSection("Island")
 
-local islandList = GetIslandList()
-if (Config.SelectedIsland == "" or not table.find(islandList, Config.SelectedIsland)) and #islandList > 0 then
-    Config.SelectedIsland = islandList[1]
-end
-
-Tabs.Teleport:AddDropdown("SelectIslandDropdown", {
-    Title = "Select Island",
-    Values = islandList,
-    Default = Config.SelectedIsland ~= "" and Config.SelectedIsland or islandList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedIsland = Value or ""
-        SaveConfig()
+do
+    local islandList = GetIslandList()
+    if (Config.SelectedIsland == "" or not table.find(islandList, Config.SelectedIsland)) and #islandList > 0 then
+        Config.SelectedIsland = islandList[1]
     end
-})
+
+    Tabs.Teleport:AddDropdown("SelectIslandDropdown", {
+        Title = "Select Island",
+        Values = islandList,
+        Default = Config.SelectedIsland ~= "" and Config.SelectedIsland or islandList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedIsland = Value or ""
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Teleport:AddButton({
     Title = "Teleport To Island",
@@ -3005,29 +3478,31 @@ Tabs.Teleport:AddButton({
 
 Tabs.Teleport:AddSection("NPC")
 
-local npcList = GetNPCList()
-if (Config.SelectedNPC == "" or not table.find(npcList, Config.SelectedNPC)) and #npcList > 0 then
-    Config.SelectedNPC = npcList[1]
+do
+    local npcList = GetNPCList()
+    if (Config.SelectedNPC == "" or not table.find(npcList, Config.SelectedNPC)) and #npcList > 0 then
+        Config.SelectedNPC = npcList[1]
+    end
+
+    local NPCDropdown = Tabs.Teleport:AddDropdown("SelectNPCDropdown", {
+        Title = "Select NPC",
+        Values = npcList,
+        Default = Config.SelectedNPC ~= "" and Config.SelectedNPC or npcList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedNPC = Value or ""
+            SaveConfig()
+        end
+    })
+
+    Tabs.Teleport:AddButton({
+        Title = "Teleport To NPC",
+        Callback = function()
+            local chosen = (NPCDropdown and NPCDropdown.Value) or Config.SelectedNPC
+            TeleportToNPC(chosen)
+        end
+    })
 end
-
-local NPCDropdown = Tabs.Teleport:AddDropdown("SelectNPCDropdown", {
-    Title = "Select NPC",
-    Values = npcList,
-    Default = Config.SelectedNPC ~= "" and Config.SelectedNPC or npcList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedNPC = Value or ""
-        SaveConfig()
-    end
-})
-
-Tabs.Teleport:AddButton({
-    Title = "Teleport To NPC",
-    Callback = function()
-        local chosen = (NPCDropdown and NPCDropdown.Value) or Config.SelectedNPC
-        TeleportToNPC(chosen)
-    end
-})
 
 Tabs.Shop:AddSection("Selling")
 
@@ -3071,21 +3546,23 @@ Tabs.Shop:AddButton({
 
 Tabs.Shop:AddSection("Buy Bait")
 
-local buyBaitList = GetBuyableBaits()
-if Config.SelectedBuyBait == "" and #buyBaitList > 0 then
-    Config.SelectedBuyBait = buyBaitList[1]
-end
-
-Tabs.Shop:AddDropdown("SelectBuyBaitDropdown", {
-    Title = "Select Bait",
-    Values = buyBaitList,
-    Default = Config.SelectedBuyBait ~= "" and Config.SelectedBuyBait or buyBaitList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedBuyBait = Value or ""
-        SaveConfig()
+do
+    local buyBaitList = GetBuyableBaits()
+    if Config.SelectedBuyBait == "" and #buyBaitList > 0 then
+        Config.SelectedBuyBait = buyBaitList[1]
     end
-})
+
+    Tabs.Shop:AddDropdown("SelectBuyBaitDropdown", {
+        Title = "Select Bait",
+        Values = buyBaitList,
+        Default = Config.SelectedBuyBait ~= "" and Config.SelectedBuyBait or buyBaitList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedBuyBait = Value or ""
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Shop:AddInput("BuyBaitAmountInput", {
     Title = "Buy Amount",
@@ -3132,21 +3609,23 @@ Tabs.Shop:AddButton({
 
 Tabs.Shop:AddSection("Craft Bait")
 
-local baitList = GetCraftableBaits()
-if Config.SelectedBait == "" and #baitList > 0 then
-    Config.SelectedBait = baitList[1]
-end
-
-Tabs.Shop:AddDropdown("SelectBaitDropdown", {
-    Title = "Select Bait",
-    Values = baitList,
-    Default = Config.SelectedBait ~= "" and Config.SelectedBait or baitList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedBait = Value or ""
-        SaveConfig()
+do
+    local baitList = GetCraftableBaits()
+    if Config.SelectedBait == "" and #baitList > 0 then
+        Config.SelectedBait = baitList[1]
     end
-})
+
+    Tabs.Shop:AddDropdown("SelectBaitDropdown", {
+        Title = "Select Bait",
+        Values = baitList,
+        Default = Config.SelectedBait ~= "" and Config.SelectedBait or baitList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedBait = Value or ""
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Shop:AddInput("BaitAmountInput", {
     Title = "Craft Amount",
@@ -3180,21 +3659,23 @@ Tabs.Shop:AddButton({
 
 Tabs.Shop:AddSection("Craft Rod")
 
-local rodList = GetCraftableRods()
-if Config.SelectedRod == "" and #rodList > 0 then
-    Config.SelectedRod = rodList[1]
-end
-
-Tabs.Shop:AddDropdown("SelectRodDropdown", {
-    Title = "Select Rod",
-    Values = rodList,
-    Default = Config.SelectedRod ~= "" and Config.SelectedRod or rodList[1],
-    Multi = false,
-    Callback = function(Value)
-        Config.SelectedRod = Value or ""
-        SaveConfig()
+do
+    local rodList = GetCraftableRods()
+    if Config.SelectedRod == "" and #rodList > 0 then
+        Config.SelectedRod = rodList[1]
     end
-})
+
+    Tabs.Shop:AddDropdown("SelectRodDropdown", {
+        Title = "Select Rod",
+        Values = rodList,
+        Default = Config.SelectedRod ~= "" and Config.SelectedRod or rodList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedRod = Value or ""
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Shop:AddToggle("AutoCraftRodToggle", {
     Title = "Auto Craft Rod",
