@@ -2136,31 +2136,45 @@ local function GetNPCList()
     table.clear(NPCTargets)
 
     local function addNPC(name, part)
-        if not name or name == "" or not part then return end
-        NPCTargets[name] = part
-        if not seen[name] then
-            seen[name] = true
+        if not name or name == "" then return end
+        local norm = string.lower(string.gsub(name, "%s+", ""))
+        if norm == "longdiaohai" then
+            name = "Long DiaoHai"
+        end
+        if part then
+            NPCTargets[name] = part
+            NPCTargets[norm] = part
+        end
+        if not seen[norm] then
+            seen[norm] = true
             table.insert(list, name)
         end
     end
 
-    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP", "God"}) do
+    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP", "God", "NPC", "BossSetUp"}) do
         local f = workspace:FindFirstChild(folderName) or ReplicatedStorage:FindFirstChild(folderName)
         if f then
             for _, child in ipairs(f:GetChildren()) do
                 local name = tostring(child.Name)
-                if name ~= "" and name ~= "Lamp" then
+                if name ~= "" and name ~= "Lamp" and name ~= "Boss" then
                     local wsFolder = workspace:FindFirstChild(folderName)
                     local liveModel = wsFolder and wsFolder:FindFirstChild(name)
                     local targetModel = (liveModel and liveModel:IsA("Model") and liveModel) or (child:IsA("Model") and child)
                     local part = targetModel and GetModelPart(targetModel)
-                    if part then
-                        addNPC(name, part)
+                    addNPC(name, part)
+                elseif name == "Boss" then
+                    for _, b in ipairs(child:GetChildren()) do
+                        local bName = tostring(b.Name)
+                        if bName ~= "" then
+                            local part = GetModelPart(b)
+                            addNPC(bName, part)
+                        end
                     end
                 end
             end
         end
     end
+    addNPC("Long DiaoHai")
 
     local priorityOrder = {
         "Taoist", "Taosi",
@@ -2200,16 +2214,25 @@ end
 
 local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
-    local targetPart = nil
+    local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
+    if string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
+        local _, bossPart = FindBossTarget(string.find(lowerNpc, "longdiaohai") ~= nil)
+        if bossPart and bossPart:IsDescendantOf(workspace) then
+            targetPart = bossPart
+        end
+    end
+
     local candidates = {}
-    for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP", "God"}) do
-        local wsFolder = workspace:FindFirstChild(folderName)
-        if wsFolder then
-            for _, desc in ipairs(wsFolder:GetDescendants()) do
-                if (desc:IsA("Model") or desc:IsA("BasePart")) and (desc.Name == npcName or desc:GetAttribute("Name") == npcName) then
-                    local p = GetModelPart(desc)
-                    if p and p:IsDescendantOf(workspace) then
-                        table.insert(candidates, { folder = folderName, part = p })
+    if not targetPart then
+        for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP", "God", "BossSetUp"}) do
+            local wsFolder = workspace:FindFirstChild(folderName)
+            if wsFolder then
+                for _, desc in ipairs(wsFolder:GetDescendants()) do
+                    if (desc:IsA("Model") or desc:IsA("BasePart")) and (desc.Name == npcName or desc:GetAttribute("Name") == npcName) then
+                        local p = GetModelPart(desc)
+                        if p and p:IsDescendantOf(workspace) then
+                            table.insert(candidates, { folder = folderName, part = p })
+                        end
                     end
                 end
             end
