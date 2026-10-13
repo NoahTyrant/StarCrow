@@ -1968,7 +1968,7 @@ end
 task.spawn(function()
     while task.wait(0.5) do
         if Config.AutoTicketQuest then
-            local delaySec = math.clamp(tonumber(Config.TicketQuestDelay) or 1, 1, 6) * 60
+            local delaySec = math.max(1, tonumber(Config.TicketQuestDelay) or 1) * 60
             local now = os.clock()
             if now - lastTicketQuestTime >= delaySec then
                 lastTicketQuestTime = now
@@ -2724,14 +2724,14 @@ Tabs.Main:AddDropdown("TicketQuestModeDropdown", {
     end
 })
 
-Tabs.Main:AddSlider("TicketQuestDelaySlider", {
+Tabs.Main:AddInput("TicketQuestDelayInput", {
     Title = "Claim Delay Min",
-    Default = math.clamp(tonumber(Config.TicketQuestDelay) or 1, 1, 6),
-    Min = 1,
-    Max = 6,
-    Rounding = 0,
+    Default = tostring(Config.TicketQuestDelay or 1),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "1",
     Callback = function(Value)
-        Config.TicketQuestDelay = Value
+        Config.TicketQuestDelay = math.max(1, math.floor(tonumber(Value) or 1))
         SaveConfig()
     end
 })
@@ -3109,14 +3109,14 @@ Tabs.Shop:AddToggle("AutoSellToggle", {
     end
 })
 
-Tabs.Shop:AddSlider("AutoSellDelaySlider", {
+Tabs.Shop:AddInput("AutoSellDelayInput", {
     Title = "Sell Delay Min",
-    Default = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10),
-    Min = 1,
-    Max = 10,
-    Rounding = 0,
+    Default = tostring(Config.SellDelay or 1),
+    Numeric = true,
+    Finished = false,
+    Placeholder = "1",
     Callback = function(Value)
-        Config.SellDelay = Value
+        Config.SellDelay = math.clamp(math.floor(tonumber(Value) or 1), 1, 60)
         SaveConfig()
     end
 })
