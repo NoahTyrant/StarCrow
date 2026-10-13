@@ -2141,7 +2141,7 @@ local function GetNPCList()
         if norm == "longdiaohai" then
             name = "Long DiaoHai"
         end
-        if part then
+        if part and part:IsDescendantOf(workspace) then
             NPCTargets[name] = part
             NPCTargets[norm] = part
         end
@@ -2159,14 +2159,16 @@ local function GetNPCList()
                 if name ~= "" and name ~= "Lamp" and name ~= "Boss" then
                     local wsFolder = workspace:FindFirstChild(folderName)
                     local liveModel = wsFolder and wsFolder:FindFirstChild(name)
-                    local targetModel = (liveModel and liveModel:IsA("Model") and liveModel) or (child:IsA("Model") and child)
-                    local part = targetModel and GetModelPart(targetModel)
+                    local part = liveModel and GetModelPart(liveModel)
                     addNPC(name, part)
                 elseif name == "Boss" then
                     for _, b in ipairs(child:GetChildren()) do
                         local bName = tostring(b.Name)
                         if bName ~= "" then
-                            local part = GetModelPart(b)
+                            local wsFolder = workspace:FindFirstChild(folderName)
+                            local wsBoss = wsFolder and wsFolder:FindFirstChild("Boss")
+                            local liveBoss = wsBoss and wsBoss:FindFirstChild(bName)
+                            local part = liveBoss and GetModelPart(liveBoss)
                             addNPC(bName, part)
                         end
                     end
@@ -2215,7 +2217,34 @@ end
 local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
     local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
-    if string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
+    local targetPart = nil
+
+    if lowerNpc == "blue" or lowerNpc == "green" or lowerNpc == "yellow" then
+        local godFolder = workspace:FindFirstChild("God")
+        if godFolder then
+            for _, child in ipairs(godFolder:GetChildren()) do
+                local cLower = string.lower(string.gsub(tostring(child.Name), "%s+", ""))
+                if cLower == lowerNpc then
+                    targetPart = GetModelPart(child)
+                    if targetPart and targetPart:IsDescendantOf(workspace) then
+                        break
+                    end
+                end
+            end
+        end
+        if not targetPart then
+            for _, child in ipairs(workspace:GetChildren()) do
+                local cLower = string.lower(string.gsub(tostring(child.Name), "%s+", ""))
+                if cLower == lowerNpc then
+                    local p = GetModelPart(child)
+                    if p and p:IsDescendantOf(workspace) then
+                        targetPart = p
+                        break
+                    end
+                end
+            end
+        end
+    elseif string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
         local _, bossPart = FindBossTarget(string.find(lowerNpc, "longdiaohai") ~= nil)
         if bossPart and bossPart:IsDescendantOf(workspace) then
             targetPart = bossPart
@@ -2267,7 +2296,7 @@ local function TeleportToNPC(npcName)
         end
     end
     if not targetPart or not targetPart:IsDescendantOf(workspace) then
-        local cached = NPCTargets[npcName]
+        local cached = NPCTargets[npcName] or NPCTargets[lowerNpc]
         if cached and cached:IsDescendantOf(workspace) then
             targetPart = cached
         end
