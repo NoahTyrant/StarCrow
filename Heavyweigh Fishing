@@ -49,6 +49,7 @@ local Config = {
     SelectedIsland = "",
     SelectedNPC = "",
     ESPEnabled = false,
+    AntiAFK = true,
     FullBright = false,
     NoFog = false,
     LoopSpeedEnabled = false,
@@ -223,11 +224,32 @@ local function GetModuleData(mod)
     return nil
 end
 
+local lastAfkTick = os.clock()
+
 LocalPlayer.Idled:Connect(function()
+    if not Config.AntiAFK then return end
     pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
     end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if Config.AntiAFK then
+            local now = os.clock()
+            if now - lastAfkTick >= 600 then
+                lastAfkTick = now
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0, 0))
+                end)
+            end
+        else
+            lastAfkTick = os.clock()
+        end
+    end
 end)
 
 if getconnections then
@@ -3205,6 +3227,15 @@ Tabs.ESP:AddToggle("ESPPlayers", {
 })
 
 Tabs.Misc:AddSection("Visual")
+
+Tabs.Misc:AddToggle("AntiAFKToggle", {
+    Title = "Anti AFK",
+    Default = Config.AntiAFK,
+    Callback = function(Value)
+        Config.AntiAFK = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Misc:AddToggle("FullBrightToggle", {
     Title = "FullBright",
