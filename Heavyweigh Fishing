@@ -1920,96 +1920,156 @@ local function GetTicketQuestState()
     end
 end
 
-local questCooldownUntil = 0
-local lastAcceptAttempt = 0
-local lastTurnInAttempt = 0
+local StepSmartTicketQuest
+do
+    local questCooldownUntil = 0
+    local lastAcceptAttempt = 0
+    local lastTurnInAttempt = 0
+    local lastRecordedCooldownText = ""
 
-local function TurnInTicketQuest(giver)
-    local g = giver or GetTicketQuestGiverPart()
-    if not g then return end
-    local turnInArgs = {
-        [1] = "Ticket Quest Giver",
-        [2] = 1,
-        [3] = "Quest",
-        [4] = {
-            [1] = g
-        }
-    }
-    pcall(function()
-        ChooseDialogueOption:FireServer(unpack(turnInArgs))
-    end)
-    HideTicketDialogueUI()
-    lastTurnInAttempt = os.clock()
-end
-
-local function AcceptTicketQuest(giver)
-    local g = giver or GetTicketQuestGiverPart()
-    if not g then return end
-    local acceptOption = (Config.TicketQuestMode == "Easy") and "EasyAcceptQuest" or "HardAcceptQuest"
-    local acceptIndex = (Config.TicketQuestMode == "Easy") and 1 or 2
-    local acceptArgs = {
-        [1] = "Ticket Quest Giver",
-        [2] = acceptIndex,
-        [3] = acceptOption,
-        [4] = {
-            [1] = g,
-            [2] = "Ticket Quest"
-        }
-    }
-    pcall(function()
-        ChooseDialogueOption:FireServer(unpack(acceptArgs))
-    end)
-    HideTicketDialogueUI()
-    lastAcceptAttempt = os.clock()
-end
-
-local function StepSmartTicketQuest()
-    local now = os.clock()
-    local giver = GetTicketQuestGiverPart()
-    if not giver then return end
-
-    local state = GetTicketQuestState()
-    if state == "completed" then
-        if now - lastTurnInAttempt >= 1.5 then
-            TurnInTicketQuest(giver)
-            task.wait(0.5)
-            AcceptTicketQuest(giver)
+    local function ParseCooldownSeconds(text)
+        if not text or text == "" then return nil end
+        local lower = string.lower(text)
+        if string.find(lower, "another quest in") or string.find(lower, "take another quest in") then
+            local m, s = string.match(lower, "(%d+)%s*:%s*(%d+)")
+            if m and s then
+                return (tonumber(m) or 0) * 60 + (tonumber(s) or 0)
+            end
+            local mPart = string.match(lower, "(%d+)%s*m")
+            local sPart = string.match(lower, "(%d+)%s*s")
+            if mPart or sPart then
+                return (tonumber(mPart) or 0) * 60 + (tonumber(sPart) or 0)
+            end
         end
-    elseif state == "in_progress" then
-        return
-    else
-        if now >= questCooldownUntil and (now - lastAcceptAttempt >= 2) then
-            TurnInTicketQuest(giver)
-            task.wait(0.4)
-            AcceptTicketQuest(giver)
+        return nil
+    end
+
+    local function CheckAndSetCooldown(text)
+        if not text or text == "" then return end
+        if text == lastRecordedCooldownText then return end
+        local sec = ParseCooldownSeconds(text)
+        if sec and sec > 0 and sec <= 3600 then
+            lastRecordedCooldownText = text
+            questCooldownUntil = os.clock() + sec
         end
     end
-end
 
-pcall(function()
-    local startDialogueEvent = Events:FindFirstChild("StartDialogue")
-    if startDialogueEvent and startDialogueEvent:IsA("RemoteEvent") then
-        startDialogueEvent.OnClientEvent:Connect(function(dialogueName, npcModel, dialogueData)
-            if not Config.AutoTicketQuest then return end
-            if tostring(dialogueName) == "Ticket Quest Giver" or (npcModel and npcModel.Name == "Ticket Quest Giver") then
-                HideTicketDialogueUI()
-                if type(dialogueData) == "table" and type(dialogueData[1]) == "string" then
-                    local text = string.lower(dialogueData[1])
-                    if string.find(text, "wait") or string.find(text, "cooldown") or string.find(text, "come back") or string.find(text, "đợi") or string.find(text, "chờ") then
-                        local m = string.match(text, "(%d+)%s*m") or string.match(text, "(%d+)%s*min") or string.match(text, "(%d+)%s*phút")
-                        local s = string.match(text, "(%d+)%s*s") or string.match(text, "(%d+)%s*sec") or string.match(text, "(%d+)%s*giây")
-                        if m or s then
-                            local totalSec = (tonumber(m) or 0) * 60 + (tonumber(s) or 0)
-                            if totalSec > 0 and totalSec <= 1800 then
-                                questCooldownUntil = os.clock() + totalSec
+    local function TurnInTicketQuest(giver)
+        local g = giver or GetTicketQuestGiverPart()
+        if not g then return end
+        local turnInArgs = {
+            [1] = "Ticket Quest Giver",
+            [2] = 1,
+            [3] = "Quest",
+            [4] = {
+                [1] = g
+            }
+        }
+        pcall(function()
+            ChooseDialogueOption:FireServer(unpack(turnInArgs))
+        end)
+        HideTicketDialogueUI()
+        lastTurnInAttempt = os.clock()
+    end
+
+    local function AcceptTicketQuest(giver)
+        local g = giver or GetTicketQuestGiverPart()
+        if not g then return end
+        local acceptOption = (Config.TicketQuestMode == "Easy") and "EasyAcceptQuest" or "HardAcceptQuest"
+        local acceptIndex = (Config.TicketQuestMode == "Easy") and 1 or 2
+        local acceptArgs = {
+            [1] = "Ticket Quest Giver",
+            [2] = acceptIndex,
+            [3] = acceptOption,
+            [4] = {
+                [1] = g,
+                [2] = "Ticket Quest"
+            }
+        }
+        pcall(function()
+            ChooseDialogueOption:FireServer(unpack(acceptArgs))
+        end)
+        HideTicketDialogueUI()
+        lastAcceptAttempt = os.clock()
+    end
+
+    function StepSmartTicketQuest()
+        local now = os.clock()
+        if now < questCooldownUntil then
+            return
+        end
+
+        local giver = GetTicketQuestGiverPart()
+        if not giver then return end
+
+        local state = GetTicketQuestState()
+        if state == "completed" then
+            if now - lastTurnInAttempt >= 1.5 then
+                TurnInTicketQuest(giver)
+                task.wait(0.5)
+                AcceptTicketQuest(giver)
+            end
+        elseif state == "in_progress" then
+            return
+        else
+            if now >= questCooldownUntil and (now - lastAcceptAttempt >= 2) then
+                TurnInTicketQuest(giver)
+                task.wait(0.4)
+                AcceptTicketQuest(giver)
+            end
+        end
+    end
+
+    pcall(function()
+        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            pg.DescendantAdded:Connect(function(desc)
+                if desc:IsA("TextLabel") then
+                    CheckAndSetCooldown(desc.Text)
+                    desc:GetPropertyChangedSignal("Text"):Connect(function()
+                        CheckAndSetCooldown(desc.Text)
+                    end)
+                end
+            end)
+        end
+    end)
+
+    pcall(function()
+        for _, ev in ipairs(Events:GetChildren()) do
+            if ev:IsA("RemoteEvent") then
+                ev.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    for _, a in ipairs(args) do
+                        if type(a) == "string" then
+                            CheckAndSetCooldown(a)
+                        elseif type(a) == "table" then
+                            for _, sub in pairs(a) do
+                                if type(sub) == "string" then
+                                    CheckAndSetCooldown(sub)
+                                end
                             end
                         end
                     end
-                end
+                end)
             end
-        end)
-    end
-end)
+        end
+    end)
+
+    pcall(function()
+        local startDialogueEvent = Events:FindFirstChild("StartDialogue")
+        if startDialogueEvent and startDialogueEvent:IsA("RemoteEvent") then
+            startDialogueEvent.OnClientEvent:Connect(function(dialogueName, npcModel, dialogueData)
+                if not Config.AutoTicketQuest then return end
+                if tostring(dialogueName) == "Ticket Quest Giver" or (npcModel and npcModel.Name == "Ticket Quest Giver") then
+                    HideTicketDialogueUI()
+                    if type(dialogueData) == "table" and type(dialogueData[1]) == "string" then
+                        CheckAndSetCooldown(dialogueData[1])
+                    end
+                end
+            end)
+        end
+    end)
+end
 
 local StepAutoEquipBestBait
 do
@@ -2286,7 +2346,7 @@ do
                 pcall(function()
                     Fluent:Notify({
                         Title = "Auto Equip Bait",
-                        Content = "Khong tim thay moi cau trong kho",
+                        Content = "No bait found in inventory",
                         Duration = 3
                     })
                 end)
@@ -2331,15 +2391,13 @@ do
             end)
         end
 
-        if force then
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Auto Equip Bait",
-                    Content = "Da trang bi " .. bestBait .. " - Luck " .. bestLuck .. "%",
-                    Duration = 3
-                })
-            end)
-        end
+        pcall(function()
+            Fluent:Notify({
+                Title = "Auto Equip Bait",
+                Content = "Equipped " .. bestBait .. " - Luck " .. bestLuck .. "%",
+                Duration = 3
+            })
+        end)
     end
 
     LocalPlayer.CharacterAdded:Connect(function()
@@ -3940,9 +3998,9 @@ do
         end)
     end
 
-    Tabs.Settings:AddSection("Server")
+    Tabs.Misc:AddSection("Server")
 
-    Tabs.Settings:AddButton({
+    Tabs.Misc:AddButton({
         Title = "Rejoin",
         Callback = function()
             pcall(function()
@@ -3957,7 +4015,7 @@ do
         end
     })
 
-    Tabs.Settings:AddButton({
+    Tabs.Misc:AddButton({
         Title = "Server Hop Low Players",
         Callback = function()
             HopLowServer()
