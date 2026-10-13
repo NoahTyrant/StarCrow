@@ -1933,6 +1933,21 @@ local function StepTicketQuest()
     local giver = GetTicketQuestGiverPart()
     if not giver then return end
 
+    local turnInArgs = {
+        [1] = "Ticket Quest Giver",
+        [2] = 1,
+        [3] = "Quest",
+        [4] = {
+            [1] = giver
+        }
+    }
+    pcall(function()
+        ChooseDialogueOption:FireServer(unpack(turnInArgs))
+    end)
+    HideTicketDialogueUI()
+
+    task.wait(0.35)
+
     local acceptOption = (Config.TicketQuestMode == "Easy") and "EasyAcceptQuest" or "HardAcceptQuest"
     local acceptIndex = (Config.TicketQuestMode == "Easy") and 1 or 2
     local acceptArgs = {
@@ -1946,21 +1961,6 @@ local function StepTicketQuest()
     }
     pcall(function()
         ChooseDialogueOption:FireServer(unpack(acceptArgs))
-    end)
-    HideTicketDialogueUI()
-
-    task.wait(0.35)
-
-    local turnInArgs = {
-        [1] = "Ticket Quest Giver",
-        [2] = 1,
-        [3] = "Quest",
-        [4] = {
-            [1] = giver
-        }
-    }
-    pcall(function()
-        ChooseDialogueOption:FireServer(unpack(turnInArgs))
     end)
     HideTicketDialogueUI()
 end
