@@ -99,18 +99,13 @@ local function LoadConfig()
 end
 
 LoadConfig()
-if type(Config.SkillOrder) ~= "table" or #Config.SkillOrder == 0 then
+if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 else
     local validKeys = {Z = true, X = true, C = true, V = true}
     local filtered = {}
     for _, k in ipairs(Config.SkillOrder) do
         if validKeys[k] and not table.find(filtered, k) then
-            table.insert(filtered, k)
-        end
-    end
-    for _, k in ipairs({"Z", "X", "C", "V"}) do
-        if not table.find(filtered, k) then
             table.insert(filtered, k)
         end
     end
