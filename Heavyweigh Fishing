@@ -69,7 +69,10 @@ local Config = {
     AutoTPPos = false,
     AutoExecute = false,
     AutoFarmIsland = false,
-    SelectedFarmIsland = "Beginning Isle"
+    SelectedFarmIsland = "Beginning Isle",
+    AutoTicketQuest = false,
+    TicketQuestMode = "Hard",
+    TicketQuestDelay = 1
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -1892,6 +1895,89 @@ task.spawn(function()
     end
 end)
 
+local lastTicketQuestTime = 0
+local ChooseDialogueOption = Events:WaitForChild("ChooseDialogueOption", 9e9)
+
+local function HideTicketDialogueUI()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local mg = pg and pg:FindFirstChild("MainGui")
+    local menu = mg and mg:FindFirstChild("Menu")
+    local dialogue = menu and menu:FindFirstChild("Dialogue")
+    if dialogue then
+        dialogue.Visible = false
+    end
+end
+
+task.spawn(function()
+    while true do
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local dialogue = menu and menu:FindFirstChild("Dialogue")
+        if dialogue and dialogue.Visible and Config.AutoTicketQuest then
+            dialogue.Visible = false
+        end
+        task.wait(0.15)
+    end
+end)
+
+local function GetTicketQuestGiverPart()
+    local npcFolder = workspace:FindFirstChild("NPC")
+    local funcFolder = npcFolder and npcFolder:FindFirstChild("Function")
+    local giver = funcFolder and funcFolder:FindFirstChild("Ticket Quest Giver")
+    if giver then return giver end
+    return workspace:WaitForChild("NPC", 9e9):WaitForChild("Function", 9e9):WaitForChild("Ticket Quest Giver", 9e9)
+end
+
+local function StepTicketQuest()
+    local giver = GetTicketQuestGiverPart()
+    if not giver then return end
+
+    local acceptOption = (Config.TicketQuestMode == "Easy") and "EasyAcceptQuest" or "HardAcceptQuest"
+    local acceptIndex = (Config.TicketQuestMode == "Easy") and 1 or 2
+    local acceptArgs = {
+        [1] = "Ticket Quest Giver",
+        [2] = acceptIndex,
+        [3] = acceptOption,
+        [4] = {
+            [1] = giver,
+            [2] = "Ticket Quest"
+        }
+    }
+    pcall(function()
+        ChooseDialogueOption:FireServer(unpack(acceptArgs))
+    end)
+    HideTicketDialogueUI()
+
+    task.wait(0.35)
+
+    local turnInArgs = {
+        [1] = "Ticket Quest Giver",
+        [2] = 1,
+        [3] = "Quest",
+        [4] = {
+            [1] = giver
+        }
+    }
+    pcall(function()
+        ChooseDialogueOption:FireServer(unpack(turnInArgs))
+    end)
+    HideTicketDialogueUI()
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if Config.AutoTicketQuest then
+            local delaySec = math.clamp(tonumber(Config.TicketQuestDelay) or 1, 1, 6) * 60
+            local now = os.clock()
+            if now - lastTicketQuestTime >= delaySec then
+                lastTicketQuestTime = now
+                StepTicketQuest()
+            end
+        end
+    end
+end)
+
 local function GetBuyableBaits()
     local list = {}
     local seen = {}
@@ -2612,6 +2698,43 @@ local function toggleNoclip()
         end
     end
 end
+
+Tabs.Main:AddSection("Auto Ticket Quest")
+
+Tabs.Main:AddToggle("AutoTicketQuestToggle", {
+    Title = "Auto Claim Quest Ticket",
+    Default = Config.AutoTicketQuest,
+    Callback = function(Value)
+        Config.AutoTicketQuest = Value
+        if not Value then
+            lastTicketQuestTime = 0
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddDropdown("TicketQuestModeDropdown", {
+    Title = "Quest Mode",
+    Values = {"Hard", "Easy"},
+    Default = Config.TicketQuestMode or "Hard",
+    Multi = false,
+    Callback = function(Value)
+        Config.TicketQuestMode = Value or "Hard"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("TicketQuestDelaySlider", {
+    Title = "Claim Delay Min",
+    Default = math.clamp(tonumber(Config.TicketQuestDelay) or 1, 1, 6),
+    Min = 1,
+    Max = 6,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.TicketQuestDelay = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Main:AddSection("Auto Farm Fish")
 
