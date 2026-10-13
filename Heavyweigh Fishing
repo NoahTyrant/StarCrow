@@ -3409,6 +3409,21 @@ do
     Tabs.Settings:AddSection("Server")
 
     Tabs.Settings:AddButton({
+        Title = "Rejoin",
+        Callback = function()
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Rejoin",
+                    Content = "Rejoining current server...",
+                    Duration = 3
+                })
+            end)
+            task.wait(0.3)
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    })
+
+    Tabs.Settings:AddButton({
         Title = "Server Hop Low Players",
         Callback = function()
             HopLowServer()
