@@ -2679,24 +2679,24 @@ local function GetNPCList()
         end
     end
 
-    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP", "God", "NPC", "BossSetUp"}) do
+    for _, folderName in ipairs({"Merchant", "NPCDialogue", "NPCPVP", "NPC", "BossSetUp"}) do
         local f = workspace:FindFirstChild(folderName) or ReplicatedStorage:FindFirstChild(folderName)
         if f then
             for _, child in ipairs(f:GetChildren()) do
                 local name = tostring(child.Name)
-                if name ~= "" and name ~= "Lamp" and name ~= "Boss" then
+                if name ~= "" and name ~= "Lamp" and name ~= "Boss" and name ~= "God" then
                     local wsFolder = workspace:FindFirstChild(folderName)
                     local liveModel = wsFolder and wsFolder:FindFirstChild(name)
                     local part = liveModel and GetModelPart(liveModel)
                     addNPC(name, part)
-                elseif name == "Boss" then
+                elseif name == "Boss" or name == "God" then
                     for _, b in ipairs(child:GetChildren()) do
                         local bName = tostring(b.Name)
-                        if bName ~= "" then
+                        if bName ~= "" and bName ~= "God" then
                             local wsFolder = workspace:FindFirstChild(folderName)
-                            local wsBoss = wsFolder and wsFolder:FindFirstChild("Boss")
-                            local liveBoss = wsBoss and wsBoss:FindFirstChild(bName)
-                            local part = liveBoss and GetModelPart(liveBoss)
+                            local wsSub = wsFolder and wsFolder:FindFirstChild(name)
+                            local liveSub = wsSub and wsSub:FindFirstChild(bName)
+                            local part = liveSub and GetModelPart(liveSub)
                             addNPC(bName, part)
                         end
                     end
@@ -2704,18 +2704,31 @@ local function GetNPCList()
             end
         end
     end
+
+    local godFolder = workspace:FindFirstChild("God") or ReplicatedStorage:FindFirstChild("God")
+    if godFolder then
+        for _, child in ipairs(godFolder:GetChildren()) do
+            local name = tostring(child.Name)
+            if name ~= "" and name ~= "Lamp" and name ~= "God" then
+                local liveModel = workspace:FindFirstChild("God") and workspace.God:FindFirstChild(name)
+                local part = liveModel and GetModelPart(liveModel)
+                addNPC(name, part)
+            end
+        end
+    end
     addNPC("Long DiaoHai")
 
     local priorityOrder = {
+        "The Shadow", "TheShadow", "Shadow", "???",
         "Taoist", "Taosi",
         "Maoshan", "Maosan",
         "Long DiaoHai", "LongDiaoHai", "Longdiaohai",
         "Enzo",
-        "Nanjiang",
-        "Zeng Tianguo",
         "Blue",
         "Green",
-        "Yellow"
+        "Yellow",
+        "Nanjiang",
+        "Zeng Tianguo"
     }
 
     local priorityRank = {}
@@ -2785,7 +2798,7 @@ local function TeleportToNPC(npcName)
             local wsFolder = workspace:FindFirstChild(folderName)
             if wsFolder then
                 for _, desc in ipairs(wsFolder:GetDescendants()) do
-                    if (desc:IsA("Model") or desc:IsA("BasePart")) and (desc.Name == npcName or desc:GetAttribute("Name") == npcName) then
+                    if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsA("Folder") and (desc.Name == npcName or desc:GetAttribute("Name") == npcName) and desc.Name ~= "God" then
                         local p = GetModelPart(desc)
                         if p and p:IsDescendantOf(workspace) then
                             table.insert(candidates, { folder = folderName, part = p })
@@ -2903,6 +2916,25 @@ local function RedeemAllCodes()
             task.wait(0.15)
         end
     end)
+end
+
+local function OpenMenuFrameRemotely(frameName)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
+    local menu = mg and mg:FindFirstChild("Menu")
+    if not menu then return false end
+    local target = menu:FindFirstChild(frameName)
+    if not target then return false end
+    for _, child in pairs(menu:GetChildren()) do
+        if child:IsA("Frame") and child.Name ~= "Info" and child.Name ~= "Black" and child.Name ~= "Dialogue" then
+            if child.Name == frameName then
+                child.Visible = not child.Visible
+            else
+                child.Visible = false
+            end
+        end
+    end
+    return target.Visible
 end
 
 local OriginalLighting = {
@@ -3816,6 +3848,44 @@ Tabs.Misc:AddButton({
     Title = "Redeem All Codes",
     Callback = function()
         RedeemAllCodes()
+    end
+})
+
+Tabs.Misc:AddSection("Remote Menus")
+
+Tabs.Misc:AddButton({
+    Title = "Open Skill Upgrade",
+    Callback = function()
+        local state = OpenMenuFrameRemotely("SkillUpgrade")
+        Fluent:Notify({
+            Title = "Remote UI",
+            Content = state and "Opened Skill Upgrade" or "Closed Skill Upgrade",
+            Duration = 2
+        })
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Open Learn Skill",
+    Callback = function()
+        local state = OpenMenuFrameRemotely("LearnSkill")
+        Fluent:Notify({
+            Title = "Remote UI",
+            Content = state and "Opened Learn Skill" or "Closed Learn Skill",
+            Duration = 2
+        })
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Open Exchange UI",
+    Callback = function()
+        local state = OpenMenuFrameRemotely("Exchange")
+        Fluent:Notify({
+            Title = "Remote UI",
+            Content = state and "Opened Item Exchange" or "Closed Item Exchange",
+            Duration = 2
+        })
     end
 })
 
