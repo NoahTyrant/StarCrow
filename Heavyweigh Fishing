@@ -2860,24 +2860,12 @@ local function TeleportToNPC(npcName)
 end
 
 local KnownCodes = {
-    "SeeYouSoon",
-    "BUGTrait",
-    "65KLikes",
-    "60KLikes",
-    "50KLikes",
-    "80KLikes",
-    "41MVisits",
-    "40MVisits",
-    "39MVisits",
-    "38MVisits",
-    "37MVisits",
-    "55MVisits",
-    "55MVistits",
-    "PVP",
-    "19KActives",
-    "AXO",
+    "HWF",
     "Welcome",
-    "VermilionBird"
+    "80KLikes",
+    "55MVisits",
+    "VermilionBird",
+    "23KActives"
 }
 
 local function RedeemAllCodes()
