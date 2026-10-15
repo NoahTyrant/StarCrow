@@ -2912,15 +2912,39 @@ local function OpenMenuFrameRemotely(frameName)
     local menu = mg and mg:FindFirstChild("Menu")
     if not menu then return false end
     local target = menu:FindFirstChild(frameName)
+    if not target and (string.lower(frameName) == "trait" or string.find(string.lower(frameName), "trait")) then
+        for _, child in pairs(menu:GetChildren()) do
+            local lName = string.lower(child.Name)
+            if string.find(lName, "trait") or string.find(lName, "reroll") then
+                target = child
+                frameName = child.Name
+                break
+            end
+        end
+        if not target then
+            for _, desc in pairs(mg:GetDescendants()) do
+                if desc:IsA("Frame") then
+                    local lName = string.lower(desc.Name)
+                    if string.find(lName, "trait") or string.find(lName, "reroll") then
+                        target = desc
+                        break
+                    end
+                end
+            end
+        end
+    end
     if not target then return false end
     for _, child in pairs(menu:GetChildren()) do
         if child:IsA("Frame") and child.Name ~= "Info" and child.Name ~= "Black" and child.Name ~= "Dialogue" then
-            if child.Name == frameName then
+            if child == target or child.Name == frameName then
                 child.Visible = not child.Visible
             else
                 child.Visible = false
             end
         end
+    end
+    if target.Parent ~= menu then
+        target.Visible = not target.Visible
     end
     return target.Visible
 end
@@ -3872,6 +3896,18 @@ Tabs.Misc:AddButton({
         Fluent:Notify({
             Title = "Remote UI",
             Content = state and "Opened Item Exchange" or "Closed Item Exchange",
+            Duration = 2
+        })
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Open Trait",
+    Callback = function()
+        local state = OpenMenuFrameRemotely("Trait")
+        Fluent:Notify({
+            Title = "Remote UI",
+            Content = state and "Opened Trait" or "Closed Trait",
             Duration = 2
         })
     end
