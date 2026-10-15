@@ -1830,23 +1830,14 @@ local function HideTicketDialogueUI()
     local mg = pg and pg:FindFirstChild("MainGui")
     local menu = mg and mg:FindFirstChild("Menu")
     local dialogue = menu and menu:FindFirstChild("Dialogue")
-    if dialogue then
-        dialogue.Visible = false
-    end
-end
-
-task.spawn(function()
-    while true do
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local mg = pg and pg:FindFirstChild("MainGui")
-        local menu = mg and mg:FindFirstChild("Menu")
-        local dialogue = menu and menu:FindFirstChild("Dialogue")
-        if dialogue and dialogue.Visible and Config.AutoTicketQuest then
+    if dialogue and dialogue.Visible then
+        local nameLabel = dialogue:FindFirstChild("Name", true) or dialogue:FindFirstChild("NPCName", true) or dialogue:FindFirstChild("Title", true)
+        local dName = nameLabel and tostring(nameLabel.Text) or ""
+        if dName == "" or string.find(dName, "Ticket", 1, true) or string.find(dName, "Giver", 1, true) then
             dialogue.Visible = false
         end
-        task.wait(0.15)
     end
-end)
+end
 
 local function GetTicketQuestGiverPart()
     local npcFolder = workspace:FindFirstChild("NPC")
