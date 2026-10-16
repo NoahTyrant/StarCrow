@@ -29,6 +29,8 @@ local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
 
 local Config = {
     AutoCast = false,
+    AutoCastMethod = "Instant",
+    CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
     BossMode = "Normal",
@@ -1454,7 +1456,8 @@ local function StepAutoBoss(char, isMinigame)
         return
     end
     local now = os.clock()
-    if now - lastBossActionTick < 0.8 then return end
+    local minBossInterval = (Config.AutoCastMethod == "Instant") and 0.05 or math.clamp(tonumber(Config.CastDelay) or 1, 0, 10)
+    if (now - lastMinigameEndTick < minBossInterval) or (now - lastBossActionTick < minBossInterval) then return end
     lastBossActionTick = now
 
     if bossSummoned and (now - bossSummonTick > 45) then
@@ -1549,15 +1552,22 @@ local function StepAutoBoss(char, isMinigame)
     end
 end
 
+local lastMinigameEndTick = 0
+
 task.spawn(function()
     local lastCastTry = 0
     local lastSkillTry = 0
     local skillSeqIndex = 1
     local pendingSkillKey = nil
+    local wasMinigameActive = false
     while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
         local isMinigame = FishingGui and FishingGui.Visible or false
+        if wasMinigameActive and not isMinigame then
+            lastMinigameEndTick = now
+        end
+        wasMinigameActive = isMinigame
         local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
         local activeCast = Config.AutoCast or Config.AutoFarmIsland
         local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
@@ -1622,21 +1632,24 @@ task.spawn(function()
                 StepAutoTPPos(cachedChar)
                 StepAutoFarmIsland(cachedChar)
             end
-            if activeCast and not isMinigame and (now - lastCastTry >= 0.6) then
-                local char = cachedChar
-                if char then
-                    if char:GetAttribute("Type") ~= "Fishing Rod" then
-                        lastCastTry = now
-                        pcall(function()
-                            ToggleHotbar:InvokeServer("1")
-                        end)
-                    elseif not char:GetAttribute("Fishing") then
-                        local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            lastCastTry = now + 0.9
+            if activeCast and not isMinigame then
+                local minCastInterval = (Config.AutoCastMethod == "Instant") and 0.05 or math.clamp(tonumber(Config.CastDelay) or 1, 0, 10)
+                if (now - lastMinigameEndTick >= minCastInterval) and (now - lastCastTry >= minCastInterval) then
+                    local char = cachedChar
+                    if char then
+                        if char:GetAttribute("Type") ~= "Fishing Rod" then
+                            lastCastTry = now
                             pcall(function()
-                                FishingEvent:FireServer(hrp.CFrame)
+                                ToggleHotbar:InvokeServer("1")
                             end)
+                        elseif not char:GetAttribute("Fishing") then
+                            local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                lastCastTry = now
+                                pcall(function()
+                                    FishingEvent:FireServer(hrp.CFrame)
+                                end)
+                            end
                         end
                     end
                 end
@@ -3278,6 +3291,29 @@ Tabs.Main:AddToggle("AutoCastToggle", {
     Default = Config.AutoCast,
     Callback = function(Value)
         Config.AutoCast = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddDropdown("AutoCastMethodDropdown", {
+    Title = "Cast Method",
+    Values = {"Instant", "Delay"},
+    Default = Config.AutoCastMethod or "Instant",
+    Multi = false,
+    Callback = function(Value)
+        Config.AutoCastMethod = Value or "Instant"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSlider("CastDelaySlider", {
+    Title = "Cast Delay",
+    Default = Config.CastDelay or 1,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.CastDelay = Value
         SaveConfig()
     end
 })
