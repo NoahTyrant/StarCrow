@@ -51,6 +51,7 @@ local Config = {
     AutoCraftRod = false,
     SelectedIsland = "",
     SelectedNPC = "",
+    SelectedPlayer = "",
     ESPEnabled = false,
     AntiAFK = true,
     FullBright = false,
@@ -2863,6 +2864,61 @@ local function TeleportToNPC(npcName)
     end
 end
 
+local function GetPlayerList()
+    local list = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            table.insert(list, plr.Name)
+        end
+    end
+    table.sort(list, function(a, b)
+        return string.lower(a) < string.lower(b)
+    end)
+    return list
+end
+
+local function TeleportToPlayer(targetName)
+    if not targetName or targetName == "" then return end
+    local targetPlr = Players:FindFirstChild(targetName)
+    if not targetPlr then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and (string.lower(plr.Name) == string.lower(targetName) or string.lower(plr.DisplayName) == string.lower(targetName)) then
+                targetPlr = plr
+                break
+            end
+        end
+    end
+    if not targetPlr then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Teleport Player",
+                Content = "Player " .. tostring(targetName) .. " not found!",
+                Duration = 3
+            })
+        end)
+        return
+    end
+
+    local tChar = targetPlr.Character
+    local tHrp = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+    if not tHrp then
+        pcall(function()
+            Fluent:Notify({
+                Title = "Teleport Player",
+                Content = targetPlr.Name .. " has no character spawned!",
+                Duration = 3
+            })
+        end)
+        return
+    end
+
+    local char = LocalPlayer.Character or cachedChar
+    local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    if hrp then
+        hrp.CFrame = tHrp.CFrame * CFrame.new(0, 2, 3)
+    end
+end
+
 local KnownCodes = {
     "HWF",
     "Welcome",
@@ -3629,6 +3685,64 @@ do
         Callback = function()
             local chosen = (NPCDropdown and NPCDropdown.Value) or Config.SelectedNPC
             TeleportToNPC(chosen)
+        end
+    })
+end
+
+Tabs.Teleport:AddSection("Player")
+
+do
+    local playerList = GetPlayerList()
+    if #playerList == 0 then
+        playerList = {"None"}
+    end
+    if (Config.SelectedPlayer == "" or not table.find(playerList, Config.SelectedPlayer)) and #playerList > 0 then
+        Config.SelectedPlayer = playerList[1]
+    end
+
+    local PlayerDropdown = Tabs.Teleport:AddDropdown("SelectPlayerDropdown", {
+        Title = "Select Player",
+        Values = playerList,
+        Default = Config.SelectedPlayer ~= "" and Config.SelectedPlayer or playerList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedPlayer = Value or ""
+            SaveConfig()
+        end
+    })
+
+    local function RefreshDropdownPlayers()
+        local updated = GetPlayerList()
+        if #updated == 0 then
+            updated = {"None"}
+        end
+        if PlayerDropdown and PlayerDropdown.SetValues then
+            PlayerDropdown:SetValues(updated)
+            if not table.find(updated, Config.SelectedPlayer) then
+                PlayerDropdown:SetValue(updated[1])
+                Config.SelectedPlayer = updated[1]
+                SaveConfig()
+            end
+        end
+    end
+
+    Players.PlayerAdded:Connect(function()
+        task.wait(0.5)
+        RefreshDropdownPlayers()
+    end)
+
+    Players.PlayerRemoving:Connect(function()
+        task.wait(0.5)
+        RefreshDropdownPlayers()
+    end)
+
+    Tabs.Teleport:AddButton({
+        Title = "Teleport To Player",
+        Callback = function()
+            local chosen = (PlayerDropdown and PlayerDropdown.Value) or Config.SelectedPlayer
+            if chosen and chosen ~= "None" then
+                TeleportToPlayer(chosen)
+            end
         end
     })
 end
