@@ -39,6 +39,7 @@ local Config = {
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
     AutoSell = false,
+    AutoSellMethod = "Delay",
     SellDelay = 1,
     SelectedBuyBait = "",
     BuyBaitAmount = 1,
@@ -1898,7 +1899,7 @@ end
 task.spawn(function()
     while task.wait(0.8) do
         if Config.AutoSell then
-            local delaySec = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60
+            local delaySec = (Config.AutoSellMethod == "Spam") and 1 or (math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60)
             local now = os.clock()
             if now - lastSellTime >= delaySec then
                 lastSellTime = now
@@ -3665,7 +3666,7 @@ Tabs.Main:AddDropdown("AutoCastMethodDropdown", {
 })
 
 Tabs.Main:AddSlider("CastDelaySlider", {
-    Title = "Cast Delay",
+    Title = "Cast Delay Sec",
     Default = Config.CastDelay or 1,
     Min = 1,
     Max = 10,
@@ -4063,14 +4064,25 @@ Tabs.Shop:AddToggle("AutoSellToggle", {
     end
 })
 
-Tabs.Shop:AddInput("AutoSellDelayInput", {
-    Title = "Sell Delay Min",
-    Default = tostring(Config.SellDelay or 1),
-    Numeric = true,
-    Finished = false,
-    Placeholder = "1",
+Tabs.Shop:AddDropdown("AutoSellMethodDropdown", {
+    Title = "Sell Method",
+    Values = {"Spam", "Delay"},
+    Default = Config.AutoSellMethod or "Delay",
+    Multi = false,
     Callback = function(Value)
-        Config.SellDelay = math.clamp(math.floor(tonumber(Value) or 1), 1, 60)
+        Config.AutoSellMethod = Value or "Delay"
+        SaveConfig()
+    end
+})
+
+Tabs.Shop:AddSlider("AutoSellDelaySlider", {
+    Title = "Sell Delay Min",
+    Default = Config.SellDelay or 1,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.SellDelay = Value
         SaveConfig()
     end
 })
