@@ -74,6 +74,7 @@ local Config = {
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
+    AutoZengTianguoQuest = false,
     AutoEquipBestBait = false
 }
 
@@ -2167,6 +2168,202 @@ do
     end)
 end
 
+local function GetZengTianguoPart()
+    local npcFolder = workspace:FindFirstChild("NPC")
+    local funcFolder = npcFolder and npcFolder:FindFirstChild("Function")
+    local giver = funcFolder and funcFolder:FindFirstChild("Zeng Tianguo")
+    if giver then return giver end
+    return workspace:WaitForChild("NPC", 9e9):WaitForChild("Function", 9e9):WaitForChild("Zeng Tianguo", 9e9)
+end
+
+local function GetActiveZengTianguoQuest()
+    local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+    if not pData then return nil end
+    local qFolder = pData:FindFirstChild("Quest")
+    local mainFolder = qFolder and qFolder:FindFirstChild("Main")
+    local containers = {
+        mainFolder,
+        qFolder,
+        pData
+    }
+    for _, c in ipairs(containers) do
+        if c then
+            for _, child in ipairs(c:GetChildren()) do
+                if child:IsA("Folder") or child:IsA("Configuration") then
+                    local lower = string.lower(child.Name)
+                    if string.find(lower, "zeng", 1, true) and string.find(lower, "tianguo", 1, true) then
+                        return child
+                    end
+                end
+            end
+        end
+    end
+    local mg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+    local mq = mg and mg:FindFirstChild("Menu") and mg.Menu:FindFirstChild("Quest") and mg.Menu.Quest:FindFirstChild("Menu") and mg.Menu.Quest.Menu:FindFirstChild("Main_Quest")
+    if mq then
+        for _, child in ipairs(mq:GetChildren()) do
+            if child:IsA("GuiObject") and child.Visible and child.Name ~= "Template" then
+                local lower = string.lower(child.Name)
+                if string.find(lower, "zeng", 1, true) and string.find(lower, "tianguo", 1, true) then
+                    if mainFolder then
+                        return mainFolder:FindFirstChild(child.Name) or child
+                    end
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function IsZengTianguoQuestCompleted(zq)
+    if not zq then return false end
+    local infoMain = Info and Info:FindFirstChild("MainQuest")
+    local questInfo = nil
+    if infoMain then
+        local qMod = infoMain:FindFirstChild(zq.Name) or infoMain:FindFirstChild("Zeng Tianguo") or infoMain:FindFirstChild("Zeng Tianguo Quest")
+        if qMod then
+            pcall(function()
+                questInfo = require(qMod)
+            end)
+        end
+    end
+
+    local hasObjectives = false
+    for _, child in ipairs(zq:GetChildren()) do
+        if child:IsA("NumberValue") then
+            hasObjectives = true
+            local targetVal = nil
+            if questInfo and questInfo[tonumber(child.Name)] then
+                targetVal = tonumber(questInfo[tonumber(child.Name)][2])
+            elseif zq:FindFirstChild("Objective") then
+                local objVal = zq.Objective:FindFirstChild(child.Name)
+                if objVal and objVal:IsA("StringValue") then
+                    local parts = string.split(objVal.Value, ",")
+                    targetVal = tonumber(parts[2])
+                end
+            end
+
+            if targetVal and child.Value < targetVal then
+                return false
+            end
+        end
+    end
+
+    if not hasObjectives then
+        local mg = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+        local mq = mg and mg:FindFirstChild("Menu") and mg.Menu:FindFirstChild("Quest") and mg.Menu.Quest:FindFirstChild("Menu") and mg.Menu.Quest.Menu:FindFirstChild("Main_Quest")
+        local frame = mq and (mq:FindFirstChild(zq.Name) or mq:FindFirstChild("Zeng Tianguo") or mq:FindFirstChild("Zeng Tianguo Quest"))
+        if frame then
+            local qFrame = frame:FindFirstChild("Quest")
+            if qFrame then
+                local allGreen = true
+                local foundStats = false
+                for _, stat in ipairs(qFrame:GetChildren()) do
+                    if stat:IsA("TextLabel") and stat.Name ~= "Title" and stat.Visible then
+                        foundStats = true
+                        if stat.TextColor3 ~= Color3.fromRGB(144, 255, 110) then
+                            allGreen = false
+                            break
+                        end
+                    end
+                end
+                if foundStats then
+                    return allGreen
+                end
+            end
+        end
+    end
+
+    return hasObjectives
+end
+
+local function HideZengTianguoDialogueUI()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local mg = pg and pg:FindFirstChild("MainGui")
+    local menu = mg and mg:FindFirstChild("Menu")
+    local dialogue = menu and menu:FindFirstChild("Dialogue")
+    if dialogue and dialogue.Visible then
+        local nameLabel = dialogue:FindFirstChild("Name", true) or dialogue:FindFirstChild("NPCName", true) or dialogue:FindFirstChild("Title", true)
+        local dName = nameLabel and tostring(nameLabel.Text) or ""
+        if dName == "" or string.find(dName, "Zeng", 1, true) or string.find(dName, "Tianguo", 1, true) then
+            dialogue.Visible = false
+        end
+    end
+end
+
+local StepSmartZengTianguoQuest
+do
+    local lastActionTick = 0
+
+    local function InteractZengTianguo(giver)
+        local g = giver or GetZengTianguoPart()
+        if not g then return end
+        local args1 = {
+            [1] = "Zeng Tianguo",
+            [2] = 1,
+            [3] = "Quest",
+            [4] = {
+                [1] = g
+            }
+        }
+        local args2 = {
+            [1] = "Zeng Tianguo",
+            [2] = 1,
+            [3] = "AcceptQuest",
+            [4] = {
+                [1] = g,
+                [2] = "Zeng Tianguo Quest"
+            }
+        }
+        pcall(function()
+            ChooseDialogueOption:FireServer(unpack(args1))
+        end)
+        task.wait(0.3)
+        pcall(function()
+            ChooseDialogueOption:FireServer(unpack(args2))
+        end)
+        HideZengTianguoDialogueUI()
+        lastActionTick = os.clock()
+    end
+
+    function StepSmartZengTianguoQuest()
+        local now = os.clock()
+        if now - lastActionTick < 3 then
+            return
+        end
+
+        local zq = GetActiveZengTianguoQuest()
+        if zq then
+            if IsZengTianguoQuestCompleted(zq) then
+                local giver = GetZengTianguoPart()
+                if giver then
+                    InteractZengTianguo(giver)
+                end
+            end
+            return
+        end
+
+        local giver = GetZengTianguoPart()
+        if giver then
+            InteractZengTianguo(giver)
+        end
+    end
+
+    pcall(function()
+        local startDialogueEvent = Events:FindFirstChild("StartDialogue")
+        if startDialogueEvent and startDialogueEvent:IsA("RemoteEvent") then
+            startDialogueEvent.OnClientEvent:Connect(function(dialogueName, npcModel)
+                if not Config.AutoZengTianguoQuest then return end
+                if tostring(dialogueName) == "Zeng Tianguo" or (npcModel and npcModel.Name == "Zeng Tianguo") then
+                    HideZengTianguoDialogueUI()
+                end
+            end)
+        end
+    end)
+end
+
+
 local StepAutoEquipBestBait
 do
     local function CleanBaitName(str)
@@ -2505,6 +2702,9 @@ task.spawn(function()
     while task.wait(1) do
         if Config.AutoTicketQuest then
             StepSmartTicketQuest()
+        end
+        if Config.AutoZengTianguoQuest then
+            StepSmartZengTianguoQuest()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
@@ -3377,6 +3577,17 @@ Tabs.Main:AddDropdown("TicketQuestModeDropdown", {
     Multi = false,
     Callback = function(Value)
         Config.TicketQuestMode = Value or "Hard"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddSection("Zeng Tianguo Quest")
+
+Tabs.Main:AddToggle("AutoZengTianguoQuestToggle", {
+    Title = "Auto Claim Zeng Tianguo Quest",
+    Default = Config.AutoZengTianguoQuest,
+    Callback = function(Value)
+        Config.AutoZengTianguoQuest = Value
         SaveConfig()
     end
 })
