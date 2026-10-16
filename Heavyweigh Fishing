@@ -1081,7 +1081,7 @@ local function IsSecretBossEntity(obj)
     end
     local rawName = tostring(obj:GetAttribute("Name") or obj:GetAttribute("FishName") or obj.Name)
     local lowerName = string.lower(rawName)
-    if string.find(lowerName, "secret") or string.find(lowerName, "long diaohai") or string.find(lowerName, "wuzhi") then
+    if string.find(lowerName, "secret") or string.find(lowerName, "long diaohai") or string.find(lowerName, "longdiaohai") or string.find(lowerName, "diaohai") or string.find(lowerName, "wuzhi") then
         return true
     end
     local inv = Info:FindFirstChild("Inventory")
@@ -1320,8 +1320,97 @@ local function CheckBossStatusOnToggle(wantSecret)
     end
 end
 
+local function FireGuiSignal(btn)
+    if not btn then return false end
+    if not btn:IsA("GuiButton") then
+        btn = btn:FindFirstChildWhichIsA("GuiButton", true) or (btn.Parent and btn.Parent:IsA("GuiButton") and btn.Parent) or nil
+        if not btn then return false end
+    end
+    local triggered = false
+    local sigNames = {"MouseButton1Click", "Activated"}
+    if firesignal then
+        for _, sName in ipairs(sigNames) do
+            pcall(function()
+                firesignal(btn[sName])
+                triggered = true
+            end)
+        end
+    end
+    if getconnections then
+        for _, sName in ipairs(sigNames) do
+            local okSig, sig = pcall(function() return btn[sName] end)
+            if okSig and sig then
+                pcall(function()
+                    for _, conn in pairs(getconnections(sig)) do
+                        if conn.Function then
+                            task.spawn(conn.Function)
+                            triggered = true
+                        elseif conn.Fire then
+                            conn:Fire()
+                            triggered = true
+                        end
+                    end
+                end)
+            end
+        end
+    end
+    return triggered
+end
+
 local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
     local targetMode = mode or "Normal"
+
+    local selectContainer = bossFrame:FindFirstChild("Select", true)
+    local btnContainer = (selectContainer and selectContainer:FindFirstChild("button")) or selectContainer or bossFrame
+
+    local modeBtn = nil
+    if btnContainer then
+        modeBtn = btnContainer:FindFirstChild(targetMode)
+        if not modeBtn then
+            for _, child in ipairs(btnContainer:GetChildren()) do
+                if child:IsA("GuiButton") and string.lower(child.Name) == string.lower(targetMode) then
+                    modeBtn = child
+                    break
+                end
+            end
+        end
+    end
+
+    if not modeBtn then
+        for _, desc in ipairs(bossFrame:GetDescendants()) do
+            if desc:IsA("GuiButton") then
+                local dName = string.lower(desc.Name)
+                local dText = string.lower(GetButtonLabelText(desc))
+                if dName == string.lower(targetMode) or dText == string.lower(targetMode) then
+                    modeBtn = desc
+                    break
+                end
+            end
+        end
+    end
+
+    if modeBtn then
+        FireGuiSignal(modeBtn)
+        task.wait(0.15)
+    end
+
+    local fightBtn = bossFrame:FindFirstChild("Fight", true)
+    if not fightBtn then
+        for _, desc in ipairs(bossFrame:GetDescendants()) do
+            if desc:IsA("GuiButton") then
+                local dName = string.lower(desc.Name)
+                local dText = string.lower(GetButtonLabelText(desc))
+                if dName == "fight" or dText == "fight" or string.find(dName, "fight") or string.find(dText, "fight") then
+                    fightBtn = desc
+                    break
+                end
+            end
+        end
+    end
+
+    if fightBtn then
+        FireGuiSignal(fightBtn)
+    end
 
     local remotes = {}
     local function collectRemotes(folder)
@@ -1457,8 +1546,7 @@ local function StepAutoBoss(char, isMinigame)
         return
     end
     local now = os.clock()
-    local minBossInterval = (Config.AutoCastMethod == "Instant") and 0.05 or math.clamp(tonumber(Config.CastDelay) or 1, 0, 10)
-    if (now - lastMinigameEndTick < minBossInterval) or (now - lastBossActionTick < minBossInterval) then return end
+    if now - lastBossActionTick < 0.8 then return end
     lastBossActionTick = now
 
     if bossSummoned and (now - bossSummonTick > 45) then
@@ -1504,6 +1592,9 @@ local function StepAutoBoss(char, isMinigame)
     if not bossSummoned then
         if bossPart and hrp then
             local prompt = bossObj and bossObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if not prompt and bossPart then
+                prompt = bossPart:FindFirstChildWhichIsA("ProximityPrompt", true)
+            end
             if prompt and fireproximityprompt then
                 pcall(function()
                     fireproximityprompt(prompt)
