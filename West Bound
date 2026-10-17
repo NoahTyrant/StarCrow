@@ -59,7 +59,13 @@ local S = {
         UITheme = "Amethyst",
         AutoBankEnabled  = false,
         FarmMethod       = "Slow",
-        SpawnDelay       = 5
+        SpawnDelay       = 5,
+        AutoBuyAmmo      = false,
+        SelectedAmmo     = "PistolAmmo",
+        AutoHealEnabled  = false,
+        AutoHealHealth   = 50,
+        AutoBuyHeal      = false,
+        BuyDelay         = 1
     }
 }
 
@@ -2661,7 +2667,7 @@ Tabs.Westbound:AddToggle("LassoTrollCivilians", {
 })
 
 Tabs.Westbound:AddSection("Auto Collect")
-Tabs.Westbound:AddParagraph({ Title = "Info", Content = "Auto Collect Bag, Jewelry, Skin Animals, Open Chest" })
+Tabs.Westbound:AddParagraph({ Title = "Info", Content = "Auto Collect Bag, Jewelry, Skin Animals, Open Chest, Auto Sell" })
 
 local AutoCollectEnabled = S.Config.AutoCollectEnabled
 Tabs.Westbound:AddToggle("AutoCollect", {
@@ -2750,6 +2756,230 @@ Tabs.Westbound:AddToggle("AutoCollect", {
                 task.wait(0.2)
             end
         end)
+
+        task.spawn(function()
+            local invEvent = ReplicatedStorage:WaitForChild("GeneralEvents",9e9):WaitForChild("Inventory",9e9)
+            while AutoCollectEnabled do
+                task.spawn(function()
+                    pcall(function() invEvent:InvokeServer("Sell") end)
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+})
+
+local function buyItemAsync(name)
+    task.spawn(function()
+        pcall(function()
+            local buyRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("BuyItem", 9e9)
+            buyRemote:InvokeServer(unpack({name, true}))
+        end)
+    end)
+end
+
+local function getHealthPotionCount()
+    local count = 0
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t.Name == "Health Potion" and t:IsA("Tool") then
+                count = count + 1
+            end
+        end
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t.Name == "Health Potion" and t:IsA("Tool") then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+local AutoBuyHealEnabled = S.Config.AutoBuyHeal
+local function runAutoBuyHeal()
+    task.spawn(function()
+        while AutoBuyHealEnabled do
+            if getHealthPotionCount() < 3 then
+                buyItemAsync("Health Potion")
+            end
+            task.wait(S.Config.BuyDelay or 1)
+        end
+    end)
+end
+
+if AutoBuyHealEnabled then runAutoBuyHeal() end
+
+local AutoBuyAmmoEnabled = S.Config.AutoBuyAmmo
+local ammoList = {"PistolAmmo", "RifleAmmo", "ShotgunAmmo", "SniperAmmo", "Arrows"}
+
+local function buySelectedAmmo()
+    local sel = S.Config.SelectedAmmo or "PistolAmmo"
+    if sel == "All" then
+        for _, a in ipairs(ammoList) do
+            buyItemAsync(a)
+        end
+    elseif type(sel) == "table" then
+        for a, state in pairs(sel) do
+            if state then
+                buyItemAsync(a)
+            end
+        end
+    else
+        buyItemAsync(sel)
+    end
+end
+
+local function runAutoBuyAmmo()
+    task.spawn(function()
+        while AutoBuyAmmoEnabled do
+            buySelectedAmmo()
+            task.wait(S.Config.BuyDelay or 1)
+        end
+    end)
+end
+
+if AutoBuyAmmoEnabled then runAutoBuyAmmo() end
+
+local AutoHealEnabled = S.Config.AutoHealEnabled
+local function runAutoHeal()
+    task.spawn(function()
+        while AutoHealEnabled do
+            task.wait(0.2)
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 and hum.MaxHealth > 0 then
+                local hpPercent = (hum.Health / hum.MaxHealth) * 100
+                if hpPercent <= S.Config.AutoHealHealth then
+                    local potion = char:FindFirstChild("Health Potion")
+                    local prevTool = nil
+                    if not potion then
+                        for _, item in ipairs(char:GetChildren()) do
+                            if item:IsA("Tool") and item.Name ~= "Health Potion" then
+                                prevTool = item
+                                break
+                            end
+                        end
+                        local bp = LocalPlayer:FindFirstChild("Backpack")
+                        local bpPotion = bp and bp:FindFirstChild("Health Potion")
+                        if bpPotion then
+                            hum:EquipTool(bpPotion)
+                            task.wait(0.15)
+                            potion = char:FindFirstChild("Health Potion")
+                        elseif AutoBuyHealEnabled or S.Config.AutoBuyHeal then
+                            buyItemAsync("Health Potion")
+                            task.wait(0.3)
+                            local newBpPotion = bp and bp:FindFirstChild("Health Potion")
+                            if newBpPotion then
+                                hum:EquipTool(newBpPotion)
+                                task.wait(0.15)
+                                potion = char:FindFirstChild("Health Potion")
+                            end
+                        end
+                    end
+                    if potion then
+                        local drinkRemote = potion:FindFirstChild("DrinkPotion")
+                        if drinkRemote then
+                            task.spawn(function()
+                                pcall(function() drinkRemote:InvokeServer() end)
+                            end)
+                            local animator = hum:FindFirstChildOfClass("Animator")
+                            if animator then
+                                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                                    if track.Priority == Enum.AnimationPriority.Action then track:Stop() end
+                                end
+                                local animConn = animator.AnimationPlayed:Connect(function(track)
+                                    if track.Priority == Enum.AnimationPriority.Action then track:Stop() end
+                                end)
+                                task.delay(0.5, function() animConn:Disconnect() end)
+                            end
+                            task.wait(0.6)
+                            if prevTool and prevTool.Parent == LocalPlayer:FindFirstChild("Backpack") and hum.Health > 0 then
+                                hum:EquipTool(prevTool)
+                            end
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+if AutoHealEnabled then runAutoHeal() end
+
+Tabs.Westbound:AddSection("Auto Heal")
+
+Tabs.Westbound:AddToggle("AutoHeal", {
+    Title = "Auto Heal",
+    Default = S.Config.AutoHealEnabled,
+    Callback = function(v)
+        AutoHealEnabled = v
+        S.Config.AutoHealEnabled = v
+        SaveConfig()
+        if v then runAutoHeal() end
+    end
+})
+
+Tabs.Westbound:AddSlider("AutoHealHealth", {
+    Title = "Hp %",
+    Default = S.Config.AutoHealHealth,
+    Min = 10,
+    Max = 95,
+    Rounding = 0,
+    Callback = function(v)
+        S.Config.AutoHealHealth = v
+        SaveConfig()
+    end
+})
+
+Tabs.Westbound:AddSection("Auto Buy")
+
+Tabs.Westbound:AddToggle("AutoBuyAmmo", {
+    Title = "Auto Buy Ammo",
+    Default = S.Config.AutoBuyAmmo,
+    Callback = function(v)
+        AutoBuyAmmoEnabled = v
+        S.Config.AutoBuyAmmo = v
+        SaveConfig()
+        if v then runAutoBuyAmmo() end
+    end
+})
+
+Tabs.Westbound:AddDropdown("SelectAmmo", {
+    Title = "Select Ammo",
+    Values = {"All", "PistolAmmo", "RifleAmmo", "ShotgunAmmo", "SniperAmmo", "Arrows"},
+    Default = S.Config.SelectedAmmo or "PistolAmmo",
+    Callback = function(v)
+        S.Config.SelectedAmmo = v
+        SaveConfig()
+    end
+})
+
+Tabs.Westbound:AddToggle("AutoBuyHeal", {
+    Title = "Auto Buy Heal",
+    Default = S.Config.AutoBuyHeal,
+    Callback = function(v)
+        AutoBuyHealEnabled = v
+        S.Config.AutoBuyHeal = v
+        SaveConfig()
+        if v then runAutoBuyHeal() end
+    end
+})
+
+Tabs.Westbound:AddSlider("DelayBuy", {
+    Title = "Delay Buy",
+    Suffix = "s",
+    Default = S.Config.BuyDelay or 1,
+    Min = 1,
+    Max = 3,
+    Rounding = 1,
+    Callback = function(v)
+        S.Config.BuyDelay = v
+        SaveConfig()
     end
 })
 
