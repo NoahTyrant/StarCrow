@@ -3161,9 +3161,10 @@ end
 local KnownCodes = {
     "HWF",
     "Welcome",
-    "25KActives",
-    "Riku",
-    "SON"
+    "80KLikes",
+    "55MVisits",
+    "VermilionBird",
+    "23KActives"
 }
 
 local function RedeemAllCodes()
