@@ -936,29 +936,52 @@ local function StepPhase2MiniGame()
     end
 end
 
-local function IsTrapNote(gui)
+local function IsTrapNote(gui, normalColor)
     if not gui or not gui:IsA("GuiObject") then return false end
     if gui:GetAttribute("Trap") == true or gui:GetAttribute("trap") == true or gui:GetAttribute("IsTrap") == true then
         return true
     end
-    if string.find(string.lower(gui.Name), "trap", 1, true) then
+    local name = string.lower(gui.Name)
+    if string.find(name, "trap", 1, true) or string.find(name, "red", 1, true) or string.find(name, "bad", 1, true) then
         return true
     end
-    local function isRed(c)
-        return c and c.R > 0.65 and c.G < 0.45 and c.B < 0.45 and c.R > c.G * 1.8 and c.R > c.B * 1.8
+    local function isColorRed(c)
+        if not c or typeof(c) ~= "Color3" then return false end
+        local r, g, b = c.R, c.G, c.B
+        if r > 0.48 and r > g * 1.25 and r > b * 1.25 then
+            return true
+        end
+        if r > 0.6 and (g < 0.55 or b < 0.55) and (r - math.max(g, b) > 0.1) then
+            return true
+        end
+        if (r - g > 0.18) and (r - b > 0.18) then
+            return true
+        end
+        return false
     end
-    if isRed(gui.BackgroundColor3) then
+    if isColorRed(gui.BackgroundColor3) or isColorRed(gui.BorderColor3) then
         return true
     end
-    if (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and isRed(gui.ImageColor3) then
+    if (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and isColorRed(gui.ImageColor3) then
         return true
+    end
+    if normalColor and typeof(normalColor) == "Color3" then
+        local c = gui.BackgroundColor3
+        local diff = math.abs(c.R - normalColor.R) + math.abs(c.G - normalColor.G) + math.abs(c.B - normalColor.B)
+        if diff > 0.2 and isColorRed(c) then
+            return true
+        end
     end
     for _, desc in ipairs(gui:GetDescendants()) do
         if desc:IsA("GuiObject") then
-            if isRed(desc.BackgroundColor3) then
+            if isColorRed(desc.BackgroundColor3) or isColorRed(desc.BorderColor3) then
                 return true
             end
-            if (desc:IsA("ImageLabel") or desc:IsA("ImageButton")) and isRed(desc.ImageColor3) then
+            if (desc:IsA("ImageLabel") or desc:IsA("ImageButton")) and isColorRed(desc.ImageColor3) then
+                return true
+            end
+        elseif desc:IsA("UIStroke") then
+            if isColorRed(desc.Color) then
                 return true
             end
         end
@@ -969,33 +992,46 @@ end
 local function StepRhythmMiniGame()
     if not RhythmGui or not RhythmGui.Visible then return end
     local now = os.clock()
-    if now - lastRhythmScan < 0.025 then return end
+    if now - lastRhythmScan < 0.02 then return end
     lastRhythmScan = now
 
     for _, lane in ipairs(rhythmLanes) do
-        if now - (lastRhythmLaneHit[lane] or 0) >= 0.05 then
+        if now - (lastRhythmLaneHit[lane] or 0) >= 0.12 then
             local laneFrame = RhythmGui:FindFirstChild("Progression" .. lane)
             if laneFrame then
                 local barFrame = laneFrame:FindFirstChild("BarFrame")
                 local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
-                local closestNote = nil
-                local closestDist = 999
+                local noteFrame = laneFrame:FindFirstChild("NoteFrame")
+                local normalColor = noteFrame and noteFrame.BackgroundColor3 or nil
+
+                local hasTrapInRange = false
+                local closestNormalNote = nil
+                local closestNormalDist = 999
+
                 for _, child in ipairs(laneFrame:GetChildren()) do
                     if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
                         local dist = math.abs(child.Position.Y.Scale - targetY)
-                        if dist < closestDist then
-                            closestDist = dist
-                            closestNote = child
+                        if IsTrapNote(child, normalColor) then
+                            if dist <= 0.24 then
+                                hasTrapInRange = true
+                            end
+                        else
+                            if dist < closestNormalDist then
+                                closestNormalDist = dist
+                                closestNormalNote = child
+                            end
                         end
                     end
                 end
-                if closestNote and not IsTrapNote(closestNote) and closestDist <= 0.18 then
+
+                if not hasTrapInRange and closestNormalNote and closestNormalDist <= 0.15 then
                     lastRhythmLaneHit[lane] = now
+                    local hitDone = false
                     local btn = laneFrame:FindFirstChild("Button")
                     if btn then
-                        TriggerGuiButton(btn)
+                        hitDone = TriggerGuiButton(btn)
                     end
-                    if closestNote.Parent ~= nil then
+                    if not hitDone then
                         local kc = rhythmKeyMap[lane]
                         if kc then
                             pcall(function()
@@ -1005,12 +1041,6 @@ local function StepRhythmMiniGame()
                                 end)
                             end)
                         end
-                    end
-                    if closestNote.Parent ~= nil and closestDist <= 0.1 and RhythmHitEvent then
-                        pcall(function()
-                            closestNote:Destroy()
-                            RhythmHitEvent:FireServer("hit")
-                        end)
                     end
                 end
             end
@@ -3921,7 +3951,7 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
             pcall(function()
                 Fluent:Notify({
                     Title = "Auto Mini Game",
-                    Content = "Support Enzo Long DiaoHai Namless Octoparasite",
+                    Content = "Support Enzo Long DiaoHai Namless Octoparasite Black Tortoise Bloodline",
                     Duration = 3
                 })
             end)
