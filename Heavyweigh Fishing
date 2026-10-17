@@ -3158,14 +3158,7 @@ local function TeleportToPlayer(targetName)
     end
 end
 
-local KnownCodes = {
-    "HWF",
-    "Welcome",
-    "80KLikes",
-    "55MVisits",
-    "VermilionBird",
-    "23KActives"
-}
+local KnownCodes = {}
 
 local function RedeemAllCodes()
     task.spawn(function()
@@ -3750,8 +3743,17 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
     Default = Config.AutoMiniGame,
     Callback = function(Value)
         Config.AutoMiniGame = Value
-        if Value and LocalPlayer.Character then
-            ApplyAntiConfuse(LocalPlayer.Character)
+        if Value then
+            if LocalPlayer.Character then
+                ApplyAntiConfuse(LocalPlayer.Character)
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Auto Mini Game",
+                    Content = "Support Enzo Long DiaoHai Namless Octoparasite",
+                    Duration = 3
+                })
+            end)
         end
         SaveConfig()
     end
