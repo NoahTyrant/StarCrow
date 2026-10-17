@@ -70,7 +70,6 @@ local Config = {
     DisableAllKeybinds = false,
     SavedPos = false,
     AutoTPPos = false,
-    AutoExecute = false,
     AutoFarmIsland = false,
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
@@ -115,58 +114,6 @@ else
     end
     Config.SkillOrder = filtered
 end
-
-local queueTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
-local autoExecQueued = false
-local autoExecPayload = [[
-task.spawn(function()
-    if not game:IsLoaded() then
-        game.Loaded:Wait()
-    end
-    local Players = game:GetService("Players")
-    local HttpService = game:GetService("HttpService")
-    local lp = Players.LocalPlayer
-    while not lp do
-        task.wait(0.2)
-        lp = Players.LocalPlayer
-    end
-    repeat task.wait(0.2) until lp.Character and lp:FindFirstChild("PlayerGui")
-    local allow = true
-    pcall(function()
-        if isfile then
-            if isfile("StarCrowHub/HeavyweighFishingConfig.json") then
-                local dec = HttpService:JSONDecode(readfile("StarCrowHub/HeavyweighFishingConfig.json"))
-                allow = (type(dec) == "table" and dec.AutoExecute == true)
-            else
-                allow = false
-            end
-        end
-    end)
-    if allow then
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Loader"))()
-    end
-end)
-]]
-
-local function QueueAutoExecute()
-    if not Config.AutoExecute or autoExecQueued or not queueTeleport then return end
-    autoExecQueued = true
-    pcall(function()
-        queueTeleport(autoExecPayload)
-    end)
-end
-
-if Config.AutoExecute then
-    QueueAutoExecute()
-end
-
-pcall(function()
-    LocalPlayer.OnTeleport:Connect(function()
-        if Config.AutoExecute then
-            QueueAutoExecute()
-        end
-    end)
-end)
 
 local function GetSavedCFrame()
     if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
@@ -3627,18 +3574,6 @@ Tabs.Main:AddToggle("AutoFarmIslandToggle", {
             if LocalPlayer.Character then
                 ApplyAntiConfuse(LocalPlayer.Character)
             end
-        end
-    end
-})
-
-Tabs.Main:AddToggle("AutoExecuteToggle", {
-    Title = "Auto Execute",
-    Default = Config.AutoExecute,
-    Callback = function(Value)
-        Config.AutoExecute = Value
-        SaveConfig()
-        if Value then
-            QueueAutoExecute()
         end
     end
 })
