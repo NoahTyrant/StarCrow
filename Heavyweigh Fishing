@@ -26,6 +26,7 @@ local CraftBaitEvent = Events:WaitForChild("CraftBait")
 local CraftRodEvent = Events:WaitForChild("CraftRod")
 local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
 local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
+local MoveItemsEvent = Events:WaitForChild("MoveItems", 9e9)
 
 local Config = {
     AutoCast = false,
@@ -75,7 +76,8 @@ local Config = {
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
     AutoZengTianguoQuest = false,
-    AutoEquipBestBait = false
+    AutoEquipBestBait = false,
+    AutoGiveFish = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -2311,6 +2313,142 @@ do
     end)
 end
 
+local StepAutoGiveFish
+do
+    local lastGiveTick = 0
+
+    local function GetDumbGuyObject()
+        local npc = workspace:FindFirstChild("NPC")
+        local fn = npc and npc:FindFirstChild("Function")
+        local dg = fn and fn:FindFirstChild("Dumb guy")
+        if dg then return dg end
+        local ok, res = pcall(function()
+            return workspace.NPC.Function["Dumb guy"]
+        end)
+        if ok and res then return res end
+        return workspace:FindFirstChild("Dumb guy", true)
+    end
+
+    local function IsNonFavoriteFish(itemName)
+        if not itemName or itemName == "" then return false end
+        if string.find(itemName, "Favorite", 1, true) then return false end
+        local clean = string.split(itemName, "|")[1] or itemName
+        local cleanName = string.gsub(clean, "^%s*(.-)%s*$", "%1")
+        if cleanName == "" or cleanName == "Fishing rod" or string.find(cleanName, "Bait", 1, true) then
+            return false
+        end
+        local invFolder = Info and Info:FindFirstChild("Inventory")
+        local mod = invFolder and invFolder:FindFirstChild(cleanName)
+        local data = GetModuleData(mod)
+        if data and data.Type == "Fish" then
+            return true
+        end
+        local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+        local gs = clientMod and clientMod:FindFirstChild("GameService")
+        if gs then
+            local ok, res = pcall(function()
+                local gMod = require(gs)
+                return gMod and gMod.DestringFish and gMod.DestringFish(itemName)
+            end)
+            if ok and res and res.FishName then
+                return true
+            end
+        end
+        if string.find(itemName, "|", 1, true) then
+            return true
+        end
+        return false
+    end
+
+    local function FindAvailableHotbarSlot()
+        local hotbar = PlayerData and PlayerData:FindFirstChild("Hotbar")
+        if not hotbar then return "4" end
+        for i = 4, 10 do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            if slot then
+                local valName = slot:FindFirstChild("ValueName")
+                local qty = slot:FindFirstChild("Quantity")
+                if (not valName or valName.Value == "") or (qty and qty.Value <= 0) then
+                    return tostring(i)
+                end
+            end
+        end
+        return "4"
+    end
+
+    function StepAutoGiveFish()
+        if not Config.AutoGiveFish then return end
+        local now = os.clock()
+        if now - lastGiveTick < 1.2 then return end
+
+        local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+        if not pData then return end
+
+        local dg = GetDumbGuyObject()
+        if not dg then return end
+
+        local targetSlot = nil
+        local hotbar = pData:FindFirstChild("Hotbar")
+        if hotbar then
+            for i = 2, 10 do
+                local slot = hotbar:FindFirstChild(tostring(i))
+                local valName = slot and slot:FindFirstChild("ValueName")
+                local qty = slot and slot:FindFirstChild("Quantity")
+                if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
+                    if IsNonFavoriteFish(valName.Value) then
+                        targetSlot = tostring(i)
+                        break
+                    end
+                end
+            end
+        end
+
+        if not targetSlot then
+            local inv = pData:FindFirstChild("Inventory")
+            if inv then
+                local foundItem = nil
+                for _, child in ipairs(inv:GetChildren()) do
+                    if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
+                        if IsNonFavoriteFish(child.Name) then
+                            foundItem = child
+                            break
+                        end
+                    end
+                end
+                if foundItem then
+                    local freeSlot = FindAvailableHotbarSlot()
+                    local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
+                    if moveEv then
+                        pcall(function()
+                            moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
+                        end)
+                        task.wait(0.25)
+                    end
+                    targetSlot = freeSlot
+                end
+            end
+        end
+
+        if targetSlot then
+            lastGiveTick = os.clock()
+            pcall(function()
+                ToggleHotbar:InvokeServer(targetSlot)
+            end)
+            task.wait(0.2)
+            local args = {
+                [1] = "Dumb guy",
+                [2] = 1,
+                [3] = "GiveFish",
+                [4] = {
+                    [1] = dg
+                }
+            }
+            pcall(function()
+                ChooseDialogueOption:FireServer(unpack(args))
+            end)
+        end
+    end
+end
 
 local StepAutoEquipBestBait
 do
@@ -2656,6 +2794,9 @@ task.spawn(function()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
+        end
+        if Config.AutoGiveFish then
+            StepAutoGiveFish()
         end
     end
 end)
@@ -4302,6 +4443,17 @@ Tabs.Misc:AddButton({
             Content = state and "Opened Trait" or "Closed Trait",
             Duration = 2
         })
+    end
+})
+
+Tabs.Misc:AddSection("Dumb Guy")
+
+Tabs.Misc:AddToggle("AutoGiveFishToggle", {
+    Title = "Auto Give Fish",
+    Default = Config.AutoGiveFish,
+    Callback = function(Value)
+        Config.AutoGiveFish = Value
+        SaveConfig()
     end
 })
 
