@@ -3921,7 +3921,7 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
             pcall(function()
                 Fluent:Notify({
                     Title = "Auto Mini Game",
-                    Content = "Support Enzo Long DiaoHai Namless Octoparasite",
+                    Content = "Support Enzo Long DiaoHai Namless Octoparasite Black Tortoise Bloodline",
                     Duration = 3
                 })
             end)
