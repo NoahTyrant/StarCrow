@@ -3636,6 +3636,7 @@ local Tabs = {
     Shop = Window:AddTab({ Title = "Shop", Icon = "shopping-cart" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
     Misc = Window:AddTab({ Title = "Misc", Icon = "layers" }),
+    Server = Window:AddTab({ Title = "Server", Icon = "server" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
@@ -4756,9 +4757,9 @@ do
         end)
     end
 
-    Tabs.Misc:AddSection("Server")
+    Tabs.Server:AddSection("Server")
 
-    Tabs.Misc:AddButton({
+    Tabs.Server:AddButton({
         Title = "Rejoin",
         Callback = function()
             pcall(function()
@@ -4773,10 +4774,76 @@ do
         end
     })
 
-    Tabs.Misc:AddButton({
+    Tabs.Server:AddButton({
         Title = "Server Hop Low Players",
         Callback = function()
             HopLowServer()
+        end
+    })
+
+    Tabs.Server:AddSection("JobId")
+
+    local targetJobId = ""
+
+    Tabs.Server:AddInput("JobIdInput", {
+        Title = "JobId",
+        Default = "",
+        Placeholder = "Enter JobId...",
+        Finished = false,
+        Callback = function(Value)
+            targetJobId = tostring(Value or ""):gsub("%s+", "")
+        end
+    })
+
+    Tabs.Server:AddButton({
+        Title = "Join JobId",
+        Callback = function()
+            if targetJobId == "" then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Join JobId",
+                        Content = "Please enter a valid JobId",
+                        Duration = 3
+                    })
+                end)
+                return
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Join JobId",
+                    Content = "Teleporting to " .. targetJobId .. "...",
+                    Duration = 3
+                })
+            end)
+            task.wait(0.3)
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, targetJobId, LocalPlayer)
+        end
+    })
+
+    Tabs.Server:AddButton({
+        Title = "Copy Current JobId",
+        Callback = function()
+            local currentJobId = tostring(game.JobId or "")
+            local copied = false
+            pcall(function()
+                if setclipboard then
+                    setclipboard(currentJobId)
+                    copied = true
+                elseif toclipboard then
+                    toclipboard(currentJobId)
+                    copied = true
+                elseif syn and syn.write_clipboard then
+                    syn.write_clipboard(currentJobId)
+                    copied = true
+                end
+            end)
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Copy JobId",
+                    Content = copied and ("Copied: " .. currentJobId) or ("JobId: " .. currentJobId),
+                    Duration = 4
+                })
+            end)
         end
     })
 end
