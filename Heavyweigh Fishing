@@ -77,7 +77,10 @@ local Config = {
     TicketQuestMode = "Hard",
     AutoZengTianguoQuest = false,
     AutoEquipBestBait = false,
-    AutoGiveFish = false
+    AutoGiveFish = false,
+    FilterFishEnabled = false,
+    FilterFishTarget = "",
+    AutoSellOnFull = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -115,6 +118,12 @@ else
         end
     end
     Config.SkillOrder = filtered
+end
+if Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full" then
+    Config.AutoSellMethod = "Sell When Full Inventory"
+end
+if type(Config.FilterFishTarget) ~= "string" then
+    Config.FilterFishTarget = ""
 end
 
 local function GetSavedCFrame()
@@ -1469,6 +1478,51 @@ do
     end
 end
 
+local function CancelCurrentFishing(sessionToken)
+    pcall(function()
+        if sessionToken then
+            Events.FishingMinigame:FireServer(false, sessionToken, "Unequip")
+        end
+    end)
+    pcall(function()
+        ToggleHotbar:InvokeServer("1")
+    end)
+end
+
+do
+    local fmEv = Events:FindFirstChild("FishingMinigame")
+    if fmEv and fmEv:IsA("RemoteEvent") then
+        fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
+            if Config.FilterFishEnabled and type(fishData) == "table" then
+                local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
+                if rawFishName == "" then
+                    local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
+                    local fNameLbl = progBar and progBar:FindFirstChild("FishName")
+                    if fNameLbl and fNameLbl:IsA("TextLabel") and fNameLbl.Text ~= "" then
+                        rawFishName = fNameLbl.Text
+                    end
+                end
+                if rawFishName ~= "" then
+                    local currentTarget = tostring(Config.FilterFishTarget or "")
+                    if currentTarget == "" and BossList and BossList[1] then
+                        currentTarget = tostring(BossList[1])
+                    end
+                    local target = string.lower(string.gsub(currentTarget, "^%s*(.-)%s*$", "%1"))
+                    if target ~= "" then
+                        local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
+                        if hookedLower ~= target and not string.find(hookedLower, target, 1, true) then
+                            task.spawn(function()
+                                task.wait(0.05)
+                                CancelCurrentFishing(sessionToken)
+                            end)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
 local trackingBossFight = false
 
 local function MonitorBossMinigame()
@@ -1527,7 +1581,7 @@ local function StepAutoBoss(char, isMinigame)
         return
     end
     local now = os.clock()
-    if now - lastBossActionTick < 0.8 then return end
+    if now - lastBossActionTick < 1 then return end
     lastBossActionTick = now
 
     if bossSummoned and (now - bossSummonTick > 45) then
@@ -1875,12 +1929,59 @@ local function DoBuyBait(baitName, amount)
     end
 end
 
+local function IsInventoryFull()
+    local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+    if pData then
+        local inv = pData:FindFirstChild("Inventory")
+        local limitObj = pData:FindFirstChild("InventoryLimit") or pData:FindFirstChild("MaxInventory") or pData:FindFirstChild("BagLimit") or pData:FindFirstChild("MaxCapacity")
+        local limit = limitObj and tonumber(limitObj.Value) or tonumber(pData:GetAttribute("InventoryLimit")) or tonumber(pData:GetAttribute("MaxInventory"))
+        if inv and limit and limit > 0 then
+            if #inv:GetChildren() >= limit then
+                return true
+            end
+        end
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        local mg = pg:FindFirstChild("MainGui") or pg:FindFirstChild("ScreenGui") or pg:FindFirstChild("GameGui")
+        if mg then
+            for _, desc in ipairs(mg:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible then
+                    local cur, maxC = string.match(desc.Text, "(%d+)%s*/%s*(%d+)")
+                    if cur and maxC then
+                        local cNum = tonumber(cur)
+                        local mNum = tonumber(maxC)
+                        if cNum and mNum and mNum >= 10 and cNum >= mNum then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 task.spawn(function()
     while task.wait(0.8) do
         if Config.AutoSell then
-            local delaySec = (Config.AutoSellMethod == "Spam") and 1 or (math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60)
+            local shouldSell = false
             local now = os.clock()
-            if now - lastSellTime >= delaySec then
+            if Config.AutoSellMethod == "Spam" then
+                if now - lastSellTime >= 1 then
+                    shouldSell = true
+                end
+            elseif Config.AutoSellMethod == "Delay" then
+                local delaySec = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60
+                if now - lastSellTime >= delaySec then
+                    shouldSell = true
+                end
+            elseif Config.AutoSellMethod == "Sell When Full Inventory" or Config.AutoSellMethod == "Sell When Full" or Config.AutoSellMethod == "On Full" then
+                if (now - lastSellTime >= 1.5) and IsInventoryFull() then
+                    shouldSell = true
+                end
+            end
+            if shouldSell then
                 lastSellTime = now
                 pcall(function()
                     SellFish:FireServer("All")
@@ -1998,7 +2099,7 @@ local function GetTicketQuestState()
 end
 
 local StepSmartTicketQuest
-do
+;(function()
     local questCooldownUntil = 0
     local lastAcceptAttempt = 0
     local lastTurnInAttempt = 0
@@ -2146,7 +2247,7 @@ do
             end)
         end
     end)
-end
+end)()
 
 local function GetZengTianguoPart()
     local npcFolder = workspace:FindFirstChild("NPC")
@@ -2273,7 +2374,7 @@ local function HideZengTianguoDialogueUI()
 end
 
 local StepSmartZengTianguoQuest
-do
+;(function()
     local lastActionTick = 0
 
     local function InteractZengTianguo(giver)
@@ -2341,10 +2442,10 @@ do
             end)
         end
     end)
-end
+end)()
 
 local StepAutoGiveFish
-do
+;(function()
     local lastGiveTick = 0
 
     local function GetDumbGuyObject()
@@ -2478,10 +2579,10 @@ do
             end)
         end
     end
-end
+end)()
 
 local StepAutoEquipBestBait
-do
+;(function()
     local function CleanBaitName(str)
         if not str or str == "" then return "" end
         local clean = string.split(str, "|")[1] or str
@@ -2812,7 +2913,7 @@ do
     LocalPlayer.CharacterAdded:Connect(function()
         lastEquipTime = 0
     end)
-end
+end)()
 
 task.spawn(function()
     while task.wait(1) do
@@ -2831,6 +2932,7 @@ task.spawn(function()
     end
 end)
 
+;(function()
 local function GetBuyableBaits()
     local list = {}
     local seen = {}
@@ -2887,6 +2989,82 @@ local function GetCraftableRods()
         end
     end
     table.sort(list)
+    return list
+end
+
+local BossList = {
+    "Azure Carp",
+    "Crimson Bonefang",
+    "Crimson Bonefiend",
+    "Crimson Bream Sovereign",
+    "Chainbound Shark",
+    "Demon Bladefish",
+    "Primordial Kunfish",
+    "Primordial Kunfish Overlord",
+    "White Heaven Kunfish",
+    "Yangfish Sovereign",
+    "Yangfish Empress",
+    "Yinfish Sovereign",
+    "Ascended Perch",
+    "Trueform Perch",
+    "Frost Kingfish",
+    "Frost Queenfish",
+    "Dark Kingfish",
+    "Darkness Shark",
+    "Golden Shark",
+    "Dragonfish Devourer",
+    "Colossal Bull Shark",
+    "Colossal Tigerfish",
+    "Mountain Fish",
+    "Mountain Dragonwhale",
+    "Octoparasitic Fish",
+    "Tiger Mirefish",
+    "Chromatic Koi",
+    "Toxic Chromatic Koi",
+    "Dreadmare Eel",
+    "Radiant Goldfish",
+    "Killer Sawshark",
+    "Warbringer Shark",
+    "Dreadscale Grouper",
+    "Aquatic Fish",
+    "Flame Fish",
+    "Intuitive Fish King",
+    "Scarlet Fish",
+    "Thunder Fish",
+    "Verdant Alligator Gar",
+    "Verdant Bonefang",
+    "Verdant Grouper",
+    "Wind Fish",
+    "Apollo Swordfish",
+    "Black Tortoise Bloodline",
+    "Crimson Electric Eel",
+    "Dark Lionfish",
+    "Draconic Koi",
+    "Elder Scarlet Fish",
+    "Flying Fish Emperor",
+    "Flying Fish Empress",
+    "Golden Dragonfish",
+    "Golden Guardian Fish",
+    "Heavenpiercer Turtle",
+    "Jiaolong Dragonfish",
+    "Mirage Lanternfish",
+    "Mutated Koji Whale",
+    "Nameless Octoparasite",
+    "Rainbow Dragonfish",
+    "Reborn Puffer Beast",
+    "Sanguine Fish",
+    "Serpent Fish",
+    "Silver Bream Sovereign",
+    "Thunder Bull Shark",
+    "Tigerfang Whale",
+    "Vermilion Birdblood"
+}
+
+local function GetBossList()
+    local list = {}
+    for _, name in ipairs(BossList) do
+        table.insert(list, name)
+    end
     return list
 end
 
@@ -3743,6 +3921,37 @@ Tabs.Main:AddToggle("AutoFarmIslandToggle", {
     end
 })
 
+Tabs.Main:AddSection("Filter Boss")
+
+Tabs.Main:AddToggle("FilterBossToggle", {
+    Title = "Filter Boss",
+    Default = Config.FilterFishEnabled,
+    Callback = function(Value)
+        Config.FilterFishEnabled = Value
+        SaveConfig()
+    end
+})
+
+local bossListItems = GetBossList()
+
+local defaultBossTarget = bossListItems[1]
+if type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
+    defaultBossTarget = Config.FilterFishTarget
+else
+    Config.FilterFishTarget = defaultBossTarget
+end
+
+Tabs.Main:AddDropdown("FilterBossDropdown", {
+    Title = "Select Boss",
+    Values = bossListItems,
+    Default = defaultBossTarget,
+    Multi = false,
+    Callback = function(Value)
+        Config.FilterFishTarget = tostring(Value or "")
+        SaveConfig()
+    end
+})
+
 Tabs.Main:AddSection("Fishing")
 
 Tabs.Main:AddToggle("AutoCastToggle", {
@@ -3928,54 +4137,6 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
             end)
         end
         SaveConfig()
-    end
-})
-
-Tabs.Main:AddSection("Position")
-
-Tabs.Main:AddButton({
-    Title = "Save Position",
-    Callback = function()
-        local char = LocalPlayer.Character
-        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-        if hrp then
-            Config.SavedPos = {hrp.CFrame:GetComponents()}
-            SaveConfig()
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Position",
-                    Content = "Saved Position!",
-                    Duration = 3
-                })
-            end)
-        end
-    end
-})
-
-Tabs.Main:AddToggle("AutoTPPosToggle", {
-    Title = "Auto TP Position",
-    Default = Config.AutoTPPos,
-    Callback = function(Value)
-        Config.AutoTPPos = Value
-        SaveConfig()
-        if Value then
-            StepAutoTPPos(LocalPlayer.Character)
-        end
-    end
-})
-
-Tabs.Main:AddButton({
-    Title = "Delete Position",
-    Callback = function()
-        Config.SavedPos = false
-        SaveConfig()
-        pcall(function()
-            Fluent:Notify({
-                Title = "Position",
-                Content = "Deleted Position!",
-                Duration = 3
-            })
-        end)
     end
 })
 
@@ -4175,8 +4336,8 @@ Tabs.Shop:AddToggle("AutoSellToggle", {
 
 Tabs.Shop:AddDropdown("AutoSellMethodDropdown", {
     Title = "Sell Method",
-    Values = {"Spam", "Delay"},
-    Default = Config.AutoSellMethod or "Delay",
+    Values = {"Spam", "Delay", "Sell When Full Inventory"},
+    Default = ((Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full") and "Sell When Full Inventory") or Config.AutoSellMethod or "Delay",
     Multi = false,
     Callback = function(Value)
         Config.AutoSellMethod = Value or "Delay"
@@ -4589,6 +4750,54 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     end
 })
 
+Tabs.Settings:AddSection("Position")
+
+Tabs.Settings:AddButton({
+    Title = "Save Position",
+    Callback = function()
+        local char = LocalPlayer.Character
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if hrp then
+            Config.SavedPos = {hrp.CFrame:GetComponents()}
+            SaveConfig()
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Position",
+                    Content = "Saved Position!",
+                    Duration = 3
+                })
+            end)
+        end
+    end
+})
+
+Tabs.Settings:AddToggle("AutoTPPosToggle", {
+    Title = "Auto TP Position",
+    Default = Config.AutoTPPos,
+    Callback = function(Value)
+        Config.AutoTPPos = Value
+        SaveConfig()
+        if Value then
+            StepAutoTPPos(LocalPlayer.Character)
+        end
+    end
+})
+
+Tabs.Settings:AddButton({
+    Title = "Delete Position",
+    Callback = function()
+        Config.SavedPos = false
+        SaveConfig()
+        pcall(function()
+            Fluent:Notify({
+                Title = "Position",
+                Content = "Deleted Position!",
+                Duration = 3
+            })
+        end)
+    end
+})
+
 Tabs.Settings:AddSection("Keybinds")
 
 Tabs.Settings:AddToggle("DisableAllKeybindsToggle", {
@@ -4849,3 +5058,4 @@ do
 end
 
 Window:SelectTab(1)
+end)()
