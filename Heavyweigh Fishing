@@ -4476,6 +4476,96 @@ Tabs.Misc:AddButton({
     end
 })
 
+Tabs.Misc:AddSection("Index")
+
+Tabs.Misc:AddButton({
+    Title = "Unlock All Fish",
+    Callback = function()
+        local count = 0
+        pcall(function()
+            local indexFolder = PlayerData:FindFirstChild("Index")
+            if indexFolder then
+                for _, val in ipairs(indexFolder:GetChildren()) do
+                    if val:IsA("BoolValue") and not val.Value then
+                        val.Value = true
+                        count = count + 1
+                    end
+                end
+            end
+        end)
+        pcall(function()
+            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+            local indexFrame = mainGui and mainGui:FindFirstChild("Menu") and mainGui.Menu:FindFirstChild("Index") and mainGui.Menu.Index:FindFirstChild("IndexFrame")
+            local indexList = indexFrame and indexFrame:FindFirstChild("Indexlist")
+            local info2 = indexFrame and indexFrame:FindFirstChild("Info")
+            local reward = info2 and info2:FindFirstChild("Reward")
+            if indexList then
+                for _, item in ipairs(indexList:GetChildren()) do
+                    if item:IsA("GuiObject") and item.Name ~= "Template" then
+                        local btn = item:FindFirstChild("Button")
+                        if btn then
+                            local title = btn:FindFirstChild("Title")
+                            local img = btn:FindFirstChild("Image")
+                            if title then
+                                title.Text = item.Name
+                            end
+                            if img then
+                                img.ImageColor3 = Color3.fromRGB(255, 255, 255)
+                            end
+                        end
+                        local lock = item:FindFirstChild("Lock")
+                        if lock then
+                            lock.Visible = false
+                        end
+                        if btn and not item:GetAttribute("IndexHooked") then
+                            item:SetAttribute("IndexHooked", true)
+                            btn.MouseButton1Click:Connect(function()
+                                pcall(function()
+                                    local inv = Info:FindFirstChild("Inventory")
+                                    local fishMod = inv and inv:FindFirstChild(item.Name)
+                                    if fishMod then
+                                        local fishData = require(fishMod)
+                                        if info2 then
+                                            local oldView = info2:FindFirstChild("FishView")
+                                            if oldView then oldView:Destroy() end
+                                            local tpl = fishData.Boss == true and info2.Template.Boss or info2.Template.Normal
+                                            if tpl then
+                                                local fv = tpl:Clone()
+                                                fv.Name = "FishView"
+                                                fv.Visible = true
+                                                fv.Parent = info2
+                                                if fv:FindFirstChild("Button") and fv.Button:FindFirstChild("Image") then
+                                                    fv.Button.Image.Image = fishData.Image or ""
+                                                end
+                                            end
+                                        end
+                                        if reward then
+                                            reward.Visible = true
+                                            if reward:FindFirstChild("Title") then
+                                                reward.Title.Text = item.Name
+                                                reward.Title.Visible = true
+                                            end
+                                            if reward:FindFirstChild("Weight") and fishData.MinKg and fishData.MaxKg then
+                                                reward.Weight.Text = tostring(fishData.MinKg) .. " KG - " .. tostring(fishData.MaxKg) .. " KG"
+                                                reward.Weight.Visible = true
+                                            end
+                                        end
+                                    end
+                                end)
+                            end)
+                        end
+                    end
+                end
+            end
+        end)
+        Fluent:Notify({
+            Title = "Index",
+            Content = "Unlocked all fish in Index (" .. tostring(count) .. " updated)",
+            Duration = 3
+        })
+    end
+})
+
 Tabs.Misc:AddSection("Dumb Guy")
 
 Tabs.Misc:AddToggle("AutoGiveFishToggle", {
