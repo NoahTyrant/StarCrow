@@ -81,7 +81,8 @@ local Config = {
     FilterFishEnabled = false,
     FilterFishTarget = "",
     AutoSellOnFull = false,
-    BossHitDelay = 15
+    BossHitDelay = 15,
+    SuperSpeedMiniGame = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -844,6 +845,7 @@ local function StepPhase2MiniGame()
     local hitDelay = (tonumber(Config.BossHitDelay) or 15) / 1000
     if hitDelay < 0.005 then hitDelay = 0.005 end
 
+    local isSuper = Config.SuperSpeedMiniGame == true
     local handledViaUpval = false
     local onClickFn = nil
     local setupFn = (debug and debug.setupvalue) or setupvalue
@@ -866,18 +868,33 @@ local function StepPhase2MiniGame()
                     if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
                         if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
                             handledViaUpval = true
-                            local targetX = u15 + u2 * 0.5
-                            if setupFn and u1 > 0 then
-                                local desiredOffset = (targetX - u23) / u1
-                                local newU27 = now - 0.025 - desiredOffset
-                                pcall(setupFn, fn, 3, newU27)
-                            end
-                            pcall(function()
-                                bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
-                            end)
-                            if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
-                                lastPhase2HitTick = now
-                                fn(false)
+                            if isSuper then
+                                local targetX = u15 + u2 * 0.5
+                                if setupFn and u1 > 0 then
+                                    local desiredOffset = (targetX - u23) / u1
+                                    local newU27 = now - 0.025 - desiredOffset
+                                    pcall(setupFn, fn, 3, newU27)
+                                end
+                                pcall(function()
+                                    bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
+                                end)
+                                if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
+                                    lastPhase2HitTick = now
+                                    fn(false)
+                                end
+                            else
+                                if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
+                                    local v91 = (now - 0.025 - u27) % u26 * u1
+                                    if u25 < v91 then
+                                        v91 = u25 * 2 - v91
+                                    end
+                                    local v92 = u23 + v91
+                                    local v93 = u2 * 0.3
+                                    if v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8) then
+                                        lastPhase2HitTick = now
+                                        fn(false)
+                                    end
+                                end
                             end
                         end
                         break
@@ -889,11 +906,13 @@ local function StepPhase2MiniGame()
 
     if handledViaUpval then return end
 
-    local targetX = hbLeft + hbW * 0.5
-    pcall(function()
-        bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
-    end)
-    barCenter = targetX
+    if isSuper then
+        local targetX = hbLeft + hbW * 0.5
+        pcall(function()
+            bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
+        end)
+        barCenter = targetX
+    end
 
     if now - lastPhase2HitTick < hitDelay then return end
 
@@ -909,7 +928,7 @@ local function StepPhase2MiniGame()
         end
     end
 
-    if evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad) then
+    if isSuper or (evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad)) then
         lastPhase2HitTick = now
         local clicked = false
         if onClickFn then
@@ -1036,7 +1055,7 @@ RunService.RenderStepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame then
+    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
         StepPhase2MiniGame()
     end
 end)
@@ -1045,7 +1064,7 @@ RunService.Stepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame then
+    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
         StepPhase2MiniGame()
     end
 end)
@@ -1054,8 +1073,10 @@ RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame then
+    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
         StepPhase2MiniGame()
+    end
+    if Config.AutoMiniGame then
         StepRhythmMiniGame()
     end
 end)
@@ -4140,6 +4161,24 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
                 Fluent:Notify({
                     Title = "Auto Mini Game",
                     Content = "Support Enzo Long DiaoHai Namless Octoparasite Black Tortoise Bloodline",
+                    Duration = 3
+                })
+            end)
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("SuperSpeedMiniGameToggle", {
+    Title = "Super Speed Mini Game",
+    Default = Config.SuperSpeedMiniGame or false,
+    Callback = function(Value)
+        Config.SuperSpeedMiniGame = Value
+        if Value then
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Super Speed Mini Game",
+                    Content = "Support Enzo And Long DiaoHai",
                     Duration = 3
                 })
             end)
