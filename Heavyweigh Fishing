@@ -79,7 +79,7 @@ local Config = {
     AutoEquipBestBait = false,
     AutoGiveFish = false,
     FilterFishEnabled = false,
-    FilterFishTarget = "",
+    FilterFishTarget = {},
     AutoSellOnFull = false,
     BossHitDelay = 15,
     SuperSpeedMiniGame = false
@@ -124,8 +124,14 @@ end
 if Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full" then
     Config.AutoSellMethod = "Sell When Full Inventory"
 end
-if type(Config.FilterFishTarget) ~= "string" then
-    Config.FilterFishTarget = ""
+if type(Config.FilterFishTarget) == "string" then
+    if Config.FilterFishTarget ~= "" then
+        Config.FilterFishTarget = {Config.FilterFishTarget}
+    else
+        Config.FilterFishTarget = {}
+    end
+elseif type(Config.FilterFishTarget) ~= "table" then
+    Config.FilterFishTarget = {}
 end
 
 local function GetSavedCFrame()
@@ -1532,14 +1538,44 @@ do
                     end
                 end
                 if rawFishName ~= "" then
-                    local currentTarget = tostring(Config.FilterFishTarget or "")
-                    if currentTarget == "" and BossList and BossList[1] then
-                        currentTarget = tostring(BossList[1])
+                    local targets = {}
+                    if type(Config.FilterFishTarget) == "table" then
+                        for k, v in pairs(Config.FilterFishTarget) do
+                            local name = nil
+                            if type(k) == "string" and v == true then
+                                name = k
+                            elseif type(v) == "string" and v ~= "" then
+                                name = v
+                            end
+                            if name then
+                                local clean = string.lower(string.gsub(name, "^%s*(.-)%s*$", "%1"))
+                                if clean ~= "" and not table.find(targets, clean) then
+                                    table.insert(targets, clean)
+                                end
+                            end
+                        end
+                    elseif type(Config.FilterFishTarget) == "string" and Config.FilterFishTarget ~= "" then
+                        local clean = string.lower(string.gsub(Config.FilterFishTarget, "^%s*(.-)%s*$", "%1"))
+                        if clean ~= "" then
+                            table.insert(targets, clean)
+                        end
                     end
-                    local target = string.lower(string.gsub(currentTarget, "^%s*(.-)%s*$", "%1"))
-                    if target ~= "" then
+                    if #targets == 0 and BossList and BossList[1] then
+                        local clean = string.lower(string.gsub(tostring(BossList[1]), "^%s*(.-)%s*$", "%1"))
+                        if clean ~= "" then
+                            table.insert(targets, clean)
+                        end
+                    end
+                    if #targets > 0 then
                         local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
-                        if hookedLower ~= target and not string.find(hookedLower, target, 1, true) then
+                        local matched = false
+                        for _, t in ipairs(targets) do
+                            if hookedLower == t or string.find(hookedLower, t, 1, true) then
+                                matched = true
+                                break
+                            end
+                        end
+                        if not matched then
                             task.spawn(function()
                                 task.wait(0.05)
                                 CancelCurrentFishing(sessionToken)
@@ -3963,20 +3999,42 @@ Tabs.Main:AddToggle("FilterBossToggle", {
 
 local bossListItems = GetBossList()
 
-local defaultBossTarget = bossListItems[1]
-if type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
-    defaultBossTarget = Config.FilterFishTarget
-else
-    Config.FilterFishTarget = defaultBossTarget
+local defaultBossTargets = {}
+if type(Config.FilterFishTarget) == "table" then
+    for k, v in pairs(Config.FilterFishTarget) do
+        local name = nil
+        if type(k) == "string" and v == true then
+            name = k
+        elseif type(v) == "string" and v ~= "" then
+            name = v
+        end
+        if name and table.find(bossListItems, name) and not table.find(defaultBossTargets, name) then
+            table.insert(defaultBossTargets, name)
+        end
+    end
+elseif type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
+    table.insert(defaultBossTargets, Config.FilterFishTarget)
 end
+if #defaultBossTargets == 0 and bossListItems[1] then
+    table.insert(defaultBossTargets, bossListItems[1])
+end
+Config.FilterFishTarget = defaultBossTargets
 
 Tabs.Main:AddDropdown("FilterBossDropdown", {
     Title = "Select Boss",
     Values = bossListItems,
-    Default = defaultBossTarget,
-    Multi = false,
+    Default = defaultBossTargets,
+    Multi = true,
     Callback = function(Value)
-        Config.FilterFishTarget = tostring(Value or "")
+        local selected = {}
+        if type(Value) == "table" then
+            for bossName, isSelected in pairs(Value) do
+                if isSelected and table.find(bossListItems, bossName) and not table.find(selected, bossName) then
+                    table.insert(selected, bossName)
+                end
+            end
+        end
+        Config.FilterFishTarget = selected
         SaveConfig()
     end
 })
