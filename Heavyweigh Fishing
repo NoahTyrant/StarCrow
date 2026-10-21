@@ -55,6 +55,9 @@ local Config = {
     SelectedNPC = "",
     SelectedPlayer = "",
     ESPEnabled = false,
+    WalkOnWater = false,
+    InstantInteract = false,
+    HideNameAndID = false,
     AntiAFK = true,
     FullBright = false,
     NoFog = false,
@@ -76,8 +79,14 @@ local Config = {
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
     AutoZengTianguoQuest = false,
+    AutoClaimDailyQuest = false,
     AutoEquipBestBait = false,
     AutoGiveFish = false,
+    AutoFavoriteBoss = false,
+    AutoFavoriteBossTarget = {},
+    AutoHopWeather = false,
+    SelectedWeather = "Thunderstorm",
+    AutoHopSacredBeast = false,
     FilterFishEnabled = false,
     FilterFishTarget = {},
     AutoSellOnFull = false,
@@ -132,6 +141,12 @@ if type(Config.FilterFishTarget) == "string" then
     end
 elseif type(Config.FilterFishTarget) ~= "table" then
     Config.FilterFishTarget = {}
+end
+if type(Config.AutoFavoriteBossTarget) ~= "table" then
+    Config.AutoFavoriteBossTarget = {}
+end
+if not Config.SelectedWeather or Config.SelectedWeather == "" then
+    Config.SelectedWeather = "Thunderstorm"
 end
 
 local function GetSavedCFrame()
@@ -2163,12 +2178,56 @@ local function GetTicketQuestState()
     end
 end
 
-local StepSmartTicketQuest
+local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 ;(function()
     local questCooldownUntil = 0
     local lastAcceptAttempt = 0
     local lastTurnInAttempt = 0
     local lastRecordedCooldownText = ""
+    local dailyLimitReached = false
+    local lastLimitNotificationTick = 0
+
+    function ResetTicketLimit()
+        dailyLimitReached = false
+        lastLimitNotificationTick = 0
+    end
+
+    local function IsDailyLimitText(text)
+        if not text or text == "" then return false end
+        local lower = string.lower(text)
+        if string.find(lower, "you've hit the daily limit of 20 ticket quests. come back tomorrow!", 1, true)
+            or (string.find(lower, "hit the daily limit of 20 ticket quests", 1, true) and string.find(lower, "come back tomorrow", 1, true)) then
+            return true
+        end
+        return false
+    end
+
+    local function DisableAutoTicketQuest()
+        if dailyLimitReached then
+            return
+        end
+        dailyLimitReached = true
+        Config.AutoTicketQuest = false
+        SaveConfig()
+        if AutoTicketQuestToggleObj then
+            pcall(function()
+                AutoTicketQuestToggleObj:SetValue(false)
+            end)
+        end
+        local now = os.clock()
+        if now - lastLimitNotificationTick >= 5 then
+            lastLimitNotificationTick = now
+            pcall(function()
+                if Fluent and Fluent.Notify then
+                    Fluent:Notify({
+                        Title = "Ticket Quest",
+                        Content = "Daily limit of 20 ticket quests reached",
+                        Duration = 4
+                    })
+                end
+            end)
+        end
+    end
 
     local function ParseCooldownSeconds(text)
         if not text or text == "" then return nil end
@@ -2188,7 +2247,11 @@ local StepSmartTicketQuest
     end
 
     local function CheckAndSetCooldown(text)
-        if not text or text == "" then return end
+        if not text or text == "" or dailyLimitReached then return end
+        if IsDailyLimitText(text) then
+            DisableAutoTicketQuest()
+            return
+        end
         if text == lastRecordedCooldownText then return end
         local sec = ParseCooldownSeconds(text)
         if sec and sec > 0 and sec <= 3600 then
@@ -2237,6 +2300,22 @@ local StepSmartTicketQuest
     end
 
     function StepSmartTicketQuest()
+        if dailyLimitReached then
+            return
+        end
+        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local dialogue = menu and menu:FindFirstChild("Dialogue")
+        if dialogue and dialogue.Visible then
+            for _, d in ipairs(dialogue:GetDescendants()) do
+                if d:IsA("TextLabel") and IsDailyLimitText(d.Text) then
+                    DisableAutoTicketQuest()
+                    HideTicketDialogueUI()
+                    return
+                end
+            end
+        end
         local now = os.clock()
         if now < questCooldownUntil then
             return
@@ -2267,9 +2346,11 @@ local StepSmartTicketQuest
         local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
         if pg then
             pg.DescendantAdded:Connect(function(desc)
+                if not Config.AutoTicketQuest or dailyLimitReached then return end
                 if desc:IsA("TextLabel") then
                     CheckAndSetCooldown(desc.Text)
                     desc:GetPropertyChangedSignal("Text"):Connect(function()
+                        if not Config.AutoTicketQuest or dailyLimitReached then return end
                         CheckAndSetCooldown(desc.Text)
                     end)
                 end
@@ -2281,6 +2362,7 @@ local StepSmartTicketQuest
         for _, ev in ipairs(Events:GetChildren()) do
             if ev:IsA("RemoteEvent") then
                 ev.OnClientEvent:Connect(function(...)
+                    if not Config.AutoTicketQuest or dailyLimitReached then return end
                     local args = {...}
                     for _, a in ipairs(args) do
                         if type(a) == "string" then
@@ -2302,7 +2384,7 @@ local StepSmartTicketQuest
         local startDialogueEvent = Events:FindFirstChild("StartDialogue")
         if startDialogueEvent and startDialogueEvent:IsA("RemoteEvent") then
             startDialogueEvent.OnClientEvent:Connect(function(dialogueName, npcModel, dialogueData)
-                if not Config.AutoTicketQuest then return end
+                if not Config.AutoTicketQuest or dailyLimitReached then return end
                 if tostring(dialogueName) == "Ticket Quest Giver" or (npcModel and npcModel.Name == "Ticket Quest Giver") then
                     HideTicketDialogueUI()
                     if type(dialogueData) == "table" and type(dialogueData[1]) == "string" then
@@ -2980,6 +3062,107 @@ local StepAutoEquipBestBait
     end)
 end)()
 
+local StepAutoClaimDailyQuest, StepAutoClaimDailyReward
+;(function()
+    local lastQuestClaimTick = 0
+    local lastRewardClaimTick = 0
+
+    function StepAutoClaimDailyQuest()
+        local now = os.clock()
+        if now - lastQuestClaimTick < 2 then return end
+        lastQuestClaimTick = now
+
+        pcall(function()
+            local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+            local questFolder = pData and pData:FindFirstChild("Quest")
+            local dailyFolder = questFolder and questFolder:FindFirstChild("Daily")
+            if not dailyFolder then return end
+
+            local questModule = Info and Info:FindFirstChild("Quest")
+            local questInfo = nil
+            if questModule then
+                pcall(function()
+                    questInfo = require(questModule)
+                end)
+            end
+
+            local claimEvent = Events and Events:FindFirstChild("ClaimQuest")
+            if not claimEvent then return end
+
+            for _, child in ipairs(dailyFolder:GetChildren()) do
+                local claimVal = child:FindFirstChild("Claim")
+                local progVal = child:FindFirstChild("Progression")
+                local typeVal = child:FindFirstChild("QuestType")
+                if claimVal and progVal and typeVal and claimVal.Value == false and typeVal.Value ~= "" then
+                    local target = nil
+                    if questInfo and questInfo.Daily and tonumber(child.Name) then
+                        local def = questInfo.Daily[tonumber(child.Name)]
+                        if def and def[2] then
+                            target = def[2]
+                        end
+                    end
+                    if target then
+                        local current = progVal.Value
+                        if typeVal.Value == "PlayTime" then
+                            local req = math.clamp(math.floor(target / 60), 1, 999)
+                            local cur = math.clamp(math.floor(current / 60), 0, 999)
+                            if cur >= req then
+                                claimEvent:FireServer(child.Name)
+                            end
+                        else
+                            if current >= target then
+                                claimEvent:FireServer(child.Name)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    function StepAutoClaimDailyReward()
+        local now = os.clock()
+        if now - lastRewardClaimTick < 5 then return end
+        lastRewardClaimTick = now
+
+        pcall(function()
+            local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+            local dailyRewardFolder = pData and pData:FindFirstChild("DailyReward")
+            if not dailyRewardFolder then return end
+
+            local dayCycle = dailyRewardFolder:FindFirstChild("DayCycle")
+            local cycleVal = dayCycle and dayCycle.Value
+            if not cycleVal or cycleVal == "" then return end
+
+            local currentDay = math.floor(workspace:GetServerTimeNow() / 86400)
+            local lastDay = tonumber(cycleVal)
+            local isNewDay = (lastDay == nil) or (lastDay < currentDay)
+
+            if not isNewDay then return end
+
+            local rewardEvent = Events and Events:FindFirstChild("DailyReward")
+            if not rewardEvent then return end
+
+            for i = 1, 7 do
+                local dayVal = dailyRewardFolder:FindFirstChild(tostring(i))
+                if dayVal and dayVal.Value == false then
+                    local canClaim = false
+                    if i == 1 then
+                        canClaim = true
+                    else
+                        local prevVal = dailyRewardFolder:FindFirstChild(tostring(i - 1))
+                        canClaim = prevVal and prevVal.Value == true
+                    end
+                    if canClaim then
+                        rewardEvent:FireServer(i)
+                        break
+                    end
+                end
+            end
+        end)
+    end
+end)()
+
 task.spawn(function()
     while task.wait(1) do
         if Config.AutoTicketQuest then
@@ -2993,6 +3176,10 @@ task.spawn(function()
         end
         if Config.AutoGiveFish then
             StepAutoGiveFish()
+        end
+        if Config.AutoClaimDailyQuest then
+            StepAutoClaimDailyQuest()
+            StepAutoClaimDailyReward()
         end
     end
 end)
@@ -3059,69 +3246,71 @@ end
 
 local BossList = {
     "Azure Carp",
-    "Crimson Bonefang",
-    "Crimson Bonefiend",
-    "Crimson Bream Sovereign",
+    "Jiaolong Dragonfish",
     "Chainbound Shark",
-    "Demon Bladefish",
+    "Adult Jiaolong Dragonfish",
+    "Elder Chainbound Shark",
+    "Elder Jiaolong Dragonfish Trueform Jiaolongfish",
+    "Trueform Perch",
+    "Ascended Perch",
     "Primordial Kunfish",
     "Primordial Kunfish Overlord",
-    "White Heaven Kunfish",
-    "Yangfish Sovereign",
-    "Yangfish Empress",
-    "Yinfish Sovereign",
-    "Ascended Perch",
-    "Trueform Perch",
-    "Frost Kingfish",
-    "Frost Queenfish",
-    "Dark Kingfish",
-    "Darkness Shark",
-    "Golden Shark",
-    "Dragonfish Devourer",
-    "Colossal Bull Shark",
-    "Colossal Tigerfish",
-    "Mountain Fish",
-    "Mountain Dragonwhale",
-    "Octoparasitic Fish",
-    "Tiger Mirefish",
-    "Chromatic Koi",
-    "Toxic Chromatic Koi",
-    "Dreadmare Eel",
-    "Radiant Goldfish",
-    "Killer Sawshark",
     "Warbringer Shark",
     "Dreadscale Grouper",
+    "Mutated Koid Whale",
+    "Radiant Goldfish",
+    "Serpent Fish",
+    "Dreadmare Eel",
+    "Chromatic Koi",
+    "Toxic Chromatic Koi",
+    "Crimson Bream Sovereign",
+    "Silver Bream Sovereign",
+    "Golder Guardian Fish",
+    "Colossal Tigerfish",
+    "Mountain Fish",
+    "Tiger Mirefish",
+    "Octoparasitic Fish",
+    "Dark kingfish",
+    "Golden Shark",
+    "Darkness Shark",
+    "White Heaven Kunfish",
+    "Crimson Bonefiend",
+    "Dragonfish Devourer",
+    "Yangfish Sovereign",
+    "Yinfish Sovereign",
+    "Demon Bladefish",
+    "Apollo Swordfish",
+    "Killer Sawshark",
+    "Thunder Fish",
+    "Wind Fish",
+    "Intuitive Fish King",
     "Aquatic Fish",
     "Flame Fish",
-    "Intuitive Fish King",
-    "Scarlet Fish",
-    "Thunder Fish",
     "Verdant Alligator Gar",
-    "Verdant Bonefang",
     "Verdant Grouper",
-    "Wind Fish",
-    "Apollo Swordfish",
-    "Black Tortoise Bloodline",
-    "Crimson Electric Eel",
-    "Dark Lionfish",
-    "Draconic Koi",
-    "Elder Scarlet Fish",
+    "Verdant Bonefang",
+    "Scarlet Fish",
+    "Mountain Dragonwhale",
     "Flying Fish Emperor",
+    "Crimson Bonefang",
+    "Elder ScarletFish",
+    "Colossal Bull Shark",
     "Flying Fish Empress",
-    "Golden Dragonfish",
-    "Golden Guardian Fish",
-    "Heavenpiercer Turtle",
-    "Jiaolong Dragonfish",
-    "Mirage Lanternfish",
-    "Mutated Koji Whale",
-    "Nameless Octoparasite",
-    "Rainbow Dragonfish",
-    "Reborn Puffer Beast",
-    "Sanguine Fish",
-    "Serpent Fish",
-    "Silver Bream Sovereign",
-    "Thunder Bull Shark",
+    "Draconic Koi",
     "Tigerfang Whale",
+    "Golden Dragonfish",
+    "Crimson Electric Eel",
+    "Reborn Puffer Beast",
+    "Heavenpiercer Turtle",
+    "Sanguine Fish",
+    "Frost Kingfish",
+    "Dark Lionfish",
+    "Rainbow Dragonfish",
+    "Mirage lanternfish",
+    "Nameless Octoparasite",
+    "Frost QueenFish",
+    "Thunder Bull Shark",
+    "Black Tortoise Bloodline",
     "Vermilion Birdblood"
 }
 
@@ -3872,8 +4061,12 @@ local Window = Fluent:CreateWindow({
     MinimizeKey = Enum.KeyCode.LeftControl
 })
 
+local DoServerHop
+
 local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Boss = Window:AddTab({ Title = "Boss", Icon = "skull" }),
+    Quest = Window:AddTab({ Title = "Quest", Icon = "scroll" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
     Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Shop = Window:AddTab({ Title = "Shop", Icon = "shopping-cart" }),
@@ -3912,42 +4105,6 @@ local function toggleNoclip()
     end
 end
 
-Tabs.Main:AddSection("Auto Ticket Quest")
-
-Tabs.Main:AddToggle("AutoTicketQuestToggle", {
-    Title = "Auto Claim Quest Ticket",
-    Default = Config.AutoTicketQuest,
-    Callback = function(Value)
-        Config.AutoTicketQuest = Value
-        if not Value then
-            lastTicketQuestTime = 0
-        end
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddDropdown("TicketQuestModeDropdown", {
-    Title = "Quest Mode",
-    Values = {"Hard", "Easy"},
-    Default = Config.TicketQuestMode or "Hard",
-    Multi = false,
-    Callback = function(Value)
-        Config.TicketQuestMode = Value or "Hard"
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddSection("Zeng Tianguo Quest")
-
-Tabs.Main:AddToggle("AutoZengTianguoQuestToggle", {
-    Title = "Auto Claim Zeng Tianguo Quest",
-    Default = Config.AutoZengTianguoQuest,
-    Callback = function(Value)
-        Config.AutoZengTianguoQuest = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Main:AddSection("Auto Farm Fish")
 
 do
@@ -3983,59 +4140,6 @@ Tabs.Main:AddToggle("AutoFarmIslandToggle", {
                 ApplyAntiConfuse(LocalPlayer.Character)
             end
         end
-    end
-})
-
-Tabs.Main:AddSection("Filter Boss")
-
-Tabs.Main:AddToggle("FilterBossToggle", {
-    Title = "Filter Boss",
-    Default = Config.FilterFishEnabled,
-    Callback = function(Value)
-        Config.FilterFishEnabled = Value
-        SaveConfig()
-    end
-})
-
-local bossListItems = GetBossList()
-
-local defaultBossTargets = {}
-if type(Config.FilterFishTarget) == "table" then
-    for k, v in pairs(Config.FilterFishTarget) do
-        local name = nil
-        if type(k) == "string" and v == true then
-            name = k
-        elseif type(v) == "string" and v ~= "" then
-            name = v
-        end
-        if name and table.find(bossListItems, name) and not table.find(defaultBossTargets, name) then
-            table.insert(defaultBossTargets, name)
-        end
-    end
-elseif type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
-    table.insert(defaultBossTargets, Config.FilterFishTarget)
-end
-if #defaultBossTargets == 0 and bossListItems[1] then
-    table.insert(defaultBossTargets, bossListItems[1])
-end
-Config.FilterFishTarget = defaultBossTargets
-
-Tabs.Main:AddDropdown("FilterBossDropdown", {
-    Title = "Select Boss",
-    Values = bossListItems,
-    Default = defaultBossTargets,
-    Multi = true,
-    Callback = function(Value)
-        local selected = {}
-        if type(Value) == "table" then
-            for bossName, isSelected in pairs(Value) do
-                if isSelected and table.find(bossListItems, bossName) and not table.find(selected, bossName) then
-                    table.insert(selected, bossName)
-                end
-            end
-        end
-        Config.FilterFishTarget = selected
-        SaveConfig()
     end
 })
 
@@ -4095,7 +4199,6 @@ Tabs.Main:AddToggle("AutoEquipBestBaitToggle", {
         SaveConfig()
     end
 })
-
 
 Tabs.Main:AddSection("Skill")
 
@@ -4158,7 +4261,460 @@ if SkillDropdown.Display then
     SkillDropdown:Display()
 end
 
-Tabs.Main:AddSection("Boss")
+local function GetFishNameFromItem(itemName)
+    if not itemName or itemName == "" then return "" end
+    local cleanStr = string.split(itemName, "| Favorite")[1]
+    cleanStr = string.gsub(cleanStr, "^%s*(.-)%s*$", "%1")
+    local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+    local gs = clientMod and clientMod:FindFirstChild("GameService")
+    if gs then
+        local ok, res = pcall(function()
+            local gMod = require(gs)
+            return gMod and gMod.DestringFish and gMod.DestringFish(cleanStr)
+        end)
+        if ok and res and res.FishName then
+            return res.FishName
+        end
+    end
+    local parts = string.split(cleanStr, ",")
+    if #parts >= 1 and parts[1] ~= "" then
+        return parts[1]
+    end
+    return cleanStr
+end
+
+local function ScanAndFavoriteBossFish()
+    if not Config.AutoFavoriteBoss then return end
+    local inv = PlayerData and PlayerData:FindFirstChild("Inventory")
+    if not inv then return end
+    local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+    if not favRemote then return end
+
+    local targets = {}
+    if type(Config.AutoFavoriteBossTarget) == "table" then
+        for k, v in pairs(Config.AutoFavoriteBossTarget) do
+            if type(k) == "string" and v == true then
+                table.insert(targets, string.lower(k))
+            elseif type(v) == "string" and v ~= "" then
+                table.insert(targets, string.lower(v))
+            end
+        end
+    end
+    if #targets == 0 then return end
+
+    for _, child in ipairs(inv:GetChildren()) do
+        local itemName = child.Name
+        if not string.find(itemName, "| Favorite", 1, true) then
+            local fName = string.lower(GetFishNameFromItem(itemName))
+            for _, t in ipairs(targets) do
+                if fName == t or string.find(fName, t, 1, true) then
+                    pcall(function()
+                        favRemote:FireServer(itemName)
+                    end)
+                    task.wait(0.15)
+                    break
+                end
+            end
+        end
+    end
+end
+
+pcall(function()
+    local inv = PlayerData and PlayerData:WaitForChild("Inventory", 5)
+    if inv then
+        inv.ChildAdded:Connect(function(child)
+            if not Config.AutoFavoriteBoss then return end
+            task.wait(0.2)
+            if not child or not child.Parent then return end
+            local itemName = child.Name
+            if not string.find(itemName, "| Favorite", 1, true) then
+                local fName = string.lower(GetFishNameFromItem(itemName))
+                local targets = {}
+                if type(Config.AutoFavoriteBossTarget) == "table" then
+                    for k, v in pairs(Config.AutoFavoriteBossTarget) do
+                        if type(k) == "string" and v == true then
+                            table.insert(targets, string.lower(k))
+                        elseif type(v) == "string" and v ~= "" then
+                            table.insert(targets, string.lower(v))
+                        end
+                    end
+                end
+                for _, t in ipairs(targets) do
+                    if fName == t or string.find(fName, t, 1, true) then
+                        local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+                        if favRemote then
+                            pcall(function()
+                                favRemote:FireServer(itemName)
+                            end)
+                        end
+                        break
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+Tabs.Boss:AddSection("Filter Boss")
+
+Tabs.Boss:AddToggle("FilterBossToggle", {
+    Title = "Filter Boss",
+    Default = Config.FilterFishEnabled,
+    Callback = function(Value)
+        Config.FilterFishEnabled = Value
+        SaveConfig()
+    end
+})
+
+local bossListItems = GetBossList()
+
+local defaultBossTargets = {}
+if type(Config.FilterFishTarget) == "table" then
+    for k, v in pairs(Config.FilterFishTarget) do
+        local name = nil
+        if type(k) == "string" and v == true then
+            name = k
+        elseif type(v) == "string" and v ~= "" then
+            name = v
+        end
+        if name and table.find(bossListItems, name) and not table.find(defaultBossTargets, name) then
+            table.insert(defaultBossTargets, name)
+        end
+    end
+elseif type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
+    table.insert(defaultBossTargets, Config.FilterFishTarget)
+end
+if #defaultBossTargets == 0 and bossListItems[1] then
+    table.insert(defaultBossTargets, bossListItems[1])
+end
+Config.FilterFishTarget = defaultBossTargets
+
+Tabs.Boss:AddDropdown("FilterBossDropdown", {
+    Title = "Select Boss",
+    Values = bossListItems,
+    Default = defaultBossTargets,
+    Multi = true,
+    Callback = function(Value)
+        local selected = {}
+        if type(Value) == "table" then
+            for bossName, isSelected in pairs(Value) do
+                if isSelected and table.find(bossListItems, bossName) and not table.find(selected, bossName) then
+                    table.insert(selected, bossName)
+                end
+            end
+        end
+        Config.FilterFishTarget = selected
+        SaveConfig()
+    end
+})
+
+Tabs.Boss:AddSection("Auto Favorite Boss")
+
+Tabs.Boss:AddToggle("AutoFavoriteBossToggle", {
+    Title = "Auto Favorite Boss Fish",
+    Default = Config.AutoFavoriteBoss,
+    Callback = function(Value)
+        Config.AutoFavoriteBoss = Value
+        SaveConfig()
+        if Value then
+            task.spawn(ScanAndFavoriteBossFish)
+        end
+    end
+})
+
+local defaultFavTargets = {}
+if type(Config.AutoFavoriteBossTarget) == "table" then
+    for k, v in pairs(Config.AutoFavoriteBossTarget) do
+        local name = nil
+        if type(k) == "string" and v == true then
+            name = k
+        elseif type(v) == "string" and v ~= "" then
+            name = v
+        end
+        if name and table.find(bossListItems, name) and not table.find(defaultFavTargets, name) then
+            table.insert(defaultFavTargets, name)
+        end
+    end
+end
+
+Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
+    Title = "Select Boss Fish",
+    Values = bossListItems,
+    Default = defaultFavTargets,
+    Multi = true,
+    Callback = function(Value)
+        local selected = {}
+        if type(Value) == "table" then
+            for bName, isSelected in pairs(Value) do
+                if isSelected and table.find(bossListItems, bName) and not table.find(selected, bName) then
+                    table.insert(selected, bName)
+                end
+            end
+        end
+        Config.AutoFavoriteBossTarget = selected
+        SaveConfig()
+        if Config.AutoFavoriteBoss then
+            task.spawn(ScanAndFavoriteBossFish)
+        end
+    end
+})
+
+Tabs.Boss:AddSection("Auto Hop Sacred Beast")
+
+do
+    local function GetChuPrompt()
+        local npcFolder = workspace:FindFirstChild("NPC")
+        local funcFolder = npcFolder and npcFolder:FindFirstChild("Function")
+        local chu = funcFolder and funcFolder:FindFirstChild("Chu Tianjiao")
+        if chu then
+            local p = chu:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if p then return p end
+        end
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") then
+                local pName = string.lower(tostring(desc.ObjectText or (desc.Parent and desc.Parent.Name) or ""))
+                local aName = string.lower(tostring(desc.ActionText or ""))
+                if string.find(pName, "chu", 1, true) or string.find(aName, "talk", 1, true) then
+                    return desc
+                end
+            end
+        end
+        local direct = workspace:FindFirstChild("Chu Tianjiao", true)
+        if direct then
+            local p = direct:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if p then return p end
+        end
+        return nil
+    end
+
+    local function TriggerChuPrompt(prompt)
+        if not prompt then return false end
+        local ok = false
+        pcall(function()
+            prompt.RequiresLineOfSight = false
+            prompt.MaxActivationDistance = 9999
+            prompt.HoldDuration = 0
+            if fireproximityprompt then
+                fireproximityprompt(prompt)
+                ok = true
+            end
+        end)
+        return ok
+    end
+
+    local function ReadChuDialogueFromGui()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local dialogue = menu and menu:FindFirstChild("Dialogue")
+        if dialogue and dialogue.Visible then
+            for _, desc in ipairs(dialogue:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible then
+                    local txt = tostring(desc.Text or ""):gsub("^%s*(.-)%s*$", "%1")
+                    if #txt > 3 and not string.find(txt, "Close") and not string.find(txt, "Main Quest") and txt ~= "???" and not string.find(txt, "Chu Tianjiao") then
+                        return txt
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function CheckChuTianjiaoDialogue(timeoutSec)
+        local char = LocalPlayer.Character or cachedChar
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if hrp then
+            hrp.CFrame = CFrame.new(-2569.52, 15.70, -1405.43, 0.09, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, 0.09)
+        end
+        task.wait(0.2)
+        local startWait = os.clock()
+        local limit = timeoutSec or 3.0
+        local resultText = ""
+        while (os.clock() - startWait) < limit do
+            local prompt = GetChuPrompt()
+            if prompt then
+                TriggerChuPrompt(prompt)
+            end
+            local guiText = ReadChuDialogueFromGui()
+            if guiText and guiText ~= "" then
+                resultText = guiText
+                break
+            end
+            task.wait(0.1)
+        end
+        return (resultText ~= ""), resultText
+    end
+
+    local function IsSacredBeastAppeared(dialogueText)
+        local lower = string.lower(dialogueText or "")
+        if lower == "" then return false end
+        if string.find(lower, "i can feel it", 1, true)
+            or string.find(lower, "approaching", 1, true)
+            or string.find(lower, "don't have any quests", 1, true)
+            or string.find(lower, "maybe you'll find", 1, true) then
+            return false
+        end
+
+        return string.find(lower, "hurry", 1, true) ~= nil
+    end
+
+    local AutoHopSacredBeastToggleObj
+    AutoHopSacredBeastToggleObj = Tabs.Boss:AddToggle("AutoHopSacredBeastToggle", {
+        Title = "Auto Hop Sacred Beast",
+        Default = Config.AutoHopSacredBeast,
+        Callback = function(Value)
+            Config.AutoHopSacredBeast = Value
+            SaveConfig()
+            if Value then
+                task.spawn(function()
+                    local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+                    if not Config.AutoHopSacredBeast then return end
+                    local appeared = IsSacredBeastAppeared(chuText)
+                    pcall(function()
+                        local msg = (chuText and chuText ~= "") and chuText or "No dialogue"
+                        if not appeared then
+                            msg = msg .. " (Hopping in 5s...)"
+                        end
+                        Fluent:Notify({
+                            Title = "Sacred Beast Hop",
+                            Content = msg,
+                            Duration = 6
+                        })
+                    end)
+                    if appeared then
+                        Config.AutoHopSacredBeast = false
+                        SaveConfig()
+                        if AutoHopSacredBeastToggleObj then
+                            pcall(function()
+                                AutoHopSacredBeastToggleObj:SetValue(false)
+                            end)
+                        end
+                    else
+                        task.wait(5)
+                        if Config.AutoHopSacredBeast and DoServerHop then
+                            DoServerHop("normal")
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+
+
+    task.spawn(function()
+        task.wait(2.5)
+        if not Config.AutoHopSacredBeast then return end
+        repeat task.wait(0.2) until (game:IsLoaded() and LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character:FindFirstChild("Head"))) or not Config.AutoHopSacredBeast
+        if not Config.AutoHopSacredBeast then return end
+        task.wait(1)
+        local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+        if not Config.AutoHopSacredBeast then return end
+        local appeared = IsSacredBeastAppeared(chuText)
+        pcall(function()
+            local msg = (chuText and chuText ~= "") and chuText or "No dialogue"
+            if not appeared then
+                msg = msg .. " (Hopping in 5s...)"
+            end
+            Fluent:Notify({
+                Title = "Sacred Beast Hop",
+                Content = msg,
+                Duration = 6
+            })
+        end)
+        if appeared then
+            Config.AutoHopSacredBeast = false
+            SaveConfig()
+            if AutoHopSacredBeastToggleObj then
+                pcall(function()
+                    AutoHopSacredBeastToggleObj:SetValue(false)
+                end)
+            end
+        else
+            task.wait(5)
+            if Config.AutoHopSacredBeast and DoServerHop then
+                DoServerHop("normal")
+            end
+        end
+    end)
+
+    local function TeleportToSacredBeast(targetName)
+        local lowerTarget = string.lower(string.gsub(tostring(targetName), "%s+", ""))
+        local foundPart = nil
+        for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP", "God", "BossSetUp"}) do
+            local wsFolder = workspace:FindFirstChild(folderName)
+            if wsFolder then
+                for _, desc in ipairs(wsFolder:GetDescendants()) do
+                    if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsA("Folder") then
+                        local dName = string.lower(string.gsub(tostring(desc.Name), "%s+", ""))
+                        local dAttr = string.lower(string.gsub(tostring(desc:GetAttribute("Name") or ""), "%s+", ""))
+                        if string.find(dName, lowerTarget, 1, true) or string.find(dAttr, lowerTarget, 1, true) then
+                            local p = GetModelPart(desc)
+                            if p and p:IsDescendantOf(workspace) then
+                                foundPart = p
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if foundPart then break end
+        end
+        if not foundPart then
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsA("Folder") then
+                    local dName = string.lower(string.gsub(tostring(desc.Name), "%s+", ""))
+                    local dAttr = string.lower(string.gsub(tostring(desc:GetAttribute("Name") or ""), "%s+", ""))
+                    if string.find(dName, lowerTarget, 1, true) or string.find(dAttr, lowerTarget, 1, true) then
+                        local p = GetModelPart(desc)
+                        if p and p:IsDescendantOf(workspace) then
+                            foundPart = p
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if foundPart then
+            local char = LocalPlayer.Character or cachedChar
+            local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+            if hrp then
+                hrp.CFrame = foundPart.CFrame * CFrame.new(0, 3, -4)
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = "Teleported to " .. targetName,
+                    Duration = 3
+                })
+            end)
+        else
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = targetName .. " has not spawned on the map yet!",
+                    Duration = 4
+                })
+            end)
+        end
+    end
+
+    Tabs.Boss:AddButton({
+        Title = "Teleport To Black Tortoise Bloodline",
+        Callback = function()
+            TeleportToSacredBeast("Black Tortoise Bloodline")
+        end
+    })
+
+    Tabs.Boss:AddButton({
+        Title = "Teleport To Vermilion Birdblood",
+        Callback = function()
+            TeleportToSacredBeast("Vermilion Birdblood")
+        end
+    })
+end
+
+Tabs.Boss:AddSection("Boss Fight")
 
 do
     local bossModes = {"Normal", "Hard", "Nightmare"}
@@ -4166,7 +4722,7 @@ do
         Config.BossMode = "Normal"
     end
 
-    Tabs.Main:AddDropdown("SelectBossModeDropdown", {
+    Tabs.Boss:AddDropdown("SelectBossModeDropdown", {
         Title = "Select Boss Mode",
         Values = bossModes,
         Default = Config.BossMode,
@@ -4178,7 +4734,7 @@ do
     })
 end
 
-Tabs.Main:AddToggle("AutoBossToggle", {
+Tabs.Boss:AddToggle("AutoBossToggle", {
     Title = "Auto Enzo",
     Default = Config.AutoBoss,
     Callback = function(Value)
@@ -4192,7 +4748,7 @@ Tabs.Main:AddToggle("AutoBossToggle", {
     end
 })
 
-Tabs.Main:AddToggle("AutoSecretBossToggle", {
+Tabs.Boss:AddToggle("AutoSecretBossToggle", {
     Title = "Auto Long DiaoHai",
     Default = Config.AutoSecretBoss,
     Callback = function(Value)
@@ -4206,7 +4762,9 @@ Tabs.Main:AddToggle("AutoSecretBossToggle", {
     end
 })
 
-Tabs.Main:AddToggle("AutoMiniGameToggle", {
+Tabs.Boss:AddSection("Mini Game")
+
+Tabs.Boss:AddToggle("AutoMiniGameToggle", {
     Title = "Auto Mini Game",
     Default = Config.AutoMiniGame,
     Callback = function(Value)
@@ -4227,7 +4785,7 @@ Tabs.Main:AddToggle("AutoMiniGameToggle", {
     end
 })
 
-Tabs.Main:AddToggle("SuperSpeedMiniGameToggle", {
+Tabs.Boss:AddToggle("SuperSpeedMiniGameToggle", {
     Title = "Super Speed Mini Game",
     Default = Config.SuperSpeedMiniGame or false,
     Callback = function(Value)
@@ -4241,6 +4799,57 @@ Tabs.Main:AddToggle("SuperSpeedMiniGameToggle", {
                 })
             end)
         end
+        SaveConfig()
+    end
+})
+
+Tabs.Quest:AddSection("Auto Claim Daily Quest")
+
+Tabs.Quest:AddToggle("AutoClaimDailyQuestToggle", {
+    Title = "Auto Claim Daily Quest",
+    Default = Config.AutoClaimDailyQuest,
+    Callback = function(Value)
+        Config.AutoClaimDailyQuest = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Quest:AddSection("Ticket Quest")
+
+AutoTicketQuestToggleObj = Tabs.Quest:AddToggle("AutoTicketQuestToggle", {
+    Title = "Auto Claim Quest Ticket",
+    Default = Config.AutoTicketQuest,
+    Callback = function(Value)
+        Config.AutoTicketQuest = Value
+        if not Value then
+            lastTicketQuestTime = 0
+        else
+            if ResetTicketLimit then
+                ResetTicketLimit()
+            end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Quest:AddDropdown("TicketQuestModeDropdown", {
+    Title = "Quest Mode",
+    Values = {"Hard", "Easy"},
+    Default = Config.TicketQuestMode or "Hard",
+    Multi = false,
+    Callback = function(Value)
+        Config.TicketQuestMode = Value or "Hard"
+        SaveConfig()
+    end
+})
+
+Tabs.Quest:AddSection("Zeng Tianguo Quest")
+
+Tabs.Quest:AddToggle("AutoZengTianguoQuestToggle", {
+    Title = "Auto Claim Zeng Tianguo Quest",
+    Default = Config.AutoZengTianguoQuest,
+    Callback = function(Value)
+        Config.AutoZengTianguoQuest = Value
         SaveConfig()
     end
 })
@@ -4311,6 +4920,340 @@ Tabs.Player:AddToggle("InfJumpToggle", {
         SaveConfig()
     end
 })
+
+do
+    local function SetOceanWaterCollidable(enabled)
+        local ocean = workspace:FindFirstChild("Ocean")
+        if ocean then
+            for _, child in ipairs(ocean:GetChildren()) do
+                if child.Name == "Water" and child:IsA("BasePart") then
+                    child.CanCollide = enabled
+                end
+            end
+        end
+    end
+
+    pcall(function()
+        local ocean = workspace:FindFirstChild("Ocean")
+        if ocean then
+            ocean.ChildAdded:Connect(function(child)
+                if Config.WalkOnWater and child.Name == "Water" and child:IsA("BasePart") then
+                    child.CanCollide = true
+                end
+            end)
+        end
+    end)
+
+    if Config.WalkOnWater then
+        task.spawn(function()
+            task.wait(1)
+            SetOceanWaterCollidable(true)
+        end)
+    end
+
+    Tabs.Player:AddToggle("WalkOnWaterToggle", {
+        Title = "Walk On Water",
+        Default = Config.WalkOnWater,
+        Callback = function(Value)
+            Config.WalkOnWater = Value
+            SaveConfig()
+            SetOceanWaterCollidable(Value)
+        end
+    })
+end
+
+do
+    local function ApplyInstantInteract(enabled)
+        if not enabled then return end
+        pcall(function()
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                if desc:IsA("ProximityPrompt") then
+                    desc.HoldDuration = 0
+                end
+            end
+        end)
+    end
+
+    pcall(function()
+        workspace.DescendantAdded:Connect(function(desc)
+            if Config.InstantInteract and desc:IsA("ProximityPrompt") then
+                task.wait()
+                desc.HoldDuration = 0
+            end
+        end)
+    end)
+
+    pcall(function()
+        local pps = game:GetService("ProximityPromptService")
+        pps.PromptButtonHoldBegan:Connect(function(prompt)
+            if Config.InstantInteract then
+                prompt.HoldDuration = 0
+                if fireproximityprompt then
+                    fireproximityprompt(prompt)
+                end
+            end
+        end)
+    end)
+
+    if Config.InstantInteract then
+        task.spawn(function()
+            task.wait(1)
+            ApplyInstantInteract(true)
+        end)
+    end
+
+    Tabs.Player:AddSection("Utility")
+
+    Tabs.Player:AddToggle("InstantInteractToggle", {
+        Title = "Instant Interact",
+        Default = Config.InstantInteract,
+        Callback = function(Value)
+            Config.InstantInteract = Value
+            SaveConfig()
+            if Value then
+                ApplyInstantInteract(true)
+            end
+        end
+    })
+end
+
+do
+    local fakeName = "StarCrow Hub"
+    local oldName = LocalPlayer.Name
+    local oldDisplayName = LocalPlayer.DisplayName
+    local oldUserId = tostring(LocalPlayer.UserId)
+    local hideConnections = {}
+    local originalTexts = setmetatable({}, { __mode = "k" })
+    local isHiding = false
+
+    local function replaceInText(text)
+        if typeof(text) ~= "string" or text == "" then
+            return text, false
+        end
+        local changed = false
+        if string.find(text, oldUserId, 1, true) then
+            text = string.gsub(text, oldUserId, fakeName)
+            changed = true
+        end
+        if string.find(text, oldDisplayName, 1, true) then
+            text = string.gsub(text, oldDisplayName, fakeName)
+            changed = true
+        end
+        if string.find(text, oldName, 1, true) then
+            text = string.gsub(text, oldName, fakeName)
+            changed = true
+        end
+        return text, changed
+    end
+
+    local function handleTextObject(obj)
+        if not (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
+            return
+        end
+        if not originalTexts[obj] then
+            originalTexts[obj] = obj.Text
+        end
+        local updating = false
+        local function apply()
+            if updating or not isHiding then
+                return
+            end
+            local t = obj.Text
+            local newT, changed = replaceInText(t)
+            if changed and obj.Text ~= newT then
+                updating = true
+                obj.Text = newT
+                updating = false
+            end
+        end
+        apply()
+        local conn = obj:GetPropertyChangedSignal("Text"):Connect(apply)
+        table.insert(hideConnections, conn)
+    end
+
+    local function scanContainer(container)
+        pcall(function()
+            for _, v in ipairs(container:GetDescendants()) do
+                if isHiding then
+                    handleTextObject(v)
+                end
+            end
+            local conn = container.DescendantAdded:Connect(function(v)
+                if isHiding then
+                    handleTextObject(v)
+                end
+            end)
+            table.insert(hideConnections, conn)
+        end)
+    end
+
+    local function updateCharacterDisplay(char)
+        if not char then
+            return
+        end
+        pcall(function()
+            local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 3)
+            if hum then
+                if isHiding then
+                    hum.DisplayName = fakeName
+                else
+                    hum.DisplayName = (oldDisplayName ~= "" and oldDisplayName) or oldName
+                end
+            end
+        end)
+        if isHiding then
+            scanContainer(char)
+        end
+    end
+
+    local function ApplyHideNameAndID(enabled)
+        isHiding = enabled
+        if enabled then
+            scanContainer(LocalPlayer:WaitForChild("PlayerGui"))
+            scanContainer(workspace)
+            pcall(function()
+                scanContainer(game:GetService("CoreGui"))
+            end)
+            if LocalPlayer.Character then
+                updateCharacterDisplay(LocalPlayer.Character)
+            end
+            local charConn = LocalPlayer.CharacterAdded:Connect(function(char)
+                task.wait(0.5)
+                if isHiding then
+                    updateCharacterDisplay(char)
+                end
+            end)
+            table.insert(hideConnections, charConn)
+        else
+            for _, conn in ipairs(hideConnections) do
+                pcall(function()
+                    conn:Disconnect()
+                end)
+            end
+            table.clear(hideConnections)
+            for obj, orig in pairs(originalTexts) do
+                pcall(function()
+                    if obj and obj.Parent then
+                        obj.Text = orig
+                    end
+                end)
+            end
+            table.clear(originalTexts)
+            if LocalPlayer.Character then
+                updateCharacterDisplay(LocalPlayer.Character)
+            end
+        end
+    end
+
+    if Config.HideNameAndID then
+        task.spawn(function()
+            task.wait(1)
+            ApplyHideNameAndID(true)
+        end)
+    end
+
+    Tabs.Player:AddToggle("HideNameAndIDToggle", {
+        Title = "Hide Name & ID",
+        Default = Config.HideNameAndID,
+        Callback = function(Value)
+            Config.HideNameAndID = Value
+            SaveConfig()
+            ApplyHideNameAndID(Value)
+        end
+    })
+end
+
+;(function()
+    local superFpsBoostActive = false
+    local function ApplySuperFPSBoost()
+        pcall(function()
+            if setfpscap then
+                setfpscap(999)
+            end
+        end)
+        pcall(function()
+            local s = settings()
+            s.Rendering.QualityLevel = Enum.QualityLevel.Level01
+            s.Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+        end)
+        pcall(function()
+            Lighting.GlobalShadows = false
+            Lighting.FogEnd = 9e9
+            Lighting.FogStart = 9e9
+            Lighting.Brightness = 1
+            Lighting.ClockTime = 14
+            Lighting.ExposureCompensation = 0
+            Lighting.ShadowSoftness = 0
+            Lighting.EnvironmentDiffuseScale = 0
+            Lighting.EnvironmentSpecularScale = 0
+            for _, child in ipairs(Lighting:GetChildren()) do
+                if child:IsA("PostProcessEffect") or child:IsA("Atmosphere") or child:IsA("Clouds") or child:IsA("Sky") then
+                    child.Enabled = false
+                end
+            end
+        end)
+        pcall(function()
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            if terrain then
+                terrain.WaterWaveSize = 0
+                terrain.WaterWaveSpeed = 0
+                terrain.WaterReflectance = 0
+                terrain.WaterTransparency = 0
+                terrain.Decoration = false
+            end
+        end)
+        local function OptimizeDescendant(obj)
+            pcall(function()
+                if obj:IsA("BasePart") then
+                    obj.Material = Enum.Material.SmoothPlastic
+                    obj.Reflectance = 0
+                    obj.CastShadow = false
+                    if obj:IsA("MeshPart") then
+                        obj.TextureID = ""
+                    end
+                elseif obj:IsA("SpecialMesh") then
+                    obj.TextureId = ""
+                elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                    obj.Transparency = 1
+                elseif obj:IsA("SurfaceAppearance") then
+                    obj:Destroy()
+                elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") or obj:IsA("Beam") then
+                    obj.Enabled = false
+                elseif obj:IsA("Highlight") then
+                    obj.Enabled = false
+                elseif obj:IsA("Light") then
+                    obj.Enabled = false
+                elseif obj:IsA("Explosion") then
+                    obj.Visible = false
+                end
+            end)
+        end
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            OptimizeDescendant(desc)
+        end
+        if not superFpsBoostActive then
+            superFpsBoostActive = true
+            workspace.DescendantAdded:Connect(OptimizeDescendant)
+        end
+        pcall(function()
+            collectgarbage("collect")
+        end)
+    end
+
+    Tabs.Player:AddButton({
+        Title = "Fps Boost",
+        Callback = function()
+            ApplySuperFPSBoost()
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Fps Boost",
+                    Content = "Applied",
+                    Duration = 2
+                })
+            end)
+        end
+    })
+end)()
 
 Tabs.Teleport:AddSection("Island")
 
@@ -4627,6 +5570,8 @@ Tabs.Shop:AddButton({
     end
 })
 
+Tabs.ESP:AddSection("Players")
+
 Tabs.ESP:AddToggle("ESPPlayers", {
     Title = "ESP Players",
     Default = Config.ESPEnabled,
@@ -4638,6 +5583,8 @@ Tabs.ESP:AddToggle("ESPPlayers", {
         end
     end
 })
+
+
 
 Tabs.Misc:AddSection("Visual")
 
@@ -4740,6 +5687,63 @@ Tabs.Misc:AddButton({
             Content = state and "Opened Trait" or "Closed Trait",
             Duration = 2
         })
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Open Guild",
+    Callback = function()
+        local state = false
+        pcall(function()
+            local events = ReplicatedStorage:FindFirstChild("Events")
+            local guildFetch = events and events:FindFirstChild("GuildFetch")
+            if guildFetch then
+                guildFetch:InvokeServer()
+            end
+        end)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
+            if not mg then return end
+            local targetFrame = nil
+            for _, desc in ipairs(mg:GetDescendants()) do
+                if desc.Name == "MenuFrame" and desc:FindFirstChild("InfoFrame") then
+                    targetFrame = desc
+                    break
+                end
+            end
+            if not targetFrame then
+                for _, desc in ipairs(mg:GetDescendants()) do
+                    if desc.Name == "MenuFrame" then
+                        targetFrame = desc
+                        break
+                    end
+                end
+            end
+            if targetFrame then
+                local isActuallyOpen = targetFrame.Visible and targetFrame.Parent and targetFrame.Parent:IsA("GuiObject") and targetFrame.Parent.Visible
+                if isActuallyOpen then
+                    targetFrame.Visible = false
+                    state = false
+                else
+                    local p = targetFrame
+                    while p and p:IsA("GuiObject") do
+                        p.Visible = true
+                        p = p.Parent
+                    end
+                    targetFrame.Visible = true
+                    targetFrame.Position = UDim2.new(0.5, -targetFrame.AbsoluteSize.X / 2, 0.5, -targetFrame.AbsoluteSize.Y / 2)
+                    state = true
+                end
+            end
+        end)
+        pcall(function()
+            Fluent:Notify({
+                Title = "Remote UI",
+                Content = state and "Opened Guild" or "Closed Guild",
+                Duration = 2
+            })
+        end)
     end
 })
 
@@ -4977,26 +5981,67 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 do
-    local function HopLowServer()
+    local function QueueReExecute()
+        if not (Config.AutoHopSacredBeast or Config.AutoHopWeather) then return end
+        local queueFn = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+        if queueFn then
+            pcall(function()
+                queueFn([[
+if not getgenv().StarCrowQueuedRan then
+    getgenv().StarCrowQueuedRan = true
+    repeat task.wait(0.5) until game:IsLoaded()
+    repeat task.wait(0.5) until workspace:FindFirstChild("Terrain") and (#workspace:GetChildren() > 10)
+    repeat task.wait(0.5) until game:GetService("Players").LocalPlayer and (game:GetService("Players").LocalPlayer.Character or game:GetService("Players").LocalPlayer.CharacterAdded:Wait())
+    task.wait(2)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Star-Crow-Hub/Script/refs/heads/main/Loader"))()
+end
+]])
+            end)
+        end
+    end
+
+    local function GetWeatherList()
+        local list = {}
+        local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+        local wScript = clientMod and clientMod:FindFirstChild("Weather")
+        local wFolder = wScript and wScript:FindFirstChild("Weather")
+        if wFolder then
+            for _, child in ipairs(wFolder:GetChildren()) do
+                if child:IsA("ModuleScript") or child:IsA("Folder") then
+                    table.insert(list, child.Name)
+                end
+            end
+        end
+        if #list == 0 then
+            list = {"Clear", "Rain", "Thunderstorm", "Snow", "Fog", "Windy", "Cloudy", "Solar Eclipse"}
+        else
+            table.sort(list)
+        end
+        return list
+    end
+
+    function DoServerHop(mode)
         task.spawn(function()
             local placeId = game.PlaceId
             local curJobId = game.JobId
             local requestFn = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
             local targetServer = nil
 
+            local isLow = (mode == "low")
             pcall(function()
                 Fluent:Notify({
                     Title = "Server Hop",
-                    Content = "Searching for low player server...",
+                    Content = isLow and "Searching for low player server..." or "Searching for a server...",
                     Duration = 4
                 })
             end)
 
             local cursor = ""
             local attempts = 0
+            local sortOrder = isLow and "Asc" or "Desc"
             while attempts < 5 and not targetServer do
                 attempts = attempts + 1
-                local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=Asc&limit=100"
+                local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=" .. sortOrder .. "&limit=100"
                 if cursor ~= "" then
                     url = url .. "&cursor=" .. cursor
                 end
@@ -5026,12 +6071,19 @@ do
                                 end
                             end
                         end
-                        table.sort(servers, function(a, b)
-                            return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
-                        end)
-                        if #servers > 0 then
-                            targetServer = servers[1]
-                            break
+                        if isLow then
+                            table.sort(servers, function(a, b)
+                                return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
+                            end)
+                            if #servers > 0 then
+                                targetServer = servers[1]
+                                break
+                            end
+                        else
+                            if #servers > 0 then
+                                targetServer = servers[math.random(1, #servers)]
+                                break
+                            end
                         end
                         if data.nextPageCursor and data.nextPageCursor ~= "" then
                             cursor = data.nextPageCursor
@@ -5048,6 +6100,7 @@ do
             end
 
             if targetServer and targetServer.id then
+                QueueReExecute()
                 pcall(function()
                     Fluent:Notify({
                         Title = "Server Hop",
@@ -5058,10 +6111,11 @@ do
                 task.wait(0.5)
                 TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
             else
+                QueueReExecute()
                 pcall(function()
                     Fluent:Notify({
                         Title = "Server Hop",
-                        Content = "Couldn't find low player server. Teleporting to random server...",
+                        Content = "Teleporting to random server...",
                         Duration = 4
                     })
                 end)
@@ -5073,9 +6127,32 @@ do
 
     Tabs.Server:AddSection("Server")
 
+    do
+        local ServerTimeParagraph = Tabs.Server:AddParagraph({
+            Title = "Status : 00:00:00",
+            Content = ""
+        })
+
+        task.spawn(function()
+            while true do
+                local uptime = workspace.DistributedGameTime or time()
+                local d = math.floor(uptime / 86400)
+                local h = math.floor((uptime % 86400) / 3600)
+                local m = math.floor((uptime % 3600) / 60)
+                local s = math.floor(uptime % 60)
+                local timeText = (d > 0 and string.format("%dd %02d:%02d:%02d", d, h, m, s) or string.format("%02d:%02d:%02d", h, m, s))
+                pcall(function()
+                    ServerTimeParagraph:SetTitle("Status : " .. timeText)
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+
     Tabs.Server:AddButton({
         Title = "Rejoin",
         Callback = function()
+            QueueReExecute()
             pcall(function()
                 Fluent:Notify({
                     Title = "Rejoin",
@@ -5089,9 +6166,16 @@ do
     })
 
     Tabs.Server:AddButton({
-        Title = "Server Hop Low Players",
+        Title = "Server Hop",
         Callback = function()
-            HopLowServer()
+            DoServerHop("normal")
+        end
+    })
+
+    Tabs.Server:AddButton({
+        Title = "Small Server",
+        Callback = function()
+            DoServerHop("low")
         end
     })
 
@@ -5122,6 +6206,7 @@ do
                 end)
                 return
             end
+            QueueReExecute()
             pcall(function()
                 Fluent:Notify({
                     Title = "Join JobId",
@@ -5160,6 +6245,111 @@ do
             end)
         end
     })
+
+    Tabs.Server:AddSection("Weather Hop")
+
+    local AutoHopWeatherToggleObj
+    AutoHopWeatherToggleObj = Tabs.Server:AddToggle("AutoHopWeatherToggle", {
+        Title = "Auto Hop Weather",
+        Default = Config.AutoHopWeather,
+        Callback = function(Value)
+            Config.AutoHopWeather = Value
+            SaveConfig()
+            if Value then
+                task.spawn(function()
+                    local curWeather = tostring(workspace:GetAttribute("Weather") or "")
+                    local targetWeather = tostring(Config.SelectedWeather or "")
+                    if curWeather == "" then
+                        local startWait = os.clock()
+                        while (os.clock() - startWait) < 1.5 and curWeather == "" do
+                            curWeather = tostring(workspace:GetAttribute("Weather") or "")
+                            task.wait(0.1)
+                        end
+                    end
+                    if not Config.AutoHopWeather then return end
+                    if curWeather ~= "" and string.lower(curWeather) == string.lower(targetWeather) then
+                        Config.AutoHopWeather = false
+                        SaveConfig()
+                        if AutoHopWeatherToggleObj then
+                            pcall(function()
+                                AutoHopWeatherToggleObj:SetValue(false)
+                            end)
+                        end
+                        pcall(function()
+                            Fluent:Notify({
+                                Title = "Weather Hop",
+                                Content = "Already in target weather: " .. curWeather .. "! Auto Hop stopped.",
+                                Duration = 6
+                            })
+                        end)
+                        return
+                    end
+                    pcall(function()
+                        Fluent:Notify({
+                            Title = "Weather Hop",
+                            Content = "Current: " .. (curWeather ~= "" and curWeather or "Unknown") .. ". Target: " .. targetWeather .. ". Hopping in 5s...",
+                            Duration = 5
+                        })
+                    end)
+                    task.wait(5)
+                    if Config.AutoHopWeather and DoServerHop then
+                        DoServerHop("normal")
+                    end
+                end)
+            end
+        end
+    })
+
+    local weatherList = GetWeatherList()
+    Tabs.Server:AddDropdown("SelectWeatherDropdown", {
+        Title = "Select Weather",
+        Values = weatherList,
+        Default = Config.SelectedWeather,
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedWeather = Value or "Thunderstorm"
+            SaveConfig()
+        end
+    })
+
+
+
+    task.spawn(function()
+        task.wait(2)
+        if not Config.AutoHopWeather then return end
+        repeat task.wait(0.2) until workspace:GetAttribute("Weather") or not Config.AutoHopWeather
+        if not Config.AutoHopWeather then return end
+        local curWeather = tostring(workspace:GetAttribute("Weather") or "")
+        local targetWeather = tostring(Config.SelectedWeather or "")
+        if curWeather ~= "" and string.lower(curWeather) == string.lower(targetWeather) then
+            Config.AutoHopWeather = false
+            SaveConfig()
+            if AutoHopWeatherToggleObj then
+                pcall(function()
+                    AutoHopWeatherToggleObj:SetValue(false)
+                end)
+            end
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Weather Hop",
+                    Content = "Found target weather: " .. curWeather .. "! Auto Hop stopped.",
+                    Duration = 6
+                })
+            end)
+        else
+            pcall(function()
+                Fluent:Notify({
+                    Title = "Weather Hop",
+                    Content = "Current: " .. (curWeather ~= "" and curWeather or "Unknown") .. ". Target: " .. targetWeather .. ". Hopping in 5s...",
+                    Duration = 5
+                })
+            end)
+            task.wait(5)
+            if Config.AutoHopWeather then
+                DoServerHop("normal")
+            end
+        end
+    end)
 end
 
 Window:SelectTab(1)
