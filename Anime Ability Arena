@@ -38,6 +38,7 @@ local Config = {
     VoidTPKeybind = "G",
     VoidTPFloatVisible = false,
     VoidTPFloatPos = { xs = 0.85, xo = 0, ys = 0.6, yo = 0 },
+    DisableKeybinds = false,
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -1718,6 +1719,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == minimizeKey then
         uiVisible = not uiVisible
     end
+    if Config.DisableKeybinds then return end
     if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == getVoidTPKey() then
         local now = tick()
         if now - lastVoidTPPress >= 0.2 then
@@ -2021,6 +2023,15 @@ Tabs.Settings:AddKeybind("VoidTPKeybind", {
             Config.VoidTPKeybind = keyCode.Name
             SaveConfig()
         end
+    end
+})
+
+Tabs.Settings:AddToggle("DisableKeybindsToggle", {
+    Title = "Disable Keybinds",
+    Default = Config.DisableKeybinds or false,
+    Callback = function(Value)
+        Config.DisableKeybinds = Value
+        SaveConfig()
     end
 })
 
