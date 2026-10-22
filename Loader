@@ -1,4 +1,15 @@
-if getgenv().StarCrowLoaderRan then return end
+local StarterGui = game:GetService("StarterGui")
+
+if getgenv().StarCrowLoaderRan then
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "StarCrow Hub",
+            Text = "Script is already executed!",
+            Duration = 3
+        })
+    end)
+    return
+end
 getgenv().StarCrowLoaderRan = true
 
 local Players = game:GetService("Players")
