@@ -5677,7 +5677,7 @@ if not getgenv().StarCrowQueuedRan then
     repeat task.wait(0.5) until workspace:FindFirstChild("Terrain") and (#workspace:GetChildren() > 10)
     repeat task.wait(0.5) until game:GetService("Players").LocalPlayer and (game:GetService("Players").LocalPlayer.Character or game:GetService("Players").LocalPlayer.CharacterAdded:Wait())
     task.wait(2)
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/Star-Crow-Hub/Script/refs/heads/main/Loader"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Loader"))()
 end
 ]])
             end)
