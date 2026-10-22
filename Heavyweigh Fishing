@@ -91,7 +91,7 @@ local Config = {
     FilterFishTarget = {},
     AutoSellOnFull = false,
     BossHitDelay = 15,
-    SuperSpeedMiniGame = false
+    AutoExe = false
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -449,63 +449,6 @@ local function stopFly()
     end
 end
 
-local function IsAntiConfuseActive()
-    return Config.AutoSkill or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
-end
-
-local function ApplyAntiConfuse(char)
-    if not IsAntiConfuseActive() then return end
-    if char then
-        if char:GetAttribute("Confused") == true then
-            pcall(function() char:SetAttribute("Confused", false) end)
-        end
-        if char:GetAttribute("SkillLocked") == true then
-            pcall(function() char:SetAttribute("SkillLocked", false) end)
-        end
-    end
-    if SkillBtnFrame then
-        for _, btn in ipairs(SkillBtnFrame:GetChildren()) do
-            if btn:IsA("TextButton") then
-                local lock = btn:FindFirstChild("Lock")
-                if lock and lock.Visible then
-                    lock.Visible = false
-                end
-            end
-        end
-    end
-    if FishingGui then
-        local hpPlayer = FishingGui:FindFirstChild("HPPlayer")
-        local debuff = hpPlayer and hpPlayer:FindFirstChild("Debuff")
-        local confusedGui = debuff and debuff:FindFirstChild("Confused")
-        if confusedGui then
-            pcall(function() confusedGui:Destroy() end)
-        end
-    end
-end
-
-local antiConfuseConns = {}
-
-local function BindCharacterAntiConfuse(char)
-    for _, c in ipairs(antiConfuseConns) do
-        pcall(function() c:Disconnect() end)
-    end
-    table.clear(antiConfuseConns)
-    if not char then return end
-    table.insert(antiConfuseConns, char:GetAttributeChangedSignal("Confused"):Connect(function()
-        if IsAntiConfuseActive() and char:GetAttribute("Confused") == true then
-            ApplyAntiConfuse(char)
-        end
-    end))
-    table.insert(antiConfuseConns, char:GetAttributeChangedSignal("SkillLocked"):Connect(function()
-        if IsAntiConfuseActive() and char:GetAttribute("SkillLocked") == true then
-            ApplyAntiConfuse(char)
-        end
-    end))
-    if IsAntiConfuseActive() then
-        ApplyAntiConfuse(char)
-    end
-end
-
 local function StepAutoTPPos(char)
     if not Config.AutoTPPos then return end
     if Config.AutoBoss or Config.AutoSecretBoss then return end
@@ -531,7 +474,6 @@ local function StepAutoFarmIsland(char)
 end
 
 if cachedChar then
-    BindCharacterAntiConfuse(cachedChar)
     task.spawn(function()
         StepAutoTPPos(cachedChar)
         StepAutoFarmIsland(cachedChar)
@@ -544,7 +486,6 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     cachedHrp = newChar:WaitForChild("HumanoidRootPart", 5)
     cachedSkillsFolder = newChar:WaitForChild("Skills", 5)
     cachedStatsFolder = newChar:WaitForChild("Stats", 5)
-    BindCharacterAntiConfuse(newChar)
     task.wait(0.3)
     StepAutoTPPos(newChar)
     StepAutoFarmIsland(newChar)
@@ -623,12 +564,8 @@ local function IsGameAllowingSkill(char)
         return false
     end
 
-    if not IsAntiConfuseActive() then
-        if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") then
-            return false
-        end
-    else
-        ApplyAntiConfuse(char)
+    if char:GetAttribute("SkillLocked") or char:GetAttribute("Confused") then
+        return false
     end
 
     local stats = cachedStatsFolder or char:FindFirstChild("Stats")
@@ -724,11 +661,7 @@ local function IsSkillKeyReady(char, key)
         end
         local lock = btn:FindFirstChild("Lock")
         if lock and lock.Visible then
-            if IsAntiConfuseActive() then
-                lock.Visible = false
-            else
-                return false
-            end
+            return false
         end
     end
 
@@ -866,10 +799,8 @@ local function StepPhase2MiniGame()
     local hitDelay = (tonumber(Config.BossHitDelay) or 15) / 1000
     if hitDelay < 0.005 then hitDelay = 0.005 end
 
-    local isSuper = Config.SuperSpeedMiniGame == true
     local handledViaUpval = false
     local onClickFn = nil
-    local setupFn = (debug and debug.setupvalue) or setupvalue
 
     if getconnections and getupval and MobileFishingBtn then
         pcall(function()
@@ -889,32 +820,16 @@ local function StepPhase2MiniGame()
                     if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
                         if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
                             handledViaUpval = true
-                            if isSuper then
-                                local targetX = u15 + u2 * 0.5
-                                if setupFn and u1 > 0 then
-                                    local desiredOffset = (targetX - u23) / u1
-                                    local newU27 = now - 0.025 - desiredOffset
-                                    pcall(setupFn, fn, 3, newU27)
+                            if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
+                                local v91 = (now - 0.025 - u27) % u26 * u1
+                                if u25 < v91 then
+                                    v91 = u25 * 2 - v91
                                 end
-                                pcall(function()
-                                    bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
-                                end)
-                                if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
+                                local v92 = u23 + v91
+                                local v93 = u2 * 0.3
+                                if v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8) then
                                     lastPhase2HitTick = now
                                     fn(false)
-                                end
-                            else
-                                if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
-                                    local v91 = (now - 0.025 - u27) % u26 * u1
-                                    if u25 < v91 then
-                                        v91 = u25 * 2 - v91
-                                    end
-                                    local v92 = u23 + v91
-                                    local v93 = u2 * 0.3
-                                    if v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8) then
-                                        lastPhase2HitTick = now
-                                        fn(false)
-                                    end
                                 end
                             end
                         end
@@ -926,14 +841,6 @@ local function StepPhase2MiniGame()
     end
 
     if handledViaUpval then return end
-
-    if isSuper then
-        local targetX = hbLeft + hbW * 0.5
-        pcall(function()
-            bar.Position = UDim2.new(targetX, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
-        end)
-        barCenter = targetX
-    end
 
     if now - lastPhase2HitTick < hitDelay then return end
 
@@ -949,7 +856,7 @@ local function StepPhase2MiniGame()
         end
     end
 
-    if isSuper or (evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad)) then
+    if evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad) then
         lastPhase2HitTick = now
         local clicked = false
         if onClickFn then
@@ -1076,7 +983,7 @@ RunService.RenderStepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
+    if Config.AutoMiniGame then
         StepPhase2MiniGame()
     end
 end)
@@ -1085,7 +992,7 @@ RunService.Stepped:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
+    if Config.AutoMiniGame then
         StepPhase2MiniGame()
     end
 end)
@@ -1094,7 +1001,7 @@ RunService.Heartbeat:Connect(function()
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
-    if Config.AutoMiniGame or Config.SuperSpeedMiniGame then
+    if Config.AutoMiniGame then
         StepPhase2MiniGame()
     end
     if Config.AutoMiniGame then
@@ -1571,12 +1478,6 @@ do
                         end
                     elseif type(Config.FilterFishTarget) == "string" and Config.FilterFishTarget ~= "" then
                         local clean = string.lower(string.gsub(Config.FilterFishTarget, "^%s*(.-)%s*$", "%1"))
-                        if clean ~= "" then
-                            table.insert(targets, clean)
-                        end
-                    end
-                    if #targets == 0 and BossList and BossList[1] then
-                        local clean = string.lower(string.gsub(tostring(BossList[1]), "^%s*(.-)%s*$", "%1"))
                         if clean ~= "" then
                             table.insert(targets, clean)
                         end
@@ -3250,7 +3151,8 @@ local BossList = {
     "Chainbound Shark",
     "Adult Jiaolong Dragonfish",
     "Elder Chainbound Shark",
-    "Elder Jiaolong Dragonfish Trueform Jiaolongfish",
+    "Elder Jiaolong Dragonfish",
+    "Trueform Jiaolongfish",
     "Trueform Perch",
     "Ascended Perch",
     "Primordial Kunfish",
@@ -4136,9 +4038,6 @@ Tabs.Main:AddToggle("AutoFarmIslandToggle", {
         SaveConfig()
         if Value then
             StepAutoFarmIsland(LocalPlayer.Character)
-            if LocalPlayer.Character then
-                ApplyAntiConfuse(LocalPlayer.Character)
-            end
         end
     end
 })
@@ -4207,9 +4106,6 @@ Tabs.Main:AddToggle("AutoSkillToggle", {
     Default = Config.AutoSkill,
     Callback = function(Value)
         Config.AutoSkill = Value
-        if Value and LocalPlayer.Character then
-            ApplyAntiConfuse(LocalPlayer.Character)
-        end
         SaveConfig()
     end
 })
@@ -4368,6 +4264,88 @@ Tabs.Boss:AddToggle("FilterBossToggle", {
 
 local bossListItems = GetBossList()
 
+local function AttachDropdownSearch(dropdownObj)
+    task.spawn(function()
+        task.wait(0.2)
+        pcall(function()
+            local libGui = Fluent.GUI or (LocalPlayer.PlayerGui and LocalPlayer.PlayerGui:FindFirstChild("ScreenGui"))
+            if not libGui then return end
+            for _, desc in ipairs(libGui:GetDescendants()) do
+                if desc:IsA("ScrollingFrame") and desc.Parent and desc.Parent:IsA("Frame") and desc.Parent.Parent and desc.Parent.Parent:IsA("Frame") then
+                    local holder = desc.Parent
+                    local popup = holder.Parent
+                    local uiList = desc:FindFirstChildOfClass("UIListLayout")
+                    if uiList and not holder:FindFirstChild("DropdownSearchBox") then
+                        local hasMatch = false
+                        for _, opt in ipairs(desc:GetChildren()) do
+                            if opt:IsA("TextButton") and opt:FindFirstChild("ButtonLabel") then
+                                local bText = opt.ButtonLabel.Text
+                                if table.find(bossListItems, bText) then
+                                    hasMatch = true
+                                    break
+                                end
+                            end
+                        end
+                        if hasMatch then
+                            local searchBox = Instance.new("TextBox")
+                            searchBox.Name = "DropdownSearchBox"
+                            searchBox.Size = UDim2.new(1, -12, 0, 26)
+                            searchBox.Position = UDim2.new(0, 6, 0, 6)
+                            searchBox.BackgroundColor3 = Color3.fromRGB(60, 40, 95)
+                            searchBox.BackgroundTransparency = 0.7
+                            searchBox.Text = ""
+                            searchBox.TextColor3 = Color3.fromRGB(240, 235, 255)
+                            searchBox.PlaceholderColor3 = Color3.fromRGB(180, 165, 210)
+                            searchBox.PlaceholderText = "Search boss..."
+                            searchBox.Font = Enum.Font.Gotham
+                            searchBox.TextSize = 12
+                            searchBox.TextXAlignment = Enum.TextXAlignment.Left
+                            searchBox.ClearTextOnFocus = false
+                            searchBox.Parent = holder
+
+                            local boxCorner = Instance.new("UICorner")
+                            boxCorner.CornerRadius = UDim.new(0, 5)
+                            boxCorner.Parent = searchBox
+
+                            local boxStroke = Instance.new("UIStroke")
+                            boxStroke.Color = Color3.fromRGB(160, 110, 230)
+                            boxStroke.Transparency = 0.65
+                            boxStroke.Thickness = 1
+                            boxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                            boxStroke.Parent = searchBox
+
+                            local boxPad = Instance.new("UIPadding")
+                            boxPad.PaddingLeft = UDim.new(0, 8)
+                            boxPad.PaddingRight = UDim.new(0, 8)
+                            boxPad.Parent = searchBox
+
+                            desc.Position = UDim2.new(0, 5, 0, 36)
+                            desc.Size = UDim2.new(1, -5, 1, -42)
+
+                            searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+                                local q = string.lower(string.gsub(searchBox.Text, "^%s*(.-)%s*$", "%1"))
+                                local visibleCount = 0
+                                for _, opt in ipairs(desc:GetChildren()) do
+                                    if opt:IsA("TextButton") and opt:FindFirstChild("ButtonLabel") then
+                                        local optText = string.lower(opt.ButtonLabel.Text)
+                                        if q == "" or string.find(optText, q, 1, true) then
+                                            opt.Visible = true
+                                            visibleCount = visibleCount + 1
+                                        else
+                                            opt.Visible = false
+                                        end
+                                    end
+                                end
+                                desc.CanvasSize = UDim2.new(0, 0, 0, uiList.AbsoluteContentSize.Y)
+                            end)
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
 local defaultBossTargets = {}
 if type(Config.FilterFishTarget) == "table" then
     for k, v in pairs(Config.FilterFishTarget) do
@@ -4384,12 +4362,9 @@ if type(Config.FilterFishTarget) == "table" then
 elseif type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
     table.insert(defaultBossTargets, Config.FilterFishTarget)
 end
-if #defaultBossTargets == 0 and bossListItems[1] then
-    table.insert(defaultBossTargets, bossListItems[1])
-end
 Config.FilterFishTarget = defaultBossTargets
 
-Tabs.Boss:AddDropdown("FilterBossDropdown", {
+local FilterBossDropdownObj = Tabs.Boss:AddDropdown("FilterBossDropdown", {
     Title = "Select Boss",
     Values = bossListItems,
     Default = defaultBossTargets,
@@ -4407,6 +4382,8 @@ Tabs.Boss:AddDropdown("FilterBossDropdown", {
         SaveConfig()
     end
 })
+
+AttachDropdownSearch(FilterBossDropdownObj)
 
 Tabs.Boss:AddSection("Auto Favorite Boss")
 
@@ -4437,7 +4414,7 @@ if type(Config.AutoFavoriteBossTarget) == "table" then
     end
 end
 
-Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
+local FavBossDropdownObj = Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
     Title = "Select Boss Fish",
     Values = bossListItems,
     Default = defaultFavTargets,
@@ -4458,6 +4435,8 @@ Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
         end
     end
 })
+
+AttachDropdownSearch(FavBossDropdownObj)
 
 Tabs.Boss:AddSection("Auto Hop Sacred Beast")
 
@@ -4637,81 +4616,6 @@ do
             end
         end
     end)
-
-    local function TeleportToSacredBeast(targetName)
-        local lowerTarget = string.lower(string.gsub(tostring(targetName), "%s+", ""))
-        local foundPart = nil
-        for _, folderName in ipairs({"NPC", "Merchant", "NPCDialogue", "NPCPVP", "God", "BossSetUp"}) do
-            local wsFolder = workspace:FindFirstChild(folderName)
-            if wsFolder then
-                for _, desc in ipairs(wsFolder:GetDescendants()) do
-                    if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsA("Folder") then
-                        local dName = string.lower(string.gsub(tostring(desc.Name), "%s+", ""))
-                        local dAttr = string.lower(string.gsub(tostring(desc:GetAttribute("Name") or ""), "%s+", ""))
-                        if string.find(dName, lowerTarget, 1, true) or string.find(dAttr, lowerTarget, 1, true) then
-                            local p = GetModelPart(desc)
-                            if p and p:IsDescendantOf(workspace) then
-                                foundPart = p
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            if foundPart then break end
-        end
-        if not foundPart then
-            for _, desc in ipairs(workspace:GetDescendants()) do
-                if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsA("Folder") then
-                    local dName = string.lower(string.gsub(tostring(desc.Name), "%s+", ""))
-                    local dAttr = string.lower(string.gsub(tostring(desc:GetAttribute("Name") or ""), "%s+", ""))
-                    if string.find(dName, lowerTarget, 1, true) or string.find(dAttr, lowerTarget, 1, true) then
-                        local p = GetModelPart(desc)
-                        if p and p:IsDescendantOf(workspace) then
-                            foundPart = p
-                            break
-                        end
-                    end
-                end
-            end
-        end
-        if foundPart then
-            local char = LocalPlayer.Character or cachedChar
-            local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-            if hrp then
-                hrp.CFrame = foundPart.CFrame * CFrame.new(0, 3, -4)
-            end
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Teleport",
-                    Content = "Teleported to " .. targetName,
-                    Duration = 3
-                })
-            end)
-        else
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Teleport",
-                    Content = targetName .. " has not spawned on the map yet!",
-                    Duration = 4
-                })
-            end)
-        end
-    end
-
-    Tabs.Boss:AddButton({
-        Title = "Teleport To Black Tortoise Bloodline",
-        Callback = function()
-            TeleportToSacredBeast("Black Tortoise Bloodline")
-        end
-    })
-
-    Tabs.Boss:AddButton({
-        Title = "Teleport To Vermilion Birdblood",
-        Callback = function()
-            TeleportToSacredBeast("Vermilion Birdblood")
-        end
-    })
 end
 
 Tabs.Boss:AddSection("Boss Fight")
@@ -4762,17 +4666,12 @@ Tabs.Boss:AddToggle("AutoSecretBossToggle", {
     end
 })
 
-Tabs.Boss:AddSection("Mini Game")
-
 Tabs.Boss:AddToggle("AutoMiniGameToggle", {
     Title = "Auto Mini Game",
     Default = Config.AutoMiniGame,
     Callback = function(Value)
         Config.AutoMiniGame = Value
         if Value then
-            if LocalPlayer.Character then
-                ApplyAntiConfuse(LocalPlayer.Character)
-            end
             pcall(function()
                 Fluent:Notify({
                     Title = "Auto Mini Game",
@@ -4785,23 +4684,6 @@ Tabs.Boss:AddToggle("AutoMiniGameToggle", {
     end
 })
 
-Tabs.Boss:AddToggle("SuperSpeedMiniGameToggle", {
-    Title = "Super Speed Mini Game",
-    Default = Config.SuperSpeedMiniGame or false,
-    Callback = function(Value)
-        Config.SuperSpeedMiniGame = Value
-        if Value then
-            pcall(function()
-                Fluent:Notify({
-                    Title = "Super Speed Mini Game",
-                    Content = "Support Enzo And Long DiaoHai",
-                    Duration = 3
-                })
-            end)
-        end
-        SaveConfig()
-    end
-})
 
 Tabs.Quest:AddSection("Auto Claim Daily Quest")
 
@@ -5859,6 +5741,15 @@ Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     end
 })
 
+Tabs.Settings:AddToggle("AutoExeToggle", {
+    Title = "Auto Execute",
+    Default = Config.AutoExe or false,
+    Callback = function(Value)
+        Config.AutoExe = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Settings:AddSection("Position")
 
 Tabs.Settings:AddButton({
@@ -5981,10 +5872,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 do
+    local hasQueuedTeleport = false
     local function QueueReExecute()
-        if not (Config.AutoHopSacredBeast or Config.AutoHopWeather) then return end
+        if hasQueuedTeleport then return end
+        if not (Config.AutoExe or Config.AutoHopSacredBeast or Config.AutoHopWeather) then return end
         local queueFn = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
         if queueFn then
+            hasQueuedTeleport = true
             pcall(function()
                 queueFn([[
 if not getgenv().StarCrowQueuedRan then
@@ -5999,6 +5893,12 @@ end
             end)
         end
     end
+
+    pcall(function()
+        LocalPlayer.OnTeleport:Connect(function()
+            QueueReExecute()
+        end)
+    end)
 
     local function GetWeatherList()
         local list = {}
