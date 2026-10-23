@@ -82,6 +82,8 @@ local Config = {
     AutoFilterZengQuest = false,
     AutoClaimDailyQuest = false,
     AutoEquipBestBait = false,
+    AutoEquipBait = false,
+    SelectedEquipBait = "",
     AutoGiveFish = false,
     AutoFavoriteBoss = false,
     AutoFavoriteBossTarget = {},
@@ -2756,7 +2758,7 @@ local StepAutoGiveFish
     end
 end)()
 
-local StepAutoEquipBestBait
+local StepAutoEquipBestBait, StepAutoEquipBait
 ;(function()
     local function CleanBaitName(str)
         if not str or str == "" then return "" end
@@ -2874,6 +2876,40 @@ local StepAutoEquipBestBait
         end
 
         return bestName, bestRawName, bestLuck, bestCount, bestSource, bestInst
+    end
+
+    local function GetOwnedBaitByName(targetName)
+        local pData = PlayerData
+        if not pData or not targetName or targetName == "" then return nil end
+        local infoBait = Info and Info:FindFirstChild("Bait")
+        local cleanTarget = string.lower(CleanBaitName(targetName))
+
+        local baitFolder = pData:FindFirstChild("Bait")
+        if baitFolder then
+            for _, child in ipairs(baitFolder:GetChildren()) do
+                local clean = CleanBaitName(child.Name)
+                if string.lower(clean) == cleanTarget then
+                    local cnt = GetSafeItemCount(child)
+                    if cnt > 0 then
+                        return clean, child.Name, GetBaitLuck(clean), cnt, "Bait", child
+                    end
+                end
+            end
+        end
+
+        local invFolder = pData:FindFirstChild("Inventory")
+        if invFolder then
+            for _, child in ipairs(invFolder:GetChildren()) do
+                local clean = CleanBaitName(child.Name)
+                if string.lower(clean) == cleanTarget and (not infoBait or infoBait:FindFirstChild(clean)) then
+                    local cnt = GetSafeItemCount(child)
+                    if cnt <= 0 then cnt = 1 end
+                    return clean, child.Name, GetBaitLuck(clean), cnt, "Inventory", child
+                end
+            end
+        end
+
+        return nil
     end
 
     local BaitImageMap = {}
@@ -3085,8 +3121,79 @@ local StepAutoEquipBestBait
         end)
     end
 
+    local lastEquipSelectedTime = 0
+
+    function StepAutoEquipBait(force)
+        if not Config.AutoEquipBait and not force then return end
+        local now = os.clock()
+        if not force and now - lastEquipSelectedTime < 2 then return end
+
+        local targetBait = Config.SelectedEquipBait
+        if not targetBait or targetBait == "" then return end
+
+        local curEquipped = GetEquippedBaitName()
+        local curQty = GetSlot2Quantity()
+
+        if not force and curEquipped and string.lower(curEquipped) == string.lower(targetBait) and curQty > 0 then
+            return
+        end
+
+        local ownedBait, ownedRaw, ownedLuck, ownedCount = GetOwnedBaitByName(targetBait)
+        if not ownedBait or ownedCount <= 0 then
+            if force then
+                pcall(function()
+                    Fluent:Notify({
+                        Title = "Auto Equip Bait",
+                        Content = "No " .. tostring(targetBait) .. " found in inventory",
+                        Duration = 3
+                    })
+                end)
+            end
+            return
+        end
+
+        lastEquipSelectedTime = now
+        local ev = EquipBaitEvent or (Events and Events:FindFirstChild("EquipBait")) or (Events and Events:WaitForChild("EquipBait", 9e9))
+        if ev then
+            pcall(function()
+                if ev:IsA("RemoteFunction") then
+                    ev:InvokeServer(ownedBait)
+                elseif ev:IsA("RemoteEvent") then
+                    ev:FireServer(ownedBait)
+                else
+                    ev:InvokeServer(ownedBait)
+                end
+            end)
+
+            task.delay(0.3, function()
+                local checkEq = GetEquippedBaitName()
+                local checkQ = GetSlot2Quantity()
+                if checkQ <= 0 and (not checkEq or string.lower(checkEq) ~= string.lower(ownedBait)) then
+                    pcall(function()
+                        if ev:IsA("RemoteFunction") then
+                            ev:InvokeServer(ownedBait)
+                        elseif ev:IsA("RemoteEvent") then
+                            ev:FireServer(ownedBait)
+                        else
+                            ev:InvokeServer(ownedBait)
+                        end
+                    end)
+                end
+            end)
+        end
+
+        pcall(function()
+            Fluent:Notify({
+                Title = "Auto Equip Bait",
+                Content = "Equipped " .. ownedBait .. " - Luck " .. ownedLuck .. "%",
+                Duration = 3
+            })
+        end)
+    end
+
     LocalPlayer.CharacterAdded:Connect(function()
         lastEquipTime = 0
+        lastEquipSelectedTime = 0
     end)
 end)()
 
@@ -3201,6 +3308,8 @@ task.spawn(function()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
+        elseif Config.AutoEquipBait then
+            StepAutoEquipBait()
         end
         if Config.AutoGiveFish then
             StepAutoGiveFish()
@@ -3213,6 +3322,32 @@ task.spawn(function()
 end)
 
 ;(function()
+local function GetAllBaits()
+    local list = {}
+    local seen = {}
+    local baitFolder = Info:FindFirstChild("Bait")
+    if baitFolder then
+        for _, child in ipairs(baitFolder:GetChildren()) do
+            seen[child.Name] = true
+            table.insert(list, child.Name)
+        end
+    end
+    local itemFolder = Info:FindFirstChild("Item")
+    if itemFolder then
+        for _, child in ipairs(itemFolder:GetChildren()) do
+            if not seen[child.Name] then
+                local data = GetModuleData(child)
+                if data and data.Type == "Bait" then
+                    seen[child.Name] = true
+                    table.insert(list, child.Name)
+                end
+            end
+        end
+    end
+    table.sort(list)
+    return list
+end
+
 local function GetBuyableBaits()
     local list = {}
     local seen = {}
@@ -4212,22 +4347,6 @@ Tabs.Main:AddToggle("AutoReelToggle", {
     end
 })
 
-Tabs.Main:AddToggle("AutoEquipBestBaitToggle", {
-    Title = "Auto Equip Best Bait",
-    Default = Config.AutoEquipBestBait,
-    Callback = function(Value)
-        Config.AutoEquipBestBait = Value
-        if Value then
-            task.spawn(function()
-                StepAutoEquipBestBait(true)
-            end)
-        end
-        SaveConfig()
-    end
-})
-
-Tabs.Main:AddSection("Skill")
-
 Tabs.Main:AddToggle("AutoSkillToggle", {
     Title = "Auto Skill",
     Default = Config.AutoSkill,
@@ -4282,6 +4401,76 @@ end)
 
 if SkillDropdown.Display then
     SkillDropdown:Display()
+end
+
+Tabs.Main:AddSection("Bait")
+
+do
+    local AutoEquipBestBaitToggleObj, AutoEquipBaitToggleObj
+    local allBaitsList = GetAllBaits()
+    if (Config.SelectedEquipBait == "" or not table.find(allBaitsList, Config.SelectedEquipBait)) and #allBaitsList > 0 then
+        Config.SelectedEquipBait = allBaitsList[1]
+    end
+
+    AutoEquipBestBaitToggleObj = Tabs.Main:AddToggle("AutoEquipBestBaitToggle", {
+        Title = "Auto Equip Best Bait",
+        Default = Config.AutoEquipBestBait,
+        Callback = function(Value)
+            Config.AutoEquipBestBait = Value
+            if Value then
+                if Config.AutoEquipBait then
+                    Config.AutoEquipBait = false
+                    if AutoEquipBaitToggleObj then
+                        pcall(function()
+                            AutoEquipBaitToggleObj:SetValue(false)
+                        end)
+                    end
+                end
+                task.spawn(function()
+                    StepAutoEquipBestBait(true)
+                end)
+            end
+            SaveConfig()
+        end
+    })
+
+    AutoEquipBaitToggleObj = Tabs.Main:AddToggle("AutoEquipBaitToggle", {
+        Title = "Auto Equip Bait",
+        Default = Config.AutoEquipBait,
+        Callback = function(Value)
+            Config.AutoEquipBait = Value
+            if Value then
+                if Config.AutoEquipBestBait then
+                    Config.AutoEquipBestBait = false
+                    if AutoEquipBestBaitToggleObj then
+                        pcall(function()
+                            AutoEquipBestBaitToggleObj:SetValue(false)
+                        end)
+                    end
+                end
+                task.spawn(function()
+                    StepAutoEquipBait(true)
+                end)
+            end
+            SaveConfig()
+        end
+    })
+
+    Tabs.Main:AddDropdown("SelectEquipBaitDropdown", {
+        Title = "Select Bait",
+        Values = allBaitsList,
+        Default = Config.SelectedEquipBait ~= "" and Config.SelectedEquipBait or allBaitsList[1],
+        Multi = false,
+        Callback = function(Value)
+            Config.SelectedEquipBait = Value or ""
+            SaveConfig()
+            if Config.AutoEquipBait then
+                task.spawn(function()
+                    StepAutoEquipBait(true)
+                end)
+            end
+        end
+    })
 end
 
 local function GetFishNameFromItem(itemName)
