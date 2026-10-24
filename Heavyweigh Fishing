@@ -39,8 +39,6 @@ local Config = {
 	AutoSecretBoss = false,
 	AutoSkill = false,
 	SkillOrder = { "Z", "X", "C", "V" },
-	SpamAutoSkill = false,
-	SpamSkillKeys = { "Z", "X", "C", "V" },
 	AutoSell = false,
 	AutoSellMethod = "Delay",
 	SellDelay = 1,
@@ -138,21 +136,6 @@ else
 		end
 	end
 	Config.SkillOrder = filtered
-end
-if type(Config.SpamSkillKeys) ~= "table" or #Config.SpamSkillKeys == 0 then
-	Config.SpamSkillKeys = { "Z", "X", "C", "V" }
-else
-	local validKeys = { Z = true, X = true, C = true, V = true }
-	local filtered = {}
-	for _, k in ipairs(Config.SpamSkillKeys) do
-		if validKeys[k] and not table.find(filtered, k) then
-			table.insert(filtered, k)
-		end
-	end
-	if #filtered == 0 then
-		filtered = { "Z", "X", "C", "V" }
-	end
-	Config.SpamSkillKeys = filtered
 end
 if Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full" then
 	Config.AutoSellMethod = "Sell When Full Inventory"
@@ -1480,28 +1463,6 @@ task.spawn(function()
 					end
 				end
 			end
-		end
-	end
-end)
-
-task.spawn(function()
-	local spamSkillIdx = 1
-	while task.wait(0.25) do
-		if Config.SpamAutoSkill then
-			local order = Config.SpamSkillKeys
-			local count = type(order) == "table" and #order or 0
-			if count > 0 then
-				if spamSkillIdx < 1 or spamSkillIdx > count then
-					spamSkillIdx = 1
-				end
-				local key = order[spamSkillIdx]
-				spamSkillIdx = (spamSkillIdx % count) + 1
-				pcall(function()
-					UseSkill:FireServer(key)
-				end)
-			end
-		else
-			spamSkillIdx = 1
 		end
 	end
 end)
@@ -4403,11 +4364,15 @@ end);
 	})
 
 	local allSkillKeys = { "Z", "X", "C", "V" }
+	local defaultSkillSelection = {}
+	for _, k in ipairs(Config.SkillOrder) do
+		defaultSkillSelection[k] = true
+	end
 
 	local SkillDropdown = Tabs.Main:AddDropdown("SelectSkillDropdown", {
 		Title = "Select Skill",
 		Values = allSkillKeys,
-		Default = Config.SkillOrder,
+		Default = defaultSkillSelection,
 		Multi = true,
 	})
 
@@ -6039,73 +6004,6 @@ end);
 			SaveConfig()
 		end,
 	})
-
-	Tabs.Settings:AddSection("Skill")
-
-	Tabs.Settings:AddToggle("SpamAutoSkillToggle", {
-		Title = "Auto Skill Lock",
-		Default = Config.SpamAutoSkill or false,
-		Callback = function(Value)
-			Config.SpamAutoSkill = Value
-			SaveConfig()
-			if Value then
-				pcall(function()
-					Fluent:Notify({
-						Title = "Auto Skill Lock",
-						Content = "This feature is only for when your skills are locked!",
-						Duration = 4,
-					})
-				end)
-			end
-		end,
-	})
-
-	do
-		local spamSkillKeys = { "Z", "X", "C", "V" }
-
-		local SpamSkillDropdown = Tabs.Settings:AddDropdown("SelectSpamSkillDropdown", {
-			Title = "Select Skill",
-			Values = spamSkillKeys,
-			Default = Config.SpamSkillKeys,
-			Multi = true,
-		})
-
-		local origSpamSkillDisplay = SpamSkillDropdown.Display
-		if origSpamSkillDisplay then
-			SpamSkillDropdown.Display = function(self, ...)
-				local savedValues = self.Values
-				self.Values = Config.SpamSkillKeys
-				local res = origSpamSkillDisplay(self, ...)
-				self.Values = savedValues
-				return res
-			end
-		end
-
-		SpamSkillDropdown:OnChanged(function(Value)
-			if type(Value) ~= "table" then
-				return
-			end
-			for i = #Config.SpamSkillKeys, 1, -1 do
-				local k = Config.SpamSkillKeys[i]
-				if not Value[k] then
-					table.remove(Config.SpamSkillKeys, i)
-				end
-			end
-			for _, k in ipairs(spamSkillKeys) do
-				if Value[k] and not table.find(Config.SpamSkillKeys, k) then
-					table.insert(Config.SpamSkillKeys, k)
-				end
-			end
-			if SpamSkillDropdown.Display then
-				SpamSkillDropdown:Display()
-			end
-			SaveConfig()
-		end)
-
-		if SpamSkillDropdown.Display then
-			SpamSkillDropdown:Display()
-		end
-	end
 
 	Tabs.Settings:AddSection("Position")
 
