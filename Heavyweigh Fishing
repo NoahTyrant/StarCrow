@@ -6195,10 +6195,54 @@ end
 			return list
 		end
 
+		local VISITED_FILE = SAVE_FOLDER .. "/VisitedServers.json"
+		local VISITED_EXPIRE_SEC = 300
+
+		local function LoadVisitedServers()
+			local visited = {}
+			local now = os.time()
+			pcall(function()
+				if isfile(VISITED_FILE) then
+					local decoded = HttpService:JSONDecode(readfile(VISITED_FILE))
+					if type(decoded) == "table" then
+						for jobId, ts in pairs(decoded) do
+							if type(jobId) == "string" and tonumber(ts) and (now - tonumber(ts)) < VISITED_EXPIRE_SEC then
+								visited[jobId] = tonumber(ts)
+							end
+						end
+					end
+				end
+			end)
+			if game.JobId and game.JobId ~= "" then
+				visited[tostring(game.JobId)] = now
+			end
+			return visited
+		end
+
+		local function SaveVisitedServers(visited)
+			pcall(function()
+				if not isfolder(SAVE_FOLDER) then
+					makefolder(SAVE_FOLDER)
+				end
+				writefile(VISITED_FILE, HttpService:JSONEncode(visited))
+			end)
+		end
+
+		do
+			local initVisited = LoadVisitedServers()
+			SaveVisitedServers(initVisited)
+		end
+
+		local isHoppingServer = false
+
 		function DoServerHop(mode)
+			if isHoppingServer then
+				return
+			end
+			isHoppingServer = true
 			task.spawn(function()
 				local placeId = game.PlaceId
-				local curJobId = game.JobId
+				local curJobId = tostring(game.JobId or "")
 				local requestFn = (syn and syn.request)
 					or (http and http.request)
 					or http_request
@@ -6207,6 +6251,9 @@ end
 				local targetServer = nil
 
 				local isLow = (mode == "low")
+				local visited = LoadVisitedServers()
+				SaveVisitedServers(visited)
+
 				pcall(function()
 					Fluent:Notify({
 						Title = "Server Hop",
@@ -6217,8 +6264,11 @@ end
 
 				local cursor = ""
 				local attempts = 0
+				local maxAttempts = isLow and 10 or 5
 				local sortOrder = isLow and "Asc" or "Desc"
-				while attempts < 5 and not targetServer do
+				local allValidServers = {}
+
+				while attempts < maxAttempts and not targetServer do
 					attempts = attempts + 1
 					local url = "https://games.roblox.com/v1/games/"
 						.. tostring(placeId)
@@ -6231,8 +6281,8 @@ end
 
 					local raw = nil
 					if requestFn then
-						local res = requestFn({ Url = url, Method = "GET" })
-						if res and res.Body then
+						local ok, res = pcall(requestFn, { Url = url, Method = "GET" })
+						if ok and res and res.Body then
 							raw = res.Body
 						end
 					else
@@ -6247,28 +6297,32 @@ end
 						pcall(function()
 							data = HttpService:JSONDecode(raw)
 						end)
-						if data and data.data then
-							local servers = {}
+						if data and type(data.data) == "table" then
+							local unvisitedServers = {}
 							for _, s in ipairs(data.data) do
-								if type(s) == "table" and s.id and s.id ~= curJobId then
+								if type(s) == "table" and s.id and tostring(s.id) ~= curJobId then
 									local playing = tonumber(s.playing) or 0
 									local maxP = tonumber(s.maxPlayers) or 1
 									if playing < maxP and playing > 0 then
-										table.insert(servers, s)
+										table.insert(allValidServers, s)
+										if not visited[tostring(s.id)] then
+											table.insert(unvisitedServers, s)
+										end
 									end
 								end
 							end
 							if isLow then
-								table.sort(servers, function(a, b)
-									return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
-								end)
-								if #servers > 0 then
-									targetServer = servers[1]
+								if #unvisitedServers > 0 then
+									table.sort(unvisitedServers, function(a, b)
+										return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
+									end)
+									targetServer = unvisitedServers[1]
 									break
 								end
 							else
-								if #servers > 0 then
-									targetServer = servers[math.random(1, #servers)]
+								local pool = #unvisitedServers > 0 and unvisitedServers or allValidServers
+								if #pool > 0 then
+									targetServer = pool[math.random(1, #pool)]
 									break
 								end
 							end
@@ -6283,10 +6337,24 @@ end
 					else
 						break
 					end
-					task.wait(0.5)
+					task.wait(0.25)
+				end
+
+				if isLow and not targetServer and #allValidServers > 0 then
+					visited = {}
+					if curJobId ~= "" then
+						visited[curJobId] = os.time()
+					end
+					SaveVisitedServers(visited)
+					table.sort(allValidServers, function(a, b)
+						return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
+					end)
+					targetServer = allValidServers[1]
 				end
 
 				if targetServer and targetServer.id then
+					visited[tostring(targetServer.id)] = os.time()
+					SaveVisitedServers(visited)
 					QueueReExecute()
 					pcall(function()
 						Fluent:Notify({
@@ -6297,8 +6365,15 @@ end
 							Duration = 4,
 						})
 					end)
-					task.wait(0.5)
-					TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
+					task.wait(0.3)
+					pcall(function()
+						TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
+					end)
+					task.wait(5)
+					isHoppingServer = false
+					if Config.AutoHopSacredBeast or Config.AutoHopWeather then
+						DoServerHop(mode)
+					end
 				else
 					QueueReExecute()
 					pcall(function()
@@ -6308,8 +6383,12 @@ end
 							Duration = 4,
 						})
 					end)
-					task.wait(0.5)
-					TeleportService:Teleport(placeId, LocalPlayer)
+					task.wait(0.3)
+					pcall(function()
+						TeleportService:Teleport(placeId, LocalPlayer)
+					end)
+					task.wait(5)
+					isHoppingServer = false
 				end
 			end)
 		end
@@ -6573,7 +6652,7 @@ end
 							pcall(function()
 								local msg = (chuText and chuText ~= "") and chuText or "No dialogue"
 								if not appeared then
-									msg = msg .. " (Hopping in " .. tostring(delaySec) .. "s...)"
+									msg = msg .. " | Hopping in " .. tostring(delaySec) .. "s..."
 								end
 								Fluent:Notify({
 									Title = "Sacred Beast Hop",
@@ -6592,7 +6671,7 @@ end
 							else
 								task.wait(delaySec)
 								if Config.AutoHopSacredBeast and DoServerHop then
-									DoServerHop("normal")
+									DoServerHop("low")
 								end
 							end
 						end)
@@ -6640,7 +6719,7 @@ end
 				pcall(function()
 					local msg = (chuText and chuText ~= "") and chuText or "No dialogue"
 					if not appeared then
-						msg = msg .. " (Hopping in " .. tostring(delaySec) .. "s...)"
+						msg = msg .. " | Hopping in " .. tostring(delaySec) .. "s..."
 					end
 					Fluent:Notify({
 						Title = "Sacred Beast Hop",
@@ -6659,7 +6738,7 @@ end
 				else
 					task.wait(delaySec)
 					if Config.AutoHopSacredBeast and DoServerHop then
-						DoServerHop("normal")
+						DoServerHop("low")
 					end
 				end
 			end)
@@ -6721,7 +6800,7 @@ end
 						end)
 						task.wait(delaySec)
 						if Config.AutoHopWeather and DoServerHop then
-							DoServerHop("normal")
+							DoServerHop("low")
 						end
 					end)
 				end
@@ -6797,7 +6876,7 @@ end
 				end)
 				task.wait(delaySec)
 				if Config.AutoHopWeather then
-					DoServerHop("normal")
+					DoServerHop("low")
 				end
 			end
 		end)
