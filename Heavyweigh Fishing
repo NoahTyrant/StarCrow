@@ -27,6 +27,7 @@ local CraftRodEvent = Events:WaitForChild("CraftRod")
 local RedeemCodeEvent = Events:WaitForChild("RedeemCode")
 local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
 local MoveItemsEvent = Events:WaitForChild("MoveItems", 9e9)
+local UpgradeCharacterEvent = Events:WaitForChild("UpgradeCharacter", 9e9)
 
 local Config = {
 	AutoCast = false,
@@ -97,6 +98,9 @@ local Config = {
 	AutoExe = false,
 	HopBossDelay = 5,
 	HopWeatherDelay = 5,
+	AutoUpgradeCharacter = false,
+	SelectedUpgradeType = "Level + Cash",
+	UpgradeCharacterDelay = 5,
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -3204,6 +3208,49 @@ local StepAutoClaimDailyQuest, StepAutoClaimDailyReward
 	end
 end)()
 
+local function GetUpgradeArgs(mode)
+	if mode == "Cash + Ticket" then
+		return { { "Cash", "Ticket" } }
+	elseif mode == "Ticket + Level" then
+		return { { "Ticket", "Level" } }
+	else
+		return { { "Cash", "Level" } }
+	end
+end
+
+local function DoUpgradeCharacter(mode)
+	local args = GetUpgradeArgs(mode or Config.SelectedUpgradeType)
+	local ev = UpgradeCharacterEvent or (Events and Events:FindFirstChild("UpgradeCharacter"))
+	if not ev then
+		return
+	end
+	task.spawn(function()
+		pcall(function()
+			if ev:IsA("RemoteFunction") then
+				ev:InvokeServer(unpack(args))
+			elseif ev:IsA("RemoteEvent") then
+				ev:FireServer(unpack(args))
+			else
+				ev:InvokeServer(unpack(args))
+			end
+		end)
+	end)
+end
+
+local lastUpgradeAttempt = 0
+local function StepAutoUpgradeCharacter()
+	if not Config.AutoUpgradeCharacter then
+		return
+	end
+	local now = os.clock()
+	local delaySec = (tonumber(Config.UpgradeCharacterDelay) or 5) * 60
+	if lastUpgradeAttempt > 0 and (now - lastUpgradeAttempt) < delaySec then
+		return
+	end
+	lastUpgradeAttempt = now
+	DoUpgradeCharacter(Config.SelectedUpgradeType)
+end
+
 task.spawn(function()
 	while task.wait(1) do
 		if Config.AutoTicketQuest then
@@ -3223,6 +3270,9 @@ task.spawn(function()
 		if Config.AutoClaimDailyQuest then
 			StepAutoClaimDailyQuest()
 			StepAutoClaimDailyReward()
+		end
+		if Config.AutoUpgradeCharacter then
+			StepAutoUpgradeCharacter()
 		end
 	end
 end);
@@ -5338,6 +5388,55 @@ end);
 			end,
 		})
 	end)()
+
+	Tabs.Player:AddSection("Upgrade Character")
+
+	local upgradeOptions = { "Level + Cash", "Cash + Ticket", "Ticket + Level" }
+	if not table.find(upgradeOptions, Config.SelectedUpgradeType) then
+		Config.SelectedUpgradeType = "Level + Cash"
+	end
+
+	Tabs.Player:AddDropdown("SelectUpgradeTypeDropdown", {
+		Title = "Upgrade Type",
+		Values = upgradeOptions,
+		Default = Config.SelectedUpgradeType,
+		Multi = false,
+		Callback = function(Value)
+			Config.SelectedUpgradeType = Value or "Level + Cash"
+			SaveConfig()
+		end,
+	})
+
+	Tabs.Player:AddSlider("UpgradeCharacterDelaySlider", {
+		Title = "Delay Min",
+		Default = Config.UpgradeCharacterDelay or 5,
+		Min = 1,
+		Max = 10,
+		Rounding = 0,
+		Callback = function(Value)
+			Config.UpgradeCharacterDelay = Value
+			SaveConfig()
+		end,
+	})
+
+	Tabs.Player:AddToggle("AutoUpgradeCharacterToggle", {
+		Title = "Auto Upgrade Character",
+		Default = Config.AutoUpgradeCharacter,
+		Callback = function(Value)
+			Config.AutoUpgradeCharacter = Value
+			if not Value then
+				lastUpgradeAttempt = 0
+			end
+			SaveConfig()
+		end,
+	})
+
+	Tabs.Player:AddButton({
+		Title = "Upgrade Character",
+		Callback = function()
+			DoUpgradeCharacter(Config.SelectedUpgradeType)
+		end,
+	})
 
 	Tabs.Teleport:AddSection("Island")
 
