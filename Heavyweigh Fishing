@@ -6717,14 +6717,25 @@ end
 					or request
 				local targetServer = nil
 
-				local isLow = (mode == "low")
+				local isLow
+				if mode == "random" then
+					isLow = (math.random(1, 2) == 1)
+				else
+					isLow = (mode == "low")
+				end
 				local visited = LoadVisitedServers()
 				SaveVisitedServers(visited)
 
 				pcall(function()
+					local desc = "Searching for a server..."
+					if mode == "low" or (mode == "random" and isLow) then
+						desc = "Searching for low player server..."
+					elseif mode == "normal" or (mode == "random" and not isLow) then
+						desc = "Searching for crowded server..."
+					end
 					Fluent:Notify({
 						Title = "Server Hop",
-						Content = isLow and "Searching for low player server..." or "Searching for a server...",
+						Content = desc,
 						Duration = 4,
 					})
 				end)
@@ -6787,9 +6798,12 @@ end
 									break
 								end
 							else
-								local pool = #unvisitedServers > 0 and unvisitedServers or allValidServers
-								if #pool > 0 then
-									targetServer = pool[math.random(1, #pool)]
+								if #unvisitedServers > 0 then
+									table.sort(unvisitedServers, function(a, b)
+										return (tonumber(a.playing) or 0) > (tonumber(b.playing) or 0)
+									end)
+									local topCount = math.min(#unvisitedServers, 5)
+									targetServer = unvisitedServers[math.random(1, topCount)]
 									break
 								end
 							end
@@ -6807,16 +6821,24 @@ end
 					task.wait(0.25)
 				end
 
-				if isLow and not targetServer and #allValidServers > 0 then
+				if not targetServer and #allValidServers > 0 then
 					visited = {}
 					if curJobId ~= "" then
 						visited[curJobId] = os.time()
 					end
 					SaveVisitedServers(visited)
-					table.sort(allValidServers, function(a, b)
-						return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
-					end)
-					targetServer = allValidServers[1]
+					if isLow then
+						table.sort(allValidServers, function(a, b)
+							return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
+						end)
+						targetServer = allValidServers[1]
+					else
+						table.sort(allValidServers, function(a, b)
+							return (tonumber(a.playing) or 0) > (tonumber(b.playing) or 0)
+						end)
+						local topCount = math.min(#allValidServers, 5)
+						targetServer = allValidServers[math.random(1, topCount)]
+					end
 				end
 
 				if targetServer and targetServer.id then
@@ -7081,7 +7103,7 @@ end
 							else
 								task.wait(delaySec)
 								if Config.AutoHopSacredBeast and DoServerHop then
-									DoServerHop("low")
+									DoServerHop("random")
 								end
 							end
 						end)
@@ -7176,7 +7198,7 @@ end
 				else
 					task.wait(delaySec)
 					if Config.AutoHopSacredBeast and DoServerHop then
-						DoServerHop("low")
+						DoServerHop("random")
 					end
 				end
 			end)
@@ -7241,7 +7263,7 @@ end
 						end)
 						task.wait(delaySec)
 						if Config.AutoHopWeather and DoServerHop then
-							DoServerHop("low")
+							DoServerHop("random")
 						end
 					end)
 				end
@@ -7332,7 +7354,7 @@ end
 				end)
 				task.wait(delaySec)
 				if Config.AutoHopWeather then
-					DoServerHop("low")
+					DoServerHop("random")
 				end
 			end
 		end)
