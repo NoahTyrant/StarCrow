@@ -101,6 +101,8 @@ local Config = {
 	AutoUpgradeCharacter = false,
 	SelectedUpgradeType = "Level + Cash",
 	UpgradeCharacterDelay = 5,
+	BossWebhookUrl = "",
+	WeatherWebhookUrl = "",
 }
 
 local SAVE_FOLDER = "StarCrowHub"
@@ -122,6 +124,14 @@ local function LoadConfig()
 			for k, v in pairs(decoded) do
 				if Config[k] ~= nil then
 					Config[k] = v
+				end
+			end
+			if type(decoded.WebhookUrl) == "string" and decoded.WebhookUrl ~= "" then
+				if Config.BossWebhookUrl == "" then
+					Config.BossWebhookUrl = decoded.WebhookUrl
+				end
+				if Config.WeatherWebhookUrl == "" then
+					Config.WeatherWebhookUrl = decoded.WebhookUrl
 				end
 			end
 		end
@@ -234,6 +244,364 @@ local function GetIslandFarmCFrame(islandKey)
 	end
 	return nil
 end
+
+local function GetWeatherIcon(weatherName)
+	local lower = string.lower(tostring(weatherName or ""))
+	if string.find(lower, "thunder") or string.find(lower, "storm") or string.find(lower, "lightning") then
+		return "⛈️"
+	elseif string.find(lower, "rain") then
+		return "🌧️"
+	elseif string.find(lower, "snow") or string.find(lower, "frost") or string.find(lower, "blizzard") then
+		return "❄️"
+	elseif string.find(lower, "fog") or string.find(lower, "mist") then
+		return "🌫️"
+	elseif string.find(lower, "wind") or string.find(lower, "tornado") or string.find(lower, "sand") then
+		return "🌪️"
+	elseif string.find(lower, "sun") or string.find(lower, "clear") then
+		return "☀️"
+	end
+	return "🌤️"
+end
+
+local IsCheckingSacredBeast = false
+
+local function SendDiscordWebhook(rawUrl, title, description, customColor, extraFields)
+	local url = tostring(rawUrl or ""):gsub("%s+", "")
+	if url == "" then
+		return false
+	end
+	if not (string.find(url, "discord.com/api/webhooks") or string.find(url, "discordapp.com/api/webhooks") or string.find(url, "webhook")) then
+		return false
+	end
+	local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+	if not req then
+		return false
+	end
+	local fields = {}
+	if type(extraFields) == "table" then
+		for _, f in ipairs(extraFields) do
+			table.insert(fields, f)
+		end
+	end
+	table.insert(fields, {
+		name = "Server JobId",
+		value = tostring(game.JobId),
+		inline = false,
+	})
+	local payload = {
+		embeds = {
+			{
+				title = title,
+				description = description,
+				color = customColor or 65280,
+				fields = fields,
+				footer = {
+					text = "StarCrow Hub",
+				},
+				timestamp = DateTime.now():ToIsoDate(),
+			},
+		},
+	}
+	local ok, res = pcall(function()
+		return req({
+			Url = url,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json",
+			},
+			Body = HttpService:JSONEncode(payload),
+		})
+	end)
+	if ok and res then
+		local sc = res.StatusCode or res.status_code or res.Status
+		if sc and tonumber(sc) and tonumber(sc) >= 200 and tonumber(sc) < 300 then
+			return true
+		end
+		if not sc then
+			return true
+		end
+	end
+	return false
+end
+
+local function SendBossWebhook(title, description, customColor, islandName)
+	return SendDiscordWebhook(
+		Config.BossWebhookUrl,
+		title,
+		description,
+		customColor or 16744192,
+		{
+			{
+				name = "Island",
+				value = tostring((islandName and islandName ~= "") and islandName or "Unknown"),
+				inline = true,
+			},
+		}
+	)
+end
+
+local lastNotifiedWeather = ""
+local function SendWeatherWebhook(weatherName, description)
+	local w = tostring(weatherName or "")
+	if w == "" then
+		return false
+	end
+	lastNotifiedWeather = string.lower(w)
+	return SendDiscordWebhook(
+		Config.WeatherWebhookUrl,
+		GetWeatherIcon(w) .. " Weather Detected: " .. w,
+		description or ("Target weather active: **" .. w .. "**"),
+		41727,
+		{
+			{
+				name = "Weather",
+				value = w,
+				inline = true,
+			},
+		}
+	)
+end
+
+local function GetNearestIslandName(pos)
+	if not pos then
+		return "Unknown"
+	end
+	local bestName = "Unknown"
+	local bestDist = math.huge
+	for name, cf in pairs(IslandFarmPositions) do
+		local d = (cf.Position - pos).Magnitude
+		if d < bestDist then
+			bestDist = d
+			bestName = name
+		end
+	end
+	return bestName
+end
+
+local function GetChuPrompt()
+	local npcFolder = workspace:FindFirstChild("NPC")
+	local funcFolder = npcFolder and npcFolder:FindFirstChild("Function")
+	local chu = funcFolder and funcFolder:FindFirstChild("Chu Tianjiao")
+	if chu then
+		local p = chu:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if p then
+			return p
+		end
+	end
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") then
+			local pName = string.lower(tostring(desc.ObjectText or (desc.Parent and desc.Parent.Name) or ""))
+			local aName = string.lower(tostring(desc.ActionText or ""))
+			if string.find(pName, "chu", 1, true) or string.find(aName, "talk", 1, true) then
+				return desc
+			end
+		end
+	end
+	local direct = workspace:FindFirstChild("Chu Tianjiao", true)
+	if direct then
+		local p = direct:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if p then
+			return p
+		end
+	end
+	return nil
+end
+
+local function TriggerChuPrompt(prompt)
+	if not prompt then
+		return false
+	end
+	local ok = false
+	pcall(function()
+		prompt.RequiresLineOfSight = false
+		prompt.MaxActivationDistance = 9999
+		prompt.HoldDuration = 0
+		if fireproximityprompt then
+			fireproximityprompt(prompt)
+			ok = true
+		end
+	end)
+	return ok
+end
+
+local function ReadChuDialogueFromGui()
+	local pg = LocalPlayer:FindFirstChild("PlayerGui")
+	local mg = pg and pg:FindFirstChild("MainGui")
+	local menu = mg and mg:FindFirstChild("Menu")
+	local dialogue = menu and menu:FindFirstChild("Dialogue")
+	if dialogue and dialogue.Visible then
+		for _, desc in ipairs(dialogue:GetDescendants()) do
+			if desc:IsA("TextLabel") and desc.Visible then
+				local txt = tostring(desc.Text or ""):gsub("^%s*(.-)%s*$", "%1")
+				if
+					#txt > 3
+					and not string.find(txt, "Close")
+					and not string.find(txt, "Main Quest")
+					and txt ~= "???"
+					and not string.find(txt, "Chu Tianjiao")
+				then
+					return txt
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function CheckChuTianjiaoDialogue(timeoutSec)
+	local char = LocalPlayer.Character or cachedChar
+	local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+	if hrp then
+		hrp.CFrame = CFrame.new(-2569.52, 15.70, -1405.43, 0.09, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, 0.09)
+	end
+	task.wait(0.2)
+	local startWait = os.clock()
+	local limit = timeoutSec or 3.5
+	local resultText = ""
+	local lastText = ""
+	local stableCount = 0
+	while (os.clock() - startWait) < limit do
+		local guiText = ReadChuDialogueFromGui()
+		if not guiText or guiText == "" then
+			local prompt = GetChuPrompt()
+			if prompt then
+				TriggerChuPrompt(prompt)
+			end
+		else
+			resultText = guiText
+			local lower = string.lower(guiText)
+			if
+				string.find(lower, "isle!", 1, true)
+				or string.find(lower, "approaching", 1, true)
+				or string.find(lower, "don't have any quests", 1, true)
+				or string.find(lower, "maybe you'll find", 1, true)
+			then
+				break
+			end
+			if guiText == lastText and #guiText > 10 then
+				stableCount = stableCount + 1
+				if stableCount >= 3 then
+					break
+				end
+			else
+				lastText = guiText
+				stableCount = 0
+			end
+		end
+		task.wait(0.1)
+	end
+	return (resultText ~= ""), resultText
+end
+
+local function GetSacredBeastIslandCFrame(dialogueText)
+	if not dialogueText or dialogueText == "" then
+		return nil, "Unknown"
+	end
+	local lower = string.lower(dialogueText)
+	for name, cf in pairs(IslandFarmPositions) do
+		local cleanName = tostring(name):gsub("%s*|%s*%d+", ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if string.find(lower, string.lower(cleanName), 1, true) then
+			return cf, cleanName
+		end
+	end
+	local sp = workspace:FindFirstChild("Spawnpoint")
+	if sp then
+		for _, child in ipairs(sp:GetChildren()) do
+			if string.find(lower, string.lower(child.Name), 1, true) then
+				if IslandFarmPositions[child.Name] then
+					return IslandFarmPositions[child.Name], child.Name
+				end
+				local p = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
+				if p then
+					return p.CFrame + Vector3.new(0, 5, 0), child.Name
+				end
+			end
+		end
+	end
+	for name, cf in pairs(IslandFarmPositions) do
+		local cleanName = tostring(name):gsub("%s*|%s*%d+", ""):gsub("^%s+", ""):gsub("%s+$", "")
+		local prefix = cleanName:gsub("%s+[Ii]sle$", "")
+		if #prefix >= 4 and string.find(lower, string.lower(prefix), 1, true) and string.find(lower, "isle", 1, true) then
+			return cf, cleanName
+		end
+	end
+	local matchedIsle = string.match(dialogueText, "([%u][%w%s]-%s+[Ii]sle)%s*!")
+		or string.match(dialogueText, "([%w]+%s+[Ii]sle)")
+	if matchedIsle then
+		return nil, matchedIsle
+	end
+	return nil, "Unknown"
+end
+
+local function IsSacredBeastAppeared(dialogueText)
+	local lower = string.lower(dialogueText or "")
+	if lower == "" then
+		return false
+	end
+	if
+		string.find(lower, "i can feel it", 1, true)
+		or string.find(lower, "approaching", 1, true)
+		or string.find(lower, "don't have any quests", 1, true)
+		or string.find(lower, "maybe you'll find", 1, true)
+	then
+		return false
+	end
+	if not string.find(lower, "hurry", 1, true) then
+		return false
+	end
+	local _, islandName = GetSacredBeastIslandCFrame(dialogueText)
+	if islandName and islandName ~= "Unknown" then
+		return true
+	end
+	return string.find(lower, "isle!", 1, true) ~= nil
+end
+
+local function NotifySacredBeastWebhook(dialogueText, islandName)
+	local lower = string.lower(dialogueText or "")
+	local detectedBoss = nil
+	if string.find(lower, "black tortoise", 1, true) or string.find(lower, "tortoise", 1, true) then
+		detectedBoss = "Black Tortoise Bloodline"
+	elseif string.find(lower, "vermilion", 1, true) or string.find(lower, "birdblood", 1, true) or string.find(lower, "vermi", 1, true) then
+		detectedBoss = "Vermilion Birdblood"
+	end
+	local finalIsland = (islandName and islandName ~= "") and islandName or "Unknown"
+	if detectedBoss == "Black Tortoise Bloodline" then
+		SendBossWebhook(
+			"🐢 Black Tortoise Bloodline",
+			"Boss: **Black Tortoise Bloodline**\nIsland: **" .. finalIsland .. "**\nDialogue: " .. tostring(dialogueText),
+			3407793,
+			finalIsland
+		)
+	elseif detectedBoss == "Vermilion Birdblood" then
+		SendBossWebhook(
+			"🔥 Vermilion Birdblood",
+			"Boss: **Vermilion Birdblood**\nIsland: **" .. finalIsland .. "**\nDialogue: " .. tostring(dialogueText),
+			16721408,
+			finalIsland
+		)
+	else
+		SendBossWebhook(
+			"⚔️ Sacred Beast Detected",
+			"Sacred Beast appeared at **" .. finalIsland .. "**!\nDialogue: " .. tostring(dialogueText),
+			16744192,
+			finalIsland
+		)
+	end
+end
+
+workspace:GetAttributeChangedSignal("Weather"):Connect(function()
+	local curW = tostring(workspace:GetAttribute("Weather") or "")
+	local targetW = tostring(Config.SelectedWeather or "")
+	if curW ~= "" and targetW ~= "" and string.lower(curW) == string.lower(targetW) then
+		if lastNotifiedWeather ~= string.lower(curW) then
+			task.spawn(function()
+				SendWeatherWebhook(curW, "Server weather changed to target weather: **" .. curW .. "**")
+			end)
+		end
+	elseif curW ~= "" then
+		lastNotifiedWeather = string.lower(curW)
+	end
+end)
 
 local ModuleCache = {}
 
@@ -525,7 +893,7 @@ local function stopFly()
 end
 
 local function StepAutoTPPos(char)
-	if not Config.AutoTPPos then
+	if not Config.AutoTPPos or IsCheckingSacredBeast then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -543,7 +911,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland then
+	if not Config.AutoFarmIsland or IsCheckingSacredBeast then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -6619,119 +6987,46 @@ end
 		Tabs.Server:AddSection("Boss Hop")
 
 		do
-			local function GetChuPrompt()
-				local npcFolder = workspace:FindFirstChild("NPC")
-				local funcFolder = npcFolder and npcFolder:FindFirstChild("Function")
-				local chu = funcFolder and funcFolder:FindFirstChild("Chu Tianjiao")
-				if chu then
-					local p = chu:FindFirstChildWhichIsA("ProximityPrompt", true)
-					if p then
-						return p
-					end
-				end
-				for _, desc in ipairs(workspace:GetDescendants()) do
-					if desc:IsA("ProximityPrompt") then
-						local pName =
-							string.lower(tostring(desc.ObjectText or (desc.Parent and desc.Parent.Name) or ""))
-						local aName = string.lower(tostring(desc.ActionText or ""))
-						if string.find(pName, "chu", 1, true) or string.find(aName, "talk", 1, true) then
-							return desc
+			Tabs.Server:AddButton({
+				Title = "Check Sacred Beast",
+				Callback = function()
+					task.spawn(function()
+						if IsCheckingSacredBeast then
+							return
 						end
-					end
-				end
-				local direct = workspace:FindFirstChild("Chu Tianjiao", true)
-				if direct then
-					local p = direct:FindFirstChildWhichIsA("ProximityPrompt", true)
-					if p then
-						return p
-					end
-				end
-				return nil
-			end
-
-			local function TriggerChuPrompt(prompt)
-				if not prompt then
-					return false
-				end
-				local ok = false
-				pcall(function()
-					prompt.RequiresLineOfSight = false
-					prompt.MaxActivationDistance = 9999
-					prompt.HoldDuration = 0
-					if fireproximityprompt then
-						fireproximityprompt(prompt)
-						ok = true
-					end
-				end)
-				return ok
-			end
-
-			local function ReadChuDialogueFromGui()
-				local pg = LocalPlayer:FindFirstChild("PlayerGui")
-				local mg = pg and pg:FindFirstChild("MainGui")
-				local menu = mg and mg:FindFirstChild("Menu")
-				local dialogue = menu and menu:FindFirstChild("Dialogue")
-				if dialogue and dialogue.Visible then
-					for _, desc in ipairs(dialogue:GetDescendants()) do
-						if desc:IsA("TextLabel") and desc.Visible then
-							local txt = tostring(desc.Text or ""):gsub("^%s*(.-)%s*$", "%1")
-							if
-								#txt > 3
-								and not string.find(txt, "Close")
-								and not string.find(txt, "Main Quest")
-								and txt ~= "???"
-								and not string.find(txt, "Chu Tianjiao")
-							then
-								return txt
+						IsCheckingSacredBeast = true
+						local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+						local appeared = IsSacredBeastAppeared(chuText)
+						if appeared then
+							local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+							local c = cachedChar or LocalPlayer.Character
+							local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+							if targetCF and h then
+								h.CFrame = targetCF
 							end
+							pcall(function()
+								Fluent:Notify({
+									Title = "Sacred Beast",
+									Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
+									Duration = 5,
+								})
+							end)
+							task.spawn(function()
+								NotifySacredBeastWebhook(chuText, islandName)
+							end)
+						else
+							pcall(function()
+								Fluent:Notify({
+									Title = "Sacred Beast",
+									Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
+									Duration = 4,
+								})
+							end)
 						end
-					end
-				end
-				return nil
-			end
-
-			local function CheckChuTianjiaoDialogue(timeoutSec)
-				local char = LocalPlayer.Character or cachedChar
-				local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-				if hrp then
-					hrp.CFrame =
-						CFrame.new(-2569.52, 15.70, -1405.43, 0.09, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, 0.09)
-				end
-				task.wait(0.2)
-				local startWait = os.clock()
-				local limit = timeoutSec or 3.0
-				local resultText = ""
-				while (os.clock() - startWait) < limit do
-					local prompt = GetChuPrompt()
-					if prompt then
-						TriggerChuPrompt(prompt)
-					end
-					local guiText = ReadChuDialogueFromGui()
-					if guiText and guiText ~= "" then
-						resultText = guiText
-						break
-					end
-					task.wait(0.1)
-				end
-				return (resultText ~= ""), resultText
-			end
-
-			local function IsSacredBeastAppeared(dialogueText)
-				local lower = string.lower(dialogueText or "")
-				if lower == "" then
-					return false
-				end
-				if
-					string.find(lower, "i can feel it", 1, true)
-					or string.find(lower, "approaching", 1, true)
-					or string.find(lower, "don't have any quests", 1, true)
-					or string.find(lower, "maybe you'll find", 1, true)
-				then
-					return false
-				end
-
-				return string.find(lower, "hurry", 1, true) ~= nil
-			end
+						IsCheckingSacredBeast = false
+					end)
+				end,
+			})
 
 			local AutoHopSacredBeastToggleObj
 			AutoHopSacredBeastToggleObj = Tabs.Server:AddToggle("AutoHopSacredBeastToggle", {
@@ -6767,6 +7062,22 @@ end
 										AutoHopSacredBeastToggleObj:SetValue(false)
 									end)
 								end
+								local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+								local c = cachedChar or LocalPlayer.Character
+								local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+								if targetCF and h then
+									h.CFrame = targetCF
+								end
+								pcall(function()
+									Fluent:Notify({
+										Title = "Sacred Beast",
+										Content = targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText)),
+										Duration = 6,
+									})
+								end)
+								task.spawn(function()
+									NotifySacredBeastWebhook(chuText, islandName)
+								end)
 							else
 								task.wait(delaySec)
 								if Config.AutoHopSacredBeast and DoServerHop then
@@ -6786,6 +7097,18 @@ end
 				Rounding = 1,
 				Callback = function(Value)
 					Config.HopBossDelay = Value
+					SaveConfig()
+				end,
+			})
+
+			Tabs.Server:AddInput("BossWebhookInput", {
+				Title = "Webhook URL",
+				Default = Config.BossWebhookUrl or "",
+				Placeholder = "https://discord.com/api/webhooks/...",
+				Numeric = false,
+				Finished = false,
+				Callback = function(Value)
+					Config.BossWebhookUrl = tostring(Value or ""):gsub("%s+", "")
 					SaveConfig()
 				end,
 			})
@@ -6834,6 +7157,22 @@ end
 							AutoHopSacredBeastToggleObj:SetValue(false)
 						end)
 					end
+					local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+					local c = cachedChar or LocalPlayer.Character
+					local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+					if targetCF and h then
+						h.CFrame = targetCF
+					end
+					pcall(function()
+						Fluent:Notify({
+							Title = "Sacred Beast",
+							Content = targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText)),
+							Duration = 6,
+						})
+					end)
+					task.spawn(function()
+						NotifySacredBeastWebhook(chuText, islandName)
+					end)
 				else
 					task.wait(delaySec)
 					if Config.AutoHopSacredBeast and DoServerHop then
@@ -6880,6 +7219,9 @@ end
 									Content = "Already in target weather: " .. curWeather .. "! Auto Hop stopped.",
 									Duration = 6,
 								})
+							end)
+							task.spawn(function()
+								SendWeatherWebhook(curWeather, "Current server has target weather: **" .. curWeather .. "**")
 							end)
 							return
 						end
@@ -6930,6 +7272,18 @@ end
 			end,
 		})
 
+		Tabs.Server:AddInput("WeatherWebhookInput", {
+			Title = "Webhook URL",
+			Default = Config.WeatherWebhookUrl or "",
+			Placeholder = "https://discord.com/api/webhooks/...",
+			Numeric = false,
+			Finished = false,
+			Callback = function(Value)
+				Config.WeatherWebhookUrl = tostring(Value or ""):gsub("%s+", "")
+				SaveConfig()
+			end,
+		})
+
 		task.spawn(function()
 			task.wait(2)
 			if not Config.AutoHopWeather then
@@ -6957,6 +7311,9 @@ end
 						Content = "Found target weather: " .. curWeather .. "! Auto Hop stopped.",
 						Duration = 6,
 					})
+				end)
+				task.spawn(function()
+					SendWeatherWebhook(curWeather, "Found target weather: **" .. curWeather .. "**")
 				end)
 			else
 				local delaySec = Config.HopWeatherDelay or 5
