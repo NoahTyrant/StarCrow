@@ -101,6 +101,15 @@ local Config = {
 	AutoUpgradeCharacter = false,
 	SelectedUpgradeType = "Level + Cash",
 	UpgradeCharacterDelay = 5,
+	WebhookUrl = "",
+	WebhookSacredBeast = false,
+	WebhookWeather = false,
+	WebhookMaoshan = false,
+	WebhookTaoist = false,
+	WebhookGodSpirit = false,
+	ESPMaoshan = false,
+	ESPTaoist = false,
+	ESPGodSpirit = false,
 	BossWebhookUrl = "",
 	WeatherWebhookUrl = "",
 }
@@ -127,13 +136,14 @@ local function LoadConfig()
 				end
 			end
 			if type(decoded.WebhookUrl) == "string" and decoded.WebhookUrl ~= "" then
-				if Config.BossWebhookUrl == "" then
-					Config.BossWebhookUrl = decoded.WebhookUrl
-				end
-				if Config.WeatherWebhookUrl == "" then
-					Config.WeatherWebhookUrl = decoded.WebhookUrl
-				end
+				Config.WebhookUrl = decoded.WebhookUrl
+			elseif type(decoded.BossWebhookUrl) == "string" and decoded.BossWebhookUrl ~= "" then
+				Config.WebhookUrl = decoded.BossWebhookUrl
+			elseif type(decoded.WeatherWebhookUrl) == "string" and decoded.WeatherWebhookUrl ~= "" then
+				Config.WebhookUrl = decoded.WeatherWebhookUrl
 			end
+			Config.BossWebhookUrl = Config.WebhookUrl
+			Config.WeatherWebhookUrl = Config.WebhookUrl
 		end
 	end)
 end
@@ -325,8 +335,9 @@ local function SendDiscordWebhook(rawUrl, title, description, customColor, extra
 end
 
 local function SendBossWebhook(title, description, customColor, islandName)
+	local targetUrl = Config.WebhookUrl ~= "" and Config.WebhookUrl or Config.BossWebhookUrl
 	return SendDiscordWebhook(
-		Config.BossWebhookUrl,
+		targetUrl,
 		title,
 		description,
 		customColor or 16744192,
@@ -342,13 +353,17 @@ end
 
 local lastNotifiedWeather = ""
 local function SendWeatherWebhook(weatherName, description)
+	if not Config.WebhookWeather then
+		return false
+	end
 	local w = tostring(weatherName or "")
 	if w == "" then
 		return false
 	end
 	lastNotifiedWeather = string.lower(w)
+	local targetUrl = Config.WebhookUrl ~= "" and Config.WebhookUrl or Config.WeatherWebhookUrl
 	return SendDiscordWebhook(
-		Config.WeatherWebhookUrl,
+		targetUrl,
 		GetWeatherIcon(w) .. " Weather Detected: " .. w,
 		description or ("Target weather active: **" .. w .. "**"),
 		41727,
@@ -555,6 +570,9 @@ local function IsSacredBeastAppeared(dialogueText)
 end
 
 local function NotifySacredBeastWebhook(dialogueText, islandName)
+	if not Config.WebhookSacredBeast then
+		return false
+	end
 	local lower = string.lower(dialogueText or "")
 	local detectedBoss = nil
 	if string.find(lower, "black tortoise", 1, true) or string.find(lower, "tortoise", 1, true) then
@@ -587,18 +605,55 @@ local function NotifySacredBeastWebhook(dialogueText, islandName)
 	end
 end
 
+local function IsSpecialWeather(wName)
+	local lower = string.lower(tostring(wName or ""))
+	if lower == "" or lower == "clear" or lower == "sun" or lower == "sunny" or lower == "normal" then
+		return false
+	end
+	if string.find(lower, "rain", 1, true)
+		or string.find(lower, "thunder", 1, true)
+		or string.find(lower, "storm", 1, true)
+		or string.find(lower, "snow", 1, true)
+		or string.find(lower, "frost", 1, true)
+		or string.find(lower, "fog", 1, true)
+		or string.find(lower, "mist", 1, true)
+		or string.find(lower, "wind", 1, true)
+		or string.find(lower, "eclipse", 1, true)
+	then
+		return true
+	end
+	return false
+end
+
+local lastNotifiedWeatherKey = ""
+local function CheckAndNotifyWeather(wName)
+	if not Config.WebhookWeather then
+		return
+	end
+	local w = tostring(wName or "")
+	if not IsSpecialWeather(w) then
+		lastNotifiedWeatherKey = ""
+		return
+	end
+	local key = string.lower(w) .. "_" .. tostring(game.JobId)
+	if lastNotifiedWeatherKey == key then
+		return
+	end
+	lastNotifiedWeatherKey = key
+	task.spawn(function()
+		SendWeatherWebhook(w, "Special weather active in server: **" .. w .. "**")
+	end)
+end
+
 workspace:GetAttributeChangedSignal("Weather"):Connect(function()
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
-	local targetW = tostring(Config.SelectedWeather or "")
-	if curW ~= "" and targetW ~= "" and string.lower(curW) == string.lower(targetW) then
-		if lastNotifiedWeather ~= string.lower(curW) then
-			task.spawn(function()
-				SendWeatherWebhook(curW, "Server weather changed to target weather: **" .. curW .. "**")
-			end)
-		end
-	elseif curW ~= "" then
-		lastNotifiedWeather = string.lower(curW)
-	end
+	CheckAndNotifyWeather(curW)
+end)
+
+task.spawn(function()
+	task.wait(2)
+	local curW = tostring(workspace:GetAttribute("Weather") or "")
+	CheckAndNotifyWeather(curW)
 end)
 
 local ModuleCache = {}
@@ -1951,10 +2006,393 @@ local function updateESP()
 	end
 end
 
+local function FindAllGodSpirits()
+	local results = {}
+	local seen = {}
+
+	local function checkObj(desc)
+		if not desc or desc:IsA("Folder") then
+			return
+		end
+		if not (desc:IsA("Model") or desc:IsA("BasePart")) then
+			return
+		end
+		local dName = tostring(desc.Name or "")
+		local aName = tostring(desc:GetAttribute("Name") or "")
+		if dName == "God" or dName == "Lamp" or aName == "God" or aName == "Lamp" then
+			return
+		end
+		local dLower = string.lower(string.gsub(dName, "%s+", ""))
+		local aLower = string.lower(string.gsub(aName, "%s+", ""))
+
+		local col = nil
+		if string.find(dLower, "yellow", 1, true) or string.find(aLower, "yellow", 1, true) then
+			col = "yellow"
+		elseif string.find(dLower, "green", 1, true) or string.find(aLower, "green", 1, true) then
+			col = "green"
+		elseif string.find(dLower, "blue", 1, true) or string.find(aLower, "blue", 1, true) then
+			col = "blue"
+		end
+
+		local isInsideGod = false
+		local p = desc.Parent
+		while p and p ~= workspace do
+			if p.Name == "God" then
+				isInsideGod = true
+				break
+			end
+			p = p.Parent
+		end
+
+		if not col and isInsideGod then
+			col = dLower ~= "" and dLower or "yellow"
+		end
+
+		if col and not seen[col] then
+			local part = GetModelPart(desc)
+			if part and part:IsDescendantOf(workspace) then
+				seen[col] = true
+				table.insert(results, { name = (dName ~= "" and dName ~= "God") and dName or col, part = part, lower = col })
+			end
+		end
+	end
+
+	local npcGod = workspace:FindFirstChild("NPC") and workspace.NPC:FindFirstChild("God")
+	if npcGod then
+		for _, child in ipairs(npcGod:GetChildren()) do
+			checkObj(child)
+		end
+		if #results > 0 then
+			return results
+		end
+	end
+
+	local godFolder = workspace:FindFirstChild("God")
+	if godFolder then
+		for _, child in ipairs(godFolder:GetChildren()) do
+			checkObj(child)
+		end
+		if #results > 0 then
+			return results
+		end
+	end
+
+	local gsFolder = workspace:FindFirstChild("GodSpirit")
+	if gsFolder then
+		for _, child in ipairs(gsFolder:GetChildren()) do
+			checkObj(child)
+		end
+		if #results > 0 then
+			return results
+		end
+	end
+
+	return results
+end
+
+local function FindGodSpiritPart()
+	local all = FindAllGodSpirits()
+	if #all > 0 then
+		return all[1].part, all[1].name, all[1].lower
+	end
+	return nil
+end
+
+local function FindSpecialEntities()
+	local candidatesMaoshan = {}
+	local candidatesTaoist = {}
+
+	local function checkCandidate(desc, folderName)
+		if not desc or desc:IsA("Folder") then
+			return
+		end
+		if not (desc:IsA("Model") or desc:IsA("BasePart")) then
+			return
+		end
+		local dName = tostring(desc.Name or "")
+		local aName = tostring(desc:GetAttribute("Name") or "")
+		if dName == "God" or dName == "Lamp" or (dName == "" and aName == "") then
+			return
+		end
+		local part = GetModelPart(desc)
+		if not part or not part:IsDescendantOf(workspace) then
+			return
+		end
+
+		local dLower = string.lower(string.gsub(dName, "%s+", ""))
+		local aLower = string.lower(string.gsub(aName, "%s+", ""))
+
+		local isMao = string.find(dLower, "maoshan", 1, true)
+			or string.find(dLower, "maosan", 1, true)
+			or string.find(aLower, "maoshan", 1, true)
+			or string.find(aLower, "maosan", 1, true)
+
+		local isTao = string.find(dLower, "taoist", 1, true)
+			or string.find(dLower, "taosi", 1, true)
+			or string.find(aLower, "taoist", 1, true)
+			or string.find(aLower, "taosi", 1, true)
+
+		if not isMao and not isTao then
+			for _, attrVal in pairs(desc:GetAttributes()) do
+				local valLower = string.lower(string.gsub(tostring(attrVal), "%s+", ""))
+				if string.find(valLower, "maoshan", 1, true) or string.find(valLower, "maosan", 1, true) then
+					isMao = true
+					break
+				elseif string.find(valLower, "taoist", 1, true) or string.find(valLower, "taosi", 1, true) then
+					isTao = true
+					break
+				end
+			end
+		end
+
+		if isMao then
+			table.insert(candidatesMaoshan, { part = part, folder = folderName, model = desc })
+		elseif isTao then
+			table.insert(candidatesTaoist, { part = part, folder = folderName, model = desc })
+		end
+	end
+
+	local wsNPC = workspace:FindFirstChild("NPC")
+	if wsNPC then
+		for _, desc in ipairs(wsNPC:GetDescendants()) do
+			checkCandidate(desc, "NPC")
+		end
+	end
+
+	local finalMaoshan = candidatesMaoshan[1] and candidatesMaoshan[1].part or nil
+	local finalTaoist = candidatesTaoist[1] and candidatesTaoist[1].part or nil
+
+	local godSpirits = FindAllGodSpirits()
+	return finalMaoshan, finalTaoist, godSpirits
+end
+
+local ActiveEntityESPs = {}
+
+local function applyEntityESP(part, tag, title, color3)
+	if not part or not part:IsDescendantOf(workspace) then
+		return
+	end
+	local esp = part:FindFirstChild("StarCrowEntityESP")
+	if not esp then
+		esp = Instance.new("BillboardGui")
+		esp.Name = "StarCrowEntityESP"
+		esp.Adornee = part
+		esp.Size = UDim2.new(0, 220, 0, 28)
+		esp.StudsOffset = Vector3.new(0, 3, 0)
+		esp.AlwaysOnTop = true
+		esp.MaxDistance = math.huge
+		local text = Instance.new("TextLabel")
+		text.Name = "NameText"
+		text.Parent = esp
+		text.Size = UDim2.new(1, 0, 1, 0)
+		text.BackgroundTransparency = 1
+		text.TextScaled = false
+		text.TextSize = 13
+		text.Font = Enum.Font.GothamBold
+		text.TextColor3 = color3 or Color3.fromRGB(255, 255, 255)
+		text.TextStrokeTransparency = 0
+		text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		text.TextXAlignment = Enum.TextXAlignment.Center
+		esp.Parent = part
+	end
+	local nameLabel = esp:FindFirstChild("NameText")
+	if nameLabel then
+		nameLabel.TextColor3 = color3 or Color3.fromRGB(255, 255, 255)
+		nameLabel.Text = title
+	end
+	ActiveEntityESPs[tag] = esp
+end
+
+local function clearEntityESP(tag)
+	if tag then
+		if tag == "GodSpirit" then
+			for k, esp in pairs(ActiveEntityESPs) do
+				if string.find(k, "GodSpirit_") then
+					if esp and esp.Parent then
+						esp:Destroy()
+					end
+					ActiveEntityESPs[k] = nil
+				end
+			end
+		else
+			if ActiveEntityESPs[tag] and ActiveEntityESPs[tag].Parent then
+				ActiveEntityESPs[tag]:Destroy()
+			end
+			ActiveEntityESPs[tag] = nil
+		end
+	else
+		for k, esp in pairs(ActiveEntityESPs) do
+			if esp and esp.Parent then
+				esp:Destroy()
+			end
+		end
+		ActiveEntityESPs = {}
+	end
+end
+
+local function updateEntityESP(finalMaoshan, finalTaoist, godSpirits)
+	if Config.ESPMaoshan and finalMaoshan then
+		applyEntityESP(finalMaoshan, "Maoshan", "Maoshan", Color3.fromRGB(180, 100, 255))
+	else
+		clearEntityESP("Maoshan")
+	end
+
+	if Config.ESPTaoist and finalTaoist then
+		applyEntityESP(finalTaoist, "Taoist", "Taoist", Color3.fromRGB(255, 220, 0))
+	else
+		clearEntityESP("Taoist")
+	end
+
+	if Config.ESPGodSpirit and #godSpirits > 0 then
+		local currentKeys = {}
+		for _, g in ipairs(godSpirits) do
+			local tag = "GodSpirit_" .. g.lower
+			currentKeys[tag] = true
+			local dispName = g.lower == "yellow" and "Yellow" or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
+			local c = Color3.fromRGB(0, 255, 200)
+			if g.lower == "yellow" then
+				c = Color3.fromRGB(255, 220, 0)
+			elseif g.lower == "green" then
+				c = Color3.fromRGB(0, 255, 128)
+			elseif g.lower == "blue" then
+				c = Color3.fromRGB(60, 160, 255)
+			end
+			applyEntityESP(g.part, tag, dispName, c)
+		end
+		for k, _ in pairs(ActiveEntityESPs) do
+			if string.find(k, "GodSpirit_") and not currentKeys[k] then
+				clearEntityESP(k)
+			end
+		end
+	else
+		for k, _ in pairs(ActiveEntityESPs) do
+			if string.find(k, "GodSpirit_") then
+				clearEntityESP(k)
+			end
+		end
+	end
+end
+
+local NotifiedWebhookEntities = {}
+
+local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
+	local url = Config.WebhookUrl or ""
+	if url == "" then
+		return
+	end
+
+	if Config.WebhookMaoshan then
+		if finalMaoshan then
+			local key = "Maoshan_" .. tostring(game.JobId)
+			if not NotifiedWebhookEntities[key] then
+				NotifiedWebhookEntities[key] = true
+				local isl = GetNearestIslandName(finalMaoshan.Position)
+				SendDiscordWebhook(
+					url,
+					"Maoshan Detected",
+					"Maoshan has spawned!",
+					11822335,
+					{
+						{
+							name = "Island",
+							value = isl,
+							inline = true,
+						},
+					}
+				)
+			end
+		else
+			NotifiedWebhookEntities["Maoshan_" .. tostring(game.JobId)] = nil
+		end
+	end
+
+	if Config.WebhookTaoist then
+		if finalTaoist then
+			local key = "Taoist_" .. tostring(game.JobId)
+			if not NotifiedWebhookEntities[key] then
+				NotifiedWebhookEntities[key] = true
+				local isl = GetNearestIslandName(finalTaoist.Position)
+				SendDiscordWebhook(
+					url,
+					"Taoist Detected",
+					"Taoist has spawned!",
+					16776960,
+					{
+						{
+							name = "Island",
+							value = isl,
+							inline = true,
+						},
+					}
+				)
+			end
+		else
+			NotifiedWebhookEntities["Taoist_" .. tostring(game.JobId)] = nil
+		end
+	end
+
+	if Config.WebhookGodSpirit then
+		if #godSpirits > 0 then
+			local activeSpirits = {}
+			for _, g in ipairs(godSpirits) do
+				activeSpirits[g.lower] = true
+				local key = "GodSpirit_" .. g.lower .. "_" .. tostring(game.JobId)
+				if not NotifiedWebhookEntities[key] then
+					NotifiedWebhookEntities[key] = true
+					local isl = GetNearestIslandName(g.part.Position)
+					local dispName = g.lower == "yellow" and "Yellow" or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
+					local embedColor = 65280
+					if g.lower == "yellow" then
+						embedColor = 16776960
+					elseif g.lower == "blue" then
+						embedColor = 3447003
+					elseif g.lower == "green" then
+						embedColor = 65280
+					end
+					SendDiscordWebhook(
+						url,
+						"👻 God Spirit Detected",
+						dispName .. " has spawned!",
+						embedColor,
+						{
+							{
+								name = "Island",
+								value = isl,
+								inline = true,
+							},
+						}
+					)
+				end
+			end
+			for _, col in ipairs({ "green", "blue", "yellow", "godspirit" }) do
+				if not activeSpirits[col] then
+					NotifiedWebhookEntities["GodSpirit_" .. col .. "_" .. tostring(game.JobId)] = nil
+				end
+			end
+		else
+			for _, col in ipairs({ "green", "blue", "yellow", "godspirit" }) do
+				NotifiedWebhookEntities["GodSpirit_" .. col .. "_" .. tostring(game.JobId)] = nil
+			end
+		end
+	end
+end
+
 task.spawn(function()
+	local entityCheckThrottle = 0
 	while task.wait(0.4) do
 		if Config.ESPEnabled then
 			updateESP()
+		end
+		entityCheckThrottle = entityCheckThrottle + 0.4
+		if entityCheckThrottle >= 1.2 then
+			entityCheckThrottle = 0
+			if Config.ESPMaoshan or Config.ESPTaoist or Config.ESPGodSpirit or Config.WebhookMaoshan or Config.WebhookTaoist or Config.WebhookGodSpirit then
+				local mPart, tPart, gList = FindSpecialEntities()
+				updateEntityESP(mPart, tPart, gList)
+				checkWebhookNotifications(mPart, tPart, gList)
+			else
+				clearEntityESP()
+			end
 		end
 	end
 end)
@@ -4007,6 +4445,32 @@ end);
 		local seen = {}
 		table.clear(NPCTargets)
 
+		local blacklist = {
+			bachang = true,
+			biaodi = true,
+			biaoge = true,
+			buybait = true,
+			buyfishingrod = true,
+			captain = true,
+			chuxin = true,
+			dashixiong = true,
+			["function"] = true,
+			hadiao = true,
+			hadieu = true,
+			hadieude = true,
+			hadiaode = true,
+			hadiaodi = true,
+			laongo = true,
+			laomo = true,
+			nana = true,
+			pirateguy = true,
+			learnskill = true,
+			setspawn = true,
+			sellfish = true,
+			spawnboat = true,
+			xiaodaoshi = true,
+		}
+
 		local function addNPC(name, part)
 			if not name or name == "" then
 				return
@@ -4014,6 +4478,13 @@ end);
 			local norm = string.lower(string.gsub(name, "%s+", ""))
 			if norm == "longdiaohai" then
 				name = "Long DiaoHai"
+			end
+			if norm == "green" or norm == "blue" or norm == "yellow" or norm == "godspirit" then
+				name = "God Spirit"
+				norm = "godspirit"
+			end
+			if blacklist[norm] then
+				return
 			end
 			if part and part:IsDescendantOf(workspace) then
 				NPCTargets[name] = part
@@ -4062,6 +4533,8 @@ end);
 				end
 			end
 		end
+		local gPart = FindGodSpiritPart()
+		addNPC("God Spirit", gPart)
 		addNPC("Long DiaoHai")
 
 		local priorityOrder = {
@@ -4073,13 +4546,12 @@ end);
 			"Taosi",
 			"Maoshan",
 			"Maosan",
+			"God Spirit",
+			"GodSpirit",
 			"Long DiaoHai",
 			"LongDiaoHai",
 			"Longdiaohai",
 			"Enzo",
-			"Blue",
-			"Green",
-			"Yellow",
 			"Nanjiang",
 			"Zeng Tianguo",
 		}
@@ -4115,30 +4587,27 @@ end);
 		local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
 		local targetPart = nil
 
-		if lowerNpc == "blue" or lowerNpc == "green" or lowerNpc == "yellow" then
-			local godFolder = workspace:FindFirstChild("God")
-			if godFolder then
-				for _, child in ipairs(godFolder:GetChildren()) do
-					local cLower = string.lower(string.gsub(tostring(child.Name), "%s+", ""))
-					if cLower == lowerNpc then
-						targetPart = GetModelPart(child)
-						if targetPart and targetPart:IsDescendantOf(workspace) then
-							break
-						end
-					end
-				end
-			end
+		if lowerNpc == "blue" or lowerNpc == "green" or lowerNpc == "yellow" or lowerNpc == "godspirit" then
+			targetPart = FindGodSpiritPart()
 			if not targetPart then
-				for _, child in ipairs(workspace:GetChildren()) do
-					local cLower = string.lower(string.gsub(tostring(child.Name), "%s+", ""))
-					if cLower == lowerNpc then
-						local p = GetModelPart(child)
-						if p and p:IsDescendantOf(workspace) then
-							targetPart = p
-							break
-						end
-					end
-				end
+				pcall(function()
+					Fluent:Notify({
+						Title = "Teleport NPC",
+						Content = "God Spirit has not spawned on the map yet!",
+						Duration = 4,
+					})
+				end)
+				return
+			end
+		elseif lowerNpc == "taoist" or lowerNpc == "taosi" then
+			local _, tPart = FindSpecialEntities()
+			if tPart and tPart:IsDescendantOf(workspace) then
+				targetPart = tPart
+			end
+		elseif lowerNpc == "maoshan" or lowerNpc == "maosan" then
+			local mPart = FindSpecialEntities()
+			if mPart and mPart:IsDescendantOf(workspace) then
+				targetPart = mPart
 			end
 		elseif string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
 			local _, bossPart = FindBossTarget(string.find(lowerNpc, "longdiaohai") ~= nil)
@@ -4650,6 +5119,7 @@ end);
 		ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
 		Misc = Window:AddTab({ Title = "Misc", Icon = "layers" }),
 		Server = Window:AddTab({ Title = "Server", Icon = "server" }),
+		Webhook = Window:AddTab({ Title = "Webhook", Icon = "bell" }),
 		Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
 	}
 
@@ -6141,6 +6611,44 @@ end);
 		end,
 	})
 
+	Tabs.ESP:AddSection("Entities")
+
+	Tabs.ESP:AddToggle("ESPMaoshanToggle", {
+		Title = "ESP Maoshan",
+		Default = Config.ESPMaoshan,
+		Callback = function(Value)
+			Config.ESPMaoshan = Value
+			SaveConfig()
+			if not Value then
+				clearEntityESP("Maoshan")
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPTaoistToggle", {
+		Title = "ESP Taoist",
+		Default = Config.ESPTaoist,
+		Callback = function(Value)
+			Config.ESPTaoist = Value
+			SaveConfig()
+			if not Value then
+				clearEntityESP("Taoist")
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPGodSpiritToggle", {
+		Title = "ESP God Spirit",
+		Default = Config.ESPGodSpirit,
+		Callback = function(Value)
+			Config.ESPGodSpirit = Value
+			SaveConfig()
+			if not Value then
+				clearEntityESP("GodSpirit")
+			end
+		end,
+	})
+
 	Tabs.Misc:AddSection("Visual")
 
 	Tabs.Misc:AddToggle("AntiAFKToggle", {
@@ -7121,18 +7629,6 @@ end
 				end,
 			})
 
-			Tabs.Server:AddInput("BossWebhookInput", {
-				Title = "Webhook URL",
-				Default = Config.BossWebhookUrl or "",
-				Placeholder = "https://discord.com/api/webhooks/...",
-				Numeric = false,
-				Finished = false,
-				Callback = function(Value)
-					Config.BossWebhookUrl = tostring(Value or ""):gsub("%s+", "")
-					SaveConfig()
-				end,
-			})
-
 			task.spawn(function()
 				task.wait(2.5)
 				if not Config.AutoHopSacredBeast then
@@ -7292,18 +7788,6 @@ end
 			end,
 		})
 
-		Tabs.Server:AddInput("WeatherWebhookInput", {
-			Title = "Webhook URL",
-			Default = Config.WeatherWebhookUrl or "",
-			Placeholder = "https://discord.com/api/webhooks/...",
-			Numeric = false,
-			Finished = false,
-			Callback = function(Value)
-				Config.WeatherWebhookUrl = tostring(Value or ""):gsub("%s+", "")
-				SaveConfig()
-			end,
-		})
-
 		task.spawn(function()
 			task.wait(2)
 			if not Config.AutoHopWeather then
@@ -7356,6 +7840,75 @@ end
 				end
 			end
 		end)
+	end
+
+	do
+		Tabs.Webhook:AddSection("Webhook Settings")
+
+		Tabs.Webhook:AddInput("WebhookUrlInput", {
+			Title = "Webhook URL",
+			Default = Config.WebhookUrl or "",
+			Placeholder = "https://discord.com/api/webhooks/...",
+			Numeric = false,
+			Finished = false,
+			Callback = function(Value)
+				Config.WebhookUrl = tostring(Value or ""):gsub("%s+", "")
+				Config.BossWebhookUrl = Config.WebhookUrl
+				Config.WeatherWebhookUrl = Config.WebhookUrl
+				SaveConfig()
+			end,
+		})
+
+		Tabs.Webhook:AddSection("Notifications")
+
+		Tabs.Webhook:AddToggle("WebhookSacredBeastToggle", {
+			Title = "Sacred Beast Dialogue",
+			Default = Config.WebhookSacredBeast,
+			Callback = function(Value)
+				Config.WebhookSacredBeast = Value
+				SaveConfig()
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookWeatherToggle", {
+			Title = "Weather",
+			Default = Config.WebhookWeather,
+			Callback = function(Value)
+				Config.WebhookWeather = Value
+				SaveConfig()
+				if Value then
+					local curW = tostring(workspace:GetAttribute("Weather") or "")
+					CheckAndNotifyWeather(curW)
+				end
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookMaoshanToggle", {
+			Title = "Maoshan",
+			Default = Config.WebhookMaoshan,
+			Callback = function(Value)
+				Config.WebhookMaoshan = Value
+				SaveConfig()
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookTaoistToggle", {
+			Title = "Taoist",
+			Default = Config.WebhookTaoist,
+			Callback = function(Value)
+				Config.WebhookTaoist = Value
+				SaveConfig()
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookGodSpiritToggle", {
+			Title = "God Spirit",
+			Default = Config.WebhookGodSpirit,
+			Callback = function(Value)
+				Config.WebhookGodSpirit = Value
+				SaveConfig()
+			end,
+		})
 	end
 
 	Window:SelectTab(1)
