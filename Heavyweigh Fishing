@@ -413,8 +413,6 @@ local function TriggerChuPrompt(prompt)
 	end
 	local ok = false
 	pcall(function()
-		prompt.RequiresLineOfSight = false
-		prompt.MaxActivationDistance = 9999
 		prompt.HoldDuration = 0
 		if fireproximityprompt then
 			fireproximityprompt(prompt)
@@ -452,7 +450,7 @@ local function CheckChuTianjiaoDialogue(timeoutSec)
 	local char = LocalPlayer.Character or cachedChar
 	local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
 	if hrp then
-		hrp.CFrame = CFrame.new(-2569.52, 15.70, -1405.43, 0.09, 0.00, 1.00, 0.00, 1.00, -0.00, -1.00, 0.00, 0.09)
+		hrp.CFrame = CFrame.new(-2569.92, 15.74, -1405.49, 0.28, -0.00, 0.96, 0.00, 1.00, 0.00, -0.96, 0.00, 0.28)
 	end
 	task.wait(0.2)
 	local startWait = os.clock()
