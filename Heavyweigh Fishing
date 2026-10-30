@@ -103,6 +103,8 @@ local Config = {
 	UpgradeCharacterDelay = 5,
 	WebhookUrl = "",
 	WebhookSacredBeast = false,
+	WebhookBlackTortoise = false,
+	WebhookVermilionBirdblood = false,
 	WebhookWeather = false,
 	WebhookMaoshan = false,
 	WebhookTaoist = false,
@@ -2377,6 +2379,103 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 end
 
+local function FindBossLiveModel(pattern)
+	local pLower = string.lower(pattern)
+	for _, child in ipairs(workspace:GetChildren()) do
+		if child:IsA("Model") and not Players:GetPlayerFromCharacter(child) then
+			local cLower = string.lower(child.Name)
+			if string.find(cLower, pLower, 1, true) then
+				return child
+			end
+		elseif child:IsA("Folder") and child.Name ~= "Terrain" and child.Name ~= "Camera" then
+			for _, sub in ipairs(child:GetChildren()) do
+				if sub:IsA("Model") and not Players:GetPlayerFromCharacter(sub) then
+					local sLower = string.lower(sub.Name)
+					if string.find(sLower, pLower, 1, true) then
+						return sub
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function GetLiveModelPart(model)
+	if not model then
+		return nil
+	end
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+	return model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function checkBossModelWebhook()
+	local url = Config.WebhookUrl or ""
+	if url == "" then
+		return
+	end
+
+	if Config.WebhookBlackTortoise then
+		local btModel = FindBossLiveModel("black tortoise")
+		if btModel then
+			local key = "BlackTortoise_" .. tostring(game.JobId)
+			if not NotifiedWebhookEntities[key] then
+				NotifiedWebhookEntities[key] = true
+				local part = GetLiveModelPart(btModel)
+				local isl = part and GetNearestIslandName(part.Position) or "Unknown"
+				SendDiscordWebhook(
+					url,
+					"🐢 Black Tortoise Bloodline Detected",
+					"Boss **Black Tortoise Bloodline** has spawned!",
+					3407793,
+					{
+						{
+							name = "Island",
+							value = isl,
+							inline = true,
+						},
+					}
+				)
+			end
+		else
+			NotifiedWebhookEntities["BlackTortoise_" .. tostring(game.JobId)] = nil
+		end
+	end
+
+	if Config.WebhookVermilionBirdblood then
+		local vbModel = FindBossLiveModel("vermilion")
+		if vbModel then
+			local key = "VermilionBirdblood_" .. tostring(game.JobId)
+			if not NotifiedWebhookEntities[key] then
+				NotifiedWebhookEntities[key] = true
+				local part = GetLiveModelPart(vbModel)
+				local isl = part and GetNearestIslandName(part.Position) or "Unknown"
+				SendDiscordWebhook(
+					url,
+					"🔥 Vermilion Birdblood Detected",
+					"Boss **Vermilion Birdblood** has spawned!",
+					16721408,
+					{
+						{
+							name = "Island",
+							value = isl,
+							inline = true,
+						},
+					}
+				)
+			end
+		else
+			NotifiedWebhookEntities["VermilionBirdblood_" .. tostring(game.JobId)] = nil
+		end
+	end
+end
+
 task.spawn(function()
 	local entityCheckThrottle = 0
 	while task.wait(0.4) do
@@ -2392,6 +2491,9 @@ task.spawn(function()
 				checkWebhookNotifications(mPart, tPart, gList)
 			else
 				clearEntityESP()
+			end
+			if Config.WebhookBlackTortoise or Config.WebhookVermilionBirdblood then
+				checkBossModelWebhook()
 			end
 		end
 	end
@@ -7868,6 +7970,30 @@ end
 			Callback = function(Value)
 				Config.WebhookSacredBeast = Value
 				SaveConfig()
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookBlackTortoiseToggle", {
+			Title = "Black Tortoise Bloodline",
+			Default = Config.WebhookBlackTortoise,
+			Callback = function(Value)
+				Config.WebhookBlackTortoise = Value
+				SaveConfig()
+				if Value then
+					task.spawn(checkBossModelWebhook)
+				end
+			end,
+		})
+
+		Tabs.Webhook:AddToggle("WebhookVermilionBirdbloodToggle", {
+			Title = "Vermilion Birdblood",
+			Default = Config.WebhookVermilionBirdblood,
+			Callback = function(Value)
+				Config.WebhookVermilionBirdblood = Value
+				SaveConfig()
+				if Value then
+					task.spawn(checkBossModelWebhook)
+				end
 			end,
 		})
 
