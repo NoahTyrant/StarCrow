@@ -55,10 +55,12 @@ local Config = {
 	SelectedIsland = "",
 	SelectedNPC = "",
 	SelectedPlayer = "",
+	SelectedTPBoss = "Nameless Octoparasite",
 	ESPEnabled = false,
 	WalkOnWater = false,
 	InstantInteract = false,
-	HideNameAndID = false,
+	HideNameAndID = true,
+	HideNameDefaultV2 = true,
 	AntiAFK = true,
 	FullBright = false,
 	NoFog = false,
@@ -77,6 +79,12 @@ local Config = {
 	AutoTPPos = false,
 	AutoFarmIsland = false,
 	SelectedFarmIsland = "Beginning Isle",
+	SkyFarm = false,
+	SkyFarmHeight = 609,
+	SelectedBuyRod = "",
+	SelectedSecretRod = "",
+	UltraFPSBoost = false,
+	FakeStats = false,
 	AutoTicketQuest = false,
 	TicketQuestMode = "Hard",
 	AutoZengTianguoQuest = false,
@@ -112,6 +120,10 @@ local Config = {
 	ESPMaoshan = false,
 	ESPTaoist = false,
 	ESPGodSpirit = false,
+	ESPSecretRod = false,
+	ESPBlackTortoise = false,
+	ESPVermilion = false,
+	ESPNameless = false,
 	BossWebhookUrl = "",
 	WeatherWebhookUrl = "",
 }
@@ -136,6 +148,10 @@ local function LoadConfig()
 				if Config[k] ~= nil then
 					Config[k] = v
 				end
+			end
+			if not decoded.HideNameDefaultV2 then
+				Config.HideNameAndID = true
+				Config.HideNameDefaultV2 = true
 			end
 			if type(decoded.WebhookUrl) == "string" and decoded.WebhookUrl ~= "" then
 				Config.WebhookUrl = decoded.WebhookUrl
@@ -947,8 +963,162 @@ local function stopFly()
 	end
 end
 
+local IsBuyingSecretRod = false
+local SetSkyFarm, SetSkyFarmHeight
+
+do
+	local SKY_PLATFORM_NAME = "StarCrow_MainSkyFarmPlatform"
+	local skyPlatform = nil
+	local skyHeartbeatConn = nil
+	local skySavedY = nil
+	local skyAnchorX = nil
+	local skyAnchorZ = nil
+	local skyAnchorRot = nil
+
+	local function DestroySkyPlatform()
+		if skyHeartbeatConn then
+			pcall(function()
+				skyHeartbeatConn:Disconnect()
+			end)
+			skyHeartbeatConn = nil
+		end
+		if skyPlatform then
+			pcall(function()
+				skyPlatform:Destroy()
+			end)
+			skyPlatform = nil
+		end
+		local leftover = workspace:FindFirstChild(SKY_PLATFORM_NAME)
+		if leftover then
+			pcall(function()
+				leftover:Destroy()
+			end)
+		end
+	end
+
+	local function EnsureSkyFarmPlatform(x, h, z)
+		if not (skyPlatform and skyPlatform.Parent == workspace) then
+			local old = workspace:FindFirstChild(SKY_PLATFORM_NAME)
+			if old then
+				pcall(function()
+					old:Destroy()
+				end)
+			end
+			local p = Instance.new("Part")
+			p.Name = SKY_PLATFORM_NAME
+			p.Anchored = true
+			p.CanCollide = true
+			p.CanTouch = false
+			p.CanQuery = false
+			p.Transparency = 1
+			p.CastShadow = false
+			p.Size = Vector3.new(320, 1, 320)
+			p.CFrame = CFrame.new(x, h - 3.5, z)
+			p.Parent = workspace
+			skyPlatform = p
+		else
+			skyPlatform.CFrame = CFrame.new(x, h - 3.5, z)
+		end
+		return skyPlatform
+	end
+
+	local function SnapCharacterToSky(h, useSavedAnchor)
+		local c = LocalPlayer.Character or cachedChar
+		local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if not hrp then
+			return
+		end
+		local targetX = (useSavedAnchor and skyAnchorX) or hrp.Position.X
+		local targetZ = (useSavedAnchor and skyAnchorZ) or hrp.Position.Z
+		local rot = (useSavedAnchor and skyAnchorRot) or hrp.CFrame.Rotation
+		skyAnchorX = targetX
+		skyAnchorZ = targetZ
+		skyAnchorRot = rot
+		EnsureSkyFarmPlatform(targetX, h, targetZ)
+		pcall(function()
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.AssemblyAngularVelocity = Vector3.zero
+		end)
+		hrp.CFrame = CFrame.new(targetX, h, targetZ) * rot
+	end
+
+	SetSkyFarm = function(enabled, restoreAnchor)
+		Config.SkyFarm = enabled == true
+		if not Config.SkyFarm then
+			DestroySkyPlatform()
+			local prevY = skySavedY
+			local prevX = skyAnchorX
+			local prevZ = skyAnchorZ
+			skySavedY = nil
+			skyAnchorX = nil
+			skyAnchorZ = nil
+			skyAnchorRot = nil
+			local c = LocalPlayer.Character or cachedChar
+			local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+			if hrp and prevY then
+				pcall(function()
+					hrp.AssemblyLinearVelocity = Vector3.zero
+					hrp.AssemblyAngularVelocity = Vector3.zero
+				end)
+				hrp.CFrame = CFrame.new(prevX or hrp.Position.X, prevY, prevZ or hrp.Position.Z) * hrp.CFrame.Rotation
+			end
+			return
+		end
+
+		local h = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 609), 100, 1000)
+		Config.SkyFarmHeight = h
+		local c = LocalPlayer.Character or cachedChar
+		local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if hrp and not skySavedY then
+			skySavedY = hrp.Position.Y
+			skyAnchorX = hrp.Position.X
+			skyAnchorZ = hrp.Position.Z
+			skyAnchorRot = hrp.CFrame.Rotation
+		end
+		SnapCharacterToSky(h, restoreAnchor == true)
+
+		if not skyHeartbeatConn then
+			skyHeartbeatConn = RunService.Heartbeat:Connect(function()
+				if not Config.SkyFarm then
+					task.defer(DestroySkyPlatform)
+					return
+				end
+				if IsCheckingSacredBeast or IsBuyingSecretRod or Config.AutoBoss or Config.AutoSecretBoss then
+					return
+				end
+				local curChar = LocalPlayer.Character or cachedChar
+				local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+				if not curHrp then
+					return
+				end
+				local curH = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 609), 100, 1000)
+				skyAnchorX = curHrp.Position.X
+				skyAnchorZ = curHrp.Position.Z
+				skyAnchorRot = curHrp.CFrame.Rotation
+				EnsureSkyFarmPlatform(curHrp.Position.X, curH, curHrp.Position.Z)
+				if math.abs(curHrp.Position.Y - curH) > 15 then
+					pcall(function()
+						curHrp.AssemblyLinearVelocity = Vector3.zero
+					end)
+					curHrp.CFrame = CFrame.new(curHrp.Position.X, curH, curHrp.Position.Z) * curHrp.CFrame.Rotation
+				end
+			end)
+		end
+	end
+
+	SetSkyFarmHeight = function(val)
+		local h = math.clamp(math.floor(tonumber(val) or 609), 100, 1000)
+		Config.SkyFarmHeight = h
+		if Config.SkyFarm and not (IsCheckingSacredBeast or IsBuyingSecretRod or Config.AutoBoss or Config.AutoSecretBoss) then
+			SnapCharacterToSky(h, false)
+		end
+	end
+
+	DestroySkyPlatform()
+end
+
 local function StepAutoTPPos(char)
-	if not Config.AutoTPPos or IsCheckingSacredBeast then
+	if not Config.AutoTPPos or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -966,7 +1136,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or IsCheckingSacredBeast then
+	if not Config.AutoFarmIsland or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -987,6 +1157,9 @@ if cachedChar then
 	task.spawn(function()
 		StepAutoTPPos(cachedChar)
 		StepAutoFarmIsland(cachedChar)
+		if Config.SkyFarm then
+			SetSkyFarm(true)
+		end
 	end)
 end
 
@@ -999,6 +1172,9 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	task.wait(0.3)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
+	if Config.SkyFarm then
+		SetSkyFarm(true)
+	end
 	if Config.FlyEnabled then
 		startFly()
 	end
@@ -1222,6 +1398,7 @@ local function LockFishingBar()
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
+			or Config.SkyFarm
 		)
 	then
 		return
@@ -1549,7 +1726,7 @@ RunService.RenderStepped:Connect(function()
 	end
 	BindFishingBarLock()
 	LockFishingBar()
-	if Config.AutoMiniGame then
+	if Config.AutoMiniGame or Config.SkyFarm then
 		StepPhase2MiniGame()
 	end
 end)
@@ -1560,7 +1737,7 @@ RunService.Stepped:Connect(function()
 	end
 	BindFishingBarLock()
 	LockFishingBar()
-	if Config.AutoMiniGame then
+	if Config.AutoMiniGame or Config.SkyFarm then
 		StepPhase2MiniGame()
 	end
 end)
@@ -1571,10 +1748,10 @@ RunService.Heartbeat:Connect(function()
 	end
 	BindFishingBarLock()
 	LockFishingBar()
-	if Config.AutoMiniGame then
+	if Config.AutoMiniGame or Config.SkyFarm then
 		StepPhase2MiniGame()
 	end
-	if Config.AutoMiniGame then
+	if Config.AutoMiniGame or Config.SkyFarm then
 		StepRhythmMiniGame()
 	end
 end)
@@ -1804,8 +1981,13 @@ task.spawn(function()
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
-		local activeCast = Config.AutoCast or Config.AutoFarmIsland
-		local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+			or Config.SkyFarm
+		local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.SkyFarm
+		local activeSkill = Config.AutoSkill
+			or Config.AutoBoss
+			or Config.AutoSecretBoss
+			or Config.AutoFarmIsland
+			or Config.SkyFarm
 
 		if not isMinigame then
 			skillSeqIndex = 1
@@ -1896,7 +2078,14 @@ end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 	if
-		(Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+		(
+			Config.AutoMiniGame
+			or Config.AutoReel
+			or Config.AutoBoss
+			or Config.AutoSecretBoss
+			or Config.AutoFarmIsland
+			or Config.SkyFarm
+		)
 		and remote
 	then
 		task.wait(0.05)
@@ -1927,7 +2116,14 @@ end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
 	if
-		(Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+		(
+			Config.AutoMiniGame
+			or Config.AutoReel
+			or Config.AutoBoss
+			or Config.AutoSecretBoss
+			or Config.AutoFarmIsland
+			or Config.SkyFarm
+		)
 		and remote
 	then
 		task.wait(1.05)
@@ -1950,6 +2146,10 @@ local function clearPlayerESP()
 	for _, player in ipairs(Players:GetPlayers()) do
 		local char = player.Character
 		if char then
+			local hl = char:FindFirstChild("StarCrowPlayerHL")
+			if hl then
+				hl:Destroy()
+			end
 			local head = char:FindFirstChild("Head")
 			if head then
 				local esp = head:FindFirstChild("StarCrowESP")
@@ -1965,6 +2165,9 @@ local function updateESP()
 	if not Config.ESPEnabled then
 		return
 	end
+	local purpleFill = Color3.fromRGB(170, 50, 255)
+	local purpleOutline = Color3.fromRGB(225, 165, 255)
+	local purpleText = Color3.fromRGB(195, 100, 255)
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer then
 			local char = player.Character
@@ -1973,7 +2176,23 @@ local function updateESP()
 				local hum = char:FindFirstChildOfClass("Humanoid")
 				if head and hum then
 					local esp = head:FindFirstChild("StarCrowESP")
+					local hl = char:FindFirstChild("StarCrowPlayerHL")
 					if hum.Health > 0 then
+						if not hl then
+							hl = Instance.new("Highlight")
+							hl.Name = "StarCrowPlayerHL"
+							hl.Adornee = char
+							hl.FillColor = purpleFill
+							hl.OutlineColor = purpleOutline
+							hl.FillTransparency = 0.35
+							hl.OutlineTransparency = 0
+							hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+							hl.Parent = char
+						else
+							hl.FillColor = purpleFill
+							hl.OutlineColor = purpleOutline
+							hl.Enabled = true
+						end
 						if not esp then
 							esp = Instance.new("BillboardGui")
 							esp.Name = "StarCrowESP"
@@ -1990,16 +2209,20 @@ local function updateESP()
 							text.TextScaled = false
 							text.TextSize = 13
 							text.Font = Enum.Font.GothamBold
-							text.TextColor3 = Color3.fromRGB(255, 255, 255)
+							text.TextColor3 = purpleText
 							text.TextStrokeTransparency = 0
 							text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 							text.TextXAlignment = Enum.TextXAlignment.Center
 							esp.Parent = head
 						end
+						esp.NameText.TextColor3 = purpleText
 						esp.NameText.Text = player.DisplayName
 					else
 						if esp then
 							esp:Destroy()
+						end
+						if hl then
+							hl:Destroy()
 						end
 					end
 				end
@@ -2011,6 +2234,22 @@ end
 local function FindAllGodSpirits()
 	local results = {}
 	local seen = {}
+
+	local function resolveEntityTarget(desc)
+		local part = GetModelPart(desc)
+		if part and part:IsDescendantOf(workspace) then
+			return part.Position, part.CFrame, part, desc
+		end
+		if desc:IsA("PVInstance") then
+			local ok, cf = pcall(function()
+				return desc:GetPivot()
+			end)
+			if ok and cf and cf.Position.Magnitude > 1 then
+				return cf.Position, cf, nil, desc
+			end
+		end
+		return nil, nil, nil, nil
+	end
 
 	local function checkObj(desc)
 		if not desc or desc:IsA("Folder") then
@@ -2051,10 +2290,17 @@ local function FindAllGodSpirits()
 		end
 
 		if col and not seen[col] then
-			local part = GetModelPart(desc)
-			if part and part:IsDescendantOf(workspace) then
+			local pos, cf, part, obj = resolveEntityTarget(desc)
+			if pos then
 				seen[col] = true
-				table.insert(results, { name = (dName ~= "" and dName ~= "God") and dName or col, part = part, lower = col })
+				table.insert(results, {
+					name = (dName ~= "" and dName ~= "God") and dName or col,
+					part = part,
+					obj = obj,
+					pos = pos,
+					cf = cf,
+					lower = col,
+				})
 			end
 		end
 	end
@@ -2095,7 +2341,7 @@ end
 local function FindGodSpiritPart()
 	local all = FindAllGodSpirits()
 	if #all > 0 then
-		return all[1].part, all[1].name, all[1].lower
+		return all[1].part, all[1].name, all[1].lower, all[1].cf
 	end
 	return nil
 end
@@ -2117,7 +2363,21 @@ local function FindSpecialEntities()
 			return
 		end
 		local part = GetModelPart(desc)
-		if not part or not part:IsDescendantOf(workspace) then
+		local pos = nil
+		local cf = nil
+		if part and part:IsDescendantOf(workspace) then
+			pos = part.Position
+			cf = part.CFrame
+		elseif desc:IsA("PVInstance") then
+			local ok, pcf = pcall(function()
+				return desc:GetPivot()
+			end)
+			if ok and pcf and pcf.Position.Magnitude > 1 then
+				pos = pcf.Position
+				cf = pcf
+			end
+		end
+		if not pos then
 			return
 		end
 
@@ -2148,9 +2408,9 @@ local function FindSpecialEntities()
 		end
 
 		if isMao then
-			table.insert(candidatesMaoshan, { part = part, folder = folderName, model = desc })
+			table.insert(candidatesMaoshan, { part = part, pos = pos, cf = cf, folder = folderName, obj = desc })
 		elseif isTao then
-			table.insert(candidatesTaoist, { part = part, folder = folderName, model = desc })
+			table.insert(candidatesTaoist, { part = part, pos = pos, cf = cf, folder = folderName, obj = desc })
 		end
 	end
 
@@ -2161,8 +2421,8 @@ local function FindSpecialEntities()
 		end
 	end
 
-	local finalMaoshan = candidatesMaoshan[1] and candidatesMaoshan[1].part or nil
-	local finalTaoist = candidatesTaoist[1] and candidatesTaoist[1].part or nil
+	local finalMaoshan = candidatesMaoshan[1] or nil
+	local finalTaoist = candidatesTaoist[1] or nil
 
 	local godSpirits = FindAllGodSpirits()
 	return finalMaoshan, finalTaoist, godSpirits
@@ -2170,77 +2430,174 @@ end
 
 local ActiveEntityESPs = {}
 
-local function applyEntityESP(part, tag, title, color3)
-	if not part or not part:IsDescendantOf(workspace) then
+local function destroyEntityESPEntry(entry)
+	if not entry then
 		return
 	end
-	local esp = part:FindFirstChild("StarCrowEntityESP")
-	if not esp then
-		esp = Instance.new("BillboardGui")
-		esp.Name = "StarCrowEntityESP"
-		esp.Adornee = part
-		esp.Size = UDim2.new(0, 220, 0, 28)
-		esp.StudsOffset = Vector3.new(0, 3, 0)
-		esp.AlwaysOnTop = true
-		esp.MaxDistance = math.huge
-		local text = Instance.new("TextLabel")
-		text.Name = "NameText"
-		text.Parent = esp
-		text.Size = UDim2.new(1, 0, 1, 0)
-		text.BackgroundTransparency = 1
-		text.TextScaled = false
-		text.TextSize = 13
-		text.Font = Enum.Font.GothamBold
-		text.TextColor3 = color3 or Color3.fromRGB(255, 255, 255)
-		text.TextStrokeTransparency = 0
-		text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-		text.TextXAlignment = Enum.TextXAlignment.Center
-		esp.Parent = part
+	if type(entry) == "userdata" then
+		pcall(function()
+			entry:Destroy()
+		end)
+		return
 	end
-	local nameLabel = esp:FindFirstChild("NameText")
-	if nameLabel then
-		nameLabel.TextColor3 = color3 or Color3.fromRGB(255, 255, 255)
-		nameLabel.Text = title
+	if entry.gui then
+		pcall(function()
+			entry.gui:Destroy()
+		end)
+		entry.gui = nil
 	end
-	ActiveEntityESPs[tag] = esp
+	if entry.hl then
+		pcall(function()
+			entry.hl:Destroy()
+		end)
+		entry.hl = nil
+	end
+	if entry.att then
+		pcall(function()
+			entry.att:Destroy()
+		end)
+		entry.att = nil
+	end
+end
+
+local function applyEntityESP(targetInfo, tag, title)
+	if not targetInfo or not targetInfo.pos then
+		return
+	end
+	local purpleFill = Color3.fromRGB(170, 50, 255)
+	local purpleOutline = Color3.fromRGB(225, 165, 255)
+	local purpleText = Color3.fromRGB(195, 100, 255)
+	local part = targetInfo.part
+	local obj = targetInfo.obj or part
+	local pos = targetInfo.pos
+
+	local entry = ActiveEntityESPs[tag]
+	if not entry or type(entry) ~= "table" then
+		if entry then
+			destroyEntityESPEntry(entry)
+		end
+		entry = {}
+		ActiveEntityESPs[tag] = entry
+	end
+
+	local adornee = nil
+	if part and part:IsDescendantOf(workspace) then
+		adornee = part
+		if entry.att then
+			pcall(function()
+				entry.att:Destroy()
+			end)
+			entry.att = nil
+		end
+	else
+		local terrain = workspace:FindFirstChildOfClass("Terrain")
+		if terrain then
+			if not (entry.att and entry.att.Parent == terrain) then
+				local att = Instance.new("Attachment")
+				att.Name = "StarCrowEntityAtt_" .. tag
+				att.Parent = terrain
+				entry.att = att
+			end
+			entry.att.WorldPosition = pos
+			adornee = entry.att
+		end
+	end
+
+	if obj and part and part:IsDescendantOf(workspace) then
+		if not (entry.hl and entry.hl.Parent == obj) then
+			if entry.hl then
+				pcall(function()
+					entry.hl:Destroy()
+				end)
+			end
+			local hl = Instance.new("Highlight")
+			hl.Name = "StarCrowEntityHL_" .. tag
+			hl.Adornee = obj
+			hl.FillColor = purpleFill
+			hl.OutlineColor = purpleOutline
+			hl.FillTransparency = 0.35
+			hl.OutlineTransparency = 0
+			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			hl.Parent = obj
+			entry.hl = hl
+		else
+			entry.hl.FillColor = purpleFill
+			entry.hl.OutlineColor = purpleOutline
+			entry.hl.Enabled = true
+		end
+	elseif entry.hl then
+		pcall(function()
+			entry.hl:Destroy()
+		end)
+		entry.hl = nil
+	end
+
+	if adornee then
+		if not (entry.gui and entry.gui.Parent) then
+			local esp = Instance.new("BillboardGui")
+			esp.Name = "StarCrowEntityESP"
+			esp.Size = UDim2.new(0, 220, 0, 26)
+			esp.StudsOffset = Vector3.new(0, 3.5, 0)
+			esp.AlwaysOnTop = true
+			esp.MaxDistance = math.huge
+			local text = Instance.new("TextLabel")
+			text.Name = "NameText"
+			text.Parent = esp
+			text.Size = UDim2.new(1, 0, 1, 0)
+			text.BackgroundTransparency = 1
+			text.TextScaled = false
+			text.TextSize = 13
+			text.Font = Enum.Font.GothamBold
+			text.TextColor3 = purpleText
+			text.TextStrokeTransparency = 0
+			text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+			text.TextXAlignment = Enum.TextXAlignment.Center
+			entry.gui = esp
+		end
+		entry.gui.Adornee = adornee
+		if entry.gui.Parent ~= adornee then
+			entry.gui.Parent = adornee
+		end
+		local nameLabel = entry.gui:FindFirstChild("NameText")
+		if nameLabel then
+			nameLabel.TextColor3 = purpleText
+			nameLabel.Text = title
+		end
+	end
 end
 
 local function clearEntityESP(tag)
 	if tag then
 		if tag == "GodSpirit" then
-			for k, esp in pairs(ActiveEntityESPs) do
+			for k, entry in pairs(ActiveEntityESPs) do
 				if string.find(k, "GodSpirit_") then
-					if esp and esp.Parent then
-						esp:Destroy()
-					end
+					destroyEntityESPEntry(entry)
 					ActiveEntityESPs[k] = nil
 				end
 			end
 		else
-			if ActiveEntityESPs[tag] and ActiveEntityESPs[tag].Parent then
-				ActiveEntityESPs[tag]:Destroy()
+			if ActiveEntityESPs[tag] then
+				destroyEntityESPEntry(ActiveEntityESPs[tag])
+				ActiveEntityESPs[tag] = nil
 			end
-			ActiveEntityESPs[tag] = nil
 		end
 	else
-		for k, esp in pairs(ActiveEntityESPs) do
-			if esp and esp.Parent then
-				esp:Destroy()
-			end
+		for k, entry in pairs(ActiveEntityESPs) do
+			destroyEntityESPEntry(entry)
+			ActiveEntityESPs[k] = nil
 		end
-		ActiveEntityESPs = {}
 	end
 end
 
 local function updateEntityESP(finalMaoshan, finalTaoist, godSpirits)
 	if Config.ESPMaoshan and finalMaoshan then
-		applyEntityESP(finalMaoshan, "Maoshan", "Maoshan", Color3.fromRGB(180, 100, 255))
+		applyEntityESP(finalMaoshan, "Maoshan", "Maoshan")
 	else
 		clearEntityESP("Maoshan")
 	end
 
 	if Config.ESPTaoist and finalTaoist then
-		applyEntityESP(finalTaoist, "Taoist", "Taoist", Color3.fromRGB(255, 220, 0))
+		applyEntityESP(finalTaoist, "Taoist", "Taoist")
 	else
 		clearEntityESP("Taoist")
 	end
@@ -2250,16 +2607,9 @@ local function updateEntityESP(finalMaoshan, finalTaoist, godSpirits)
 		for _, g in ipairs(godSpirits) do
 			local tag = "GodSpirit_" .. g.lower
 			currentKeys[tag] = true
-			local dispName = g.lower == "yellow" and "Yellow" or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
-			local c = Color3.fromRGB(0, 255, 200)
-			if g.lower == "yellow" then
-				c = Color3.fromRGB(255, 220, 0)
-			elseif g.lower == "green" then
-				c = Color3.fromRGB(0, 255, 128)
-			elseif g.lower == "blue" then
-				c = Color3.fromRGB(60, 160, 255)
-			end
-			applyEntityESP(g.part, tag, dispName, c)
+			local dispName = g.lower == "yellow" and "Yellow"
+				or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
+			applyEntityESP(g, tag, dispName)
 		end
 		for k, _ in pairs(ActiveEntityESPs) do
 			if string.find(k, "GodSpirit_") and not currentKeys[k] then
@@ -2284,11 +2634,11 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 
 	if Config.WebhookMaoshan then
-		if finalMaoshan then
+		if finalMaoshan and finalMaoshan.pos then
 			local key = "Maoshan_" .. tostring(game.JobId)
 			if not NotifiedWebhookEntities[key] then
 				NotifiedWebhookEntities[key] = true
-				local isl = GetNearestIslandName(finalMaoshan.Position)
+				local isl = GetNearestIslandName(finalMaoshan.pos)
 				SendDiscordWebhook(
 					url,
 					"Maoshan Detected",
@@ -2309,11 +2659,11 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 
 	if Config.WebhookTaoist then
-		if finalTaoist then
+		if finalTaoist and finalTaoist.pos then
 			local key = "Taoist_" .. tostring(game.JobId)
 			if not NotifiedWebhookEntities[key] then
 				NotifiedWebhookEntities[key] = true
-				local isl = GetNearestIslandName(finalTaoist.Position)
+				local isl = GetNearestIslandName(finalTaoist.pos)
 				SendDiscordWebhook(
 					url,
 					"Taoist Detected",
@@ -2339,10 +2689,11 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 			for _, g in ipairs(godSpirits) do
 				activeSpirits[g.lower] = true
 				local key = "GodSpirit_" .. g.lower .. "_" .. tostring(game.JobId)
-				if not NotifiedWebhookEntities[key] then
+				if not NotifiedWebhookEntities[key] and g.pos then
 					NotifiedWebhookEntities[key] = true
-					local isl = GetNearestIslandName(g.part.Position)
-					local dispName = g.lower == "yellow" and "Yellow" or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
+					local isl = GetNearestIslandName(g.pos)
+					local dispName = g.lower == "yellow" and "Yellow"
+						or (g.lower == "green" and "Green" or (g.lower == "blue" and "Blue" or (string.upper(string.sub(g.lower, 1, 1)) .. string.sub(g.lower, 2))))
 					local embedColor = 65280
 					if g.lower == "yellow" then
 						embedColor = 16776960
@@ -2379,100 +2730,910 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 end
 
-local function FindBossLiveModel(pattern)
-	local pLower = string.lower(pattern)
-	for _, child in ipairs(workspace:GetChildren()) do
-		if child:IsA("Model") and not Players:GetPlayerFromCharacter(child) then
-			local cLower = string.lower(child.Name)
-			if string.find(cLower, pLower, 1, true) then
-				return child
+local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, TeleportToSpecialBoss, checkSacredBossWebhooks
+
+do
+	local NormalRodDefs = {
+		{ name = "Bamboo Rod", price = 100, seller = "Beginning Isle's Rod Seller", island = "Beginning Isle" },
+		{ name = "Iron Hook Rod", price = 500, seller = "Beginning Isle's Rod Seller", island = "Beginning Isle" },
+		{ name = "Steel Rod", price = 1000, seller = "Beginning Isle's Rod Seller", island = "Beginning Isle" },
+		{ name = "Enchanted Steel Rod", price = 2000, seller = "Beginning Isle's Rod Seller", island = "Beginning Isle" },
+		{ name = "Alloy Rod", price = 5000, seller = "Bamboo Isle's Rod Seller", island = "Bamboo Isle" },
+		{ name = "Emerald Rod", price = 10000, seller = "Bamboo Isle's Rod Seller", island = "Bamboo Isle" },
+		{ name = "Bloodfire Rod", price = 20000, seller = "Bamboo Isle's Rod Seller", island = "Bamboo Isle" },
+		{ name = "Triple Steel Rod", price = 100000, seller = "Fallout Isle's Rod Seller", island = "Fallout Isle" },
+		{ name = "Golden Rod", price = 200000, seller = "Fallout Isle's Rod Seller", island = "Fallout Isle" },
+		{ name = "Grandmaster Steel Rod", price = 250000, seller = "Sovereign Isle's Rod Seller", island = "Sovereign Isle" },
+		{ name = "Grandmaster Emerald Rod", price = 500000, seller = "Sovereign Isle's Rod Seller", island = "Sovereign Isle" },
+		{ name = "Grandmaster Golden Rod", price = 1000000, seller = "Sovereign Isle's Rod Seller", island = "Sovereign Isle" },
+		{ name = "Inferno Rod", price = 1500000, seller = "Sovereign Isle's Rod Seller", island = "Sovereign Isle" },
+		{ name = "Steel Spine Rod", price = 1500000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Golden Spine Rod", price = 2000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Platinum Spine Rod", price = 3000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Diamond Spine Rod", price = 4000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Gravisteel Rod", price = 5000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Auric Gravity Rod", price = 6000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Inferno Gravity Rod", price = 7000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Cryo Gravity Rod", price = 8000000, seller = "Frost Isle's Rod Seller", island = "Frost Isle" },
+		{ name = "Thunder Thorn Rod", price = 10000000, seller = "Coconut Isle's Rod Dealer", island = "Coconut Isle" },
+		{ name = "Soul Thorn Rod", price = 20000000, seller = "Coconut Isle's Rod Dealer", island = "Coconut Isle" },
+		{ name = "Starlight Rod", price = 60000000, seller = "Amber Isle's Rod Seller", island = "Amber Isle" },
+	}
+
+	local SecretRodDefs = {
+		{ name = "Ascendant Bamboo Rod", price = 15 },
+		{ name = "Blazeshark Rod", price = 35 },
+		{ name = "Lifebloom Rod", price = 75 },
+		{ name = "Anchorbound Rod", price = 200 },
+		{ name = "Demonic Rod", price = 300 },
+		{ name = "Kraken Rod", price = 500 },
+		{ name = "Legacy Rod", price = nil },
+	}
+
+	local SecretRodFallbackCFrames = {
+		["Anchorbound Rod"] = CFrame.new(-1208.55396, 56.3270988, 1646.20764),
+		["Ascendant Bamboo Rod"] = CFrame.new(-1360.65027, 140.561218, 31.0494728),
+		["Blazeshark Rod"] = CFrame.new(-8.43965149, 53.8742065, 6.65357065),
+		["Demonic Rod"] = CFrame.new(1181.90454, 82.8990021, -1243.75549),
+		["Kraken Rod"] = CFrame.new(1543.79529, 73.4329834, 1490.93457),
+		["Lifebloom Rod"] = CFrame.new(-114.889297, 74.8509827, -1533.19177),
+	}
+
+	local RodChoiceLookup = {}
+	local ActiveSecretRodESPs = {}
+	local ActiveSacredBossESPs = {}
+
+	local function SanitizeUIText(str)
+		return tostring(str or ""):gsub("[%(%)]", "")
+	end
+
+	local function NormalizeAlphaNum(s)
+		return string.lower(tostring(s or "")):gsub("[^%w]", "")
+	end
+
+	local function FindRodSellerNPC(sellerName)
+		if not sellerName or sellerName == "" then
+			return nil
+		end
+		local targetNorm = NormalizeAlphaNum(sellerName)
+		local npcRoot = workspace:FindFirstChild("NPC")
+		local buyRodFolder = npcRoot and npcRoot:FindFirstChild("BuyFishingRod")
+		local searchRoots = {}
+		if buyRodFolder then
+			table.insert(searchRoots, buyRodFolder)
+		end
+		if npcRoot then
+			table.insert(searchRoots, npcRoot)
+		end
+		table.insert(searchRoots, workspace)
+
+		for _, root in ipairs(searchRoots) do
+			local exact = root:FindFirstChild(sellerName, true)
+			if exact and (exact:IsA("Model") or exact:IsA("BasePart")) then
+				return exact
 			end
-		elseif child:IsA("Folder") and child.Name ~= "Terrain" and child.Name ~= "Camera" then
-			for _, sub in ipairs(child:GetChildren()) do
-				if sub:IsA("Model") and not Players:GetPlayerFromCharacter(sub) then
-					local sLower = string.lower(sub.Name)
-					if string.find(sLower, pLower, 1, true) then
-						return sub
+			for _, desc in ipairs(root:GetDescendants()) do
+				if desc:IsA("Model") or desc:IsA("BasePart") then
+					local dNorm = NormalizeAlphaNum(desc.Name)
+					if dNorm == targetNorm or (targetNorm ~= "" and string.find(dNorm, targetNorm, 1, true)) then
+						return desc
 					end
 				end
 			end
 		end
-	end
-	return nil
-end
-
-local function GetLiveModelPart(model)
-	if not model then
 		return nil
 	end
-	if model.PrimaryPart then
-		return model.PrimaryPart
-	end
-	local hrp = model:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		return hrp
-	end
-	return model:FindFirstChildWhichIsA("BasePart")
-end
 
-local function checkBossModelWebhook()
-	local url = Config.WebhookUrl or ""
-	if url == "" then
-		return
+	local function ResolveObjectWorldPos(obj)
+		if not obj then
+			return nil, nil
+		end
+		local part = GetModelPart(obj)
+		if part then
+			return part.Position, part
+		end
+		if obj:IsA("PVInstance") then
+			local ok, pivotCF = pcall(function()
+				return obj:GetPivot()
+			end)
+			if ok and pivotCF and pivotCF.Position.Magnitude > 1 then
+				return pivotCF.Position, nil
+			end
+		end
+		for _, desc in ipairs(obj:GetDescendants()) do
+			if desc:IsA("Attachment") then
+				return desc.WorldPosition, nil
+			elseif desc:IsA("CFrameValue") and desc.Value.Position.Magnitude > 1 then
+				return desc.Value.Position, nil
+			elseif desc:IsA("Vector3Value") and desc.Value.Magnitude > 1 then
+				return desc.Value, nil
+			end
+		end
+		return nil, nil
 	end
 
-	if Config.WebhookBlackTortoise then
-		local btModel = FindBossLiveModel("black tortoise")
-		if btModel then
+	local function ResolveSecretRodPosition(rodName, rodObj)
+		local folder = workspace:FindFirstChild("SecretRod")
+		local obj = rodObj or (folder and folder:FindFirstChild(rodName))
+		local pos, part = ResolveObjectWorldPos(obj)
+		if pos then
+			return pos, part, obj
+		end
+		local fb = SecretRodFallbackCFrames[rodName]
+		if fb then
+			return fb.Position, nil, obj
+		end
+		return nil, nil, obj
+	end
+
+	GetNormalBuyRodOptions = function()
+		local options = {}
+		for _, def in ipairs(NormalRodDefs) do
+			local meta = {
+				kind = "normal",
+				name = def.name,
+				price = def.price,
+				seller = def.seller,
+				island = def.island,
+				label = def.name,
+			}
+			RodChoiceLookup[def.name] = meta
+			table.insert(options, def.name)
+		end
+		return options
+	end
+
+	GetSecretBuyRodOptions = function()
+		local seen = {}
+		local entries = {}
+		for _, def in ipairs(SecretRodDefs) do
+			seen[def.name] = true
+			table.insert(entries, { name = def.name, price = def.price })
+		end
+		local folder = workspace:FindFirstChild("SecretRod")
+		if folder then
+			for _, child in ipairs(folder:GetChildren()) do
+				if child.Name ~= "" and not seen[child.Name] then
+					seen[child.Name] = true
+					table.insert(entries, { name = child.Name, price = nil })
+				end
+			end
+		end
+		table.sort(entries, function(a, b)
+			local pa = a.price or math.huge
+			local pb = b.price or math.huge
+			if pa ~= pb then
+				return pa < pb
+			end
+			return a.name < b.name
+		end)
+		local options = {}
+		for _, item in ipairs(entries) do
+			local meta = {
+				kind = "secret",
+				name = item.name,
+				price = item.price,
+				label = item.name,
+			}
+			RodChoiceLookup[item.name] = meta
+			table.insert(options, item.name)
+		end
+		return options
+	end
+
+	DoBuyRodByChoice = function(choiceStr, fallbackKind)
+		local raw = tostring(choiceStr or "")
+		if raw == "" or IsBuyingSecretRod then
+			return
+		end
+		if next(RodChoiceLookup) == nil then
+			GetNormalBuyRodOptions()
+			GetSecretBuyRodOptions()
+		end
+		local strippedName = string.match(raw, "^(.-)%s+%-%s+") or raw
+		local meta = RodChoiceLookup[raw] or RodChoiceLookup[strippedName]
+		if not meta then
+			meta = {
+				kind = fallbackKind or "secret",
+				name = strippedName,
+			}
+		end
+
+		task.spawn(function()
+			local char = LocalPlayer.Character or cachedChar
+			local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+			if not hrp then
+				return
+			end
+
+			IsBuyingSecretRod = true
+			local boughtOk = false
+			local failMsg = nil
+
+			local ok, err = pcall(function()
+				if meta.kind == "normal" then
+					local sellerObj = FindRodSellerNPC(meta.seller)
+					local sellerPos = ResolveObjectWorldPos(sellerObj)
+					if not sellerPos and meta.island then
+						local islandCF = GetIslandFarmCFrame(meta.island)
+						if islandCF then
+							if LocalPlayer.RequestStreamAroundAsync then
+								task.spawn(function()
+									pcall(function()
+										LocalPlayer:RequestStreamAroundAsync(islandCF.Position, 2)
+									end)
+								end)
+							end
+							pcall(function()
+								hrp.AssemblyLinearVelocity = Vector3.zero
+								hrp.AssemblyAngularVelocity = Vector3.zero
+							end)
+							hrp.CFrame = islandCF
+							task.wait(0.3)
+							sellerObj = FindRodSellerNPC(meta.seller)
+							sellerPos = ResolveObjectWorldPos(sellerObj) or islandCF.Position
+						end
+					end
+					if not sellerPos then
+						failMsg = "Cannot find seller for " .. meta.name
+						return
+					end
+					if LocalPlayer.RequestStreamAroundAsync then
+						task.spawn(function()
+							pcall(function()
+								LocalPlayer:RequestStreamAroundAsync(sellerPos, 2)
+							end)
+						end)
+					end
+					pcall(function()
+						hrp.AssemblyLinearVelocity = Vector3.zero
+						hrp.AssemblyAngularVelocity = Vector3.zero
+					end)
+					hrp.CFrame = CFrame.new(sellerPos + Vector3.new(0, 3, 0))
+					task.wait(0.22)
+					local refreshedSeller = FindRodSellerNPC(meta.seller)
+					local refreshedPos = ResolveObjectWorldPos(refreshedSeller)
+					if refreshedPos then
+						hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 3, 0))
+					end
+					task.wait(0.1)
+				else
+					local pos = ResolveSecretRodPosition(meta.name)
+					if not pos then
+						failMsg = "Cannot find location for " .. meta.name
+						return
+					end
+					if LocalPlayer.RequestStreamAroundAsync then
+						task.spawn(function()
+							pcall(function()
+								LocalPlayer:RequestStreamAroundAsync(pos, 2)
+							end)
+						end)
+					end
+					pcall(function()
+						hrp.AssemblyLinearVelocity = Vector3.zero
+						hrp.AssemblyAngularVelocity = Vector3.zero
+					end)
+					hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+					task.wait(0.25)
+					local refreshedPos = ResolveSecretRodPosition(meta.name)
+					if refreshedPos then
+						hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 3, 0))
+					end
+					task.wait(0.1)
+				end
+
+				local buyEv = Events:FindFirstChild("BuyFishingRod") or Events:WaitForChild("BuyFishingRod", 3)
+				if buyEv then
+					if buyEv:IsA("RemoteEvent") then
+						buyEv:FireServer(meta.name)
+					elseif buyEv:IsA("RemoteFunction") then
+						buyEv:InvokeServer(meta.name)
+					end
+					boughtOk = true
+				else
+					failMsg = "Remote BuyFishingRod not found"
+				end
+				task.wait(0.15)
+			end)
+
+			IsBuyingSecretRod = false
+			if Config.SkyFarm then
+				SetSkyFarm(true, true)
+			end
+
+			if ok and boughtOk then
+				Fluent:Notify({
+					Title = "Buy Rod",
+					Content = SanitizeUIText("Bought " .. meta.name),
+					Duration = 2.5,
+				})
+			else
+				Fluent:Notify({
+					Title = "Buy Rod",
+					Content = SanitizeUIText(failMsg or tostring(err)),
+					Duration = 3,
+				})
+			end
+		end)
+	end
+
+	local function destroyESPEntry(entry)
+		if not entry then
+			return
+		end
+		if entry.gui then
+			pcall(function()
+				entry.gui:Destroy()
+			end)
+		end
+		if entry.hl then
+			pcall(function()
+				entry.hl:Destroy()
+			end)
+		end
+		if entry.att then
+			pcall(function()
+				entry.att:Destroy()
+			end)
+		end
+	end
+
+	clearSecretRodESP = function()
+		for k, entry in pairs(ActiveSecretRodESPs) do
+			destroyESPEntry(entry)
+			ActiveSecretRodESPs[k] = nil
+		end
+	end
+
+	updateSecretRodESP = function()
+		if not Config.ESPSecretRod then
+			clearSecretRodESP()
+			return
+		end
+		local folder = workspace:FindFirstChild("SecretRod")
+		local targets = {}
+		local seenNames = {}
+		if folder then
+			for _, child in ipairs(folder:GetChildren()) do
+				if child.Name ~= "" then
+					seenNames[child.Name] = true
+					table.insert(targets, { name = child.Name, obj = child })
+				end
+			end
+		end
+		for rodName, _ in pairs(SecretRodFallbackCFrames) do
+			if not seenNames[rodName] then
+				seenNames[rodName] = true
+				table.insert(targets, { name = rodName, obj = nil })
+			end
+		end
+
+		local purpleFill = Color3.fromRGB(170, 50, 255)
+		local purpleOutline = Color3.fromRGB(225, 165, 255)
+		local purpleText = Color3.fromRGB(195, 100, 255)
+		local activeKeys = {}
+
+		for _, item in ipairs(targets) do
+			local rodName = item.name
+			local pos, part, obj = ResolveSecretRodPosition(rodName, item.obj)
+			if pos then
+				activeKeys[rodName] = true
+				local entry = ActiveSecretRodESPs[rodName]
+				if not entry then
+					entry = {}
+					ActiveSecretRodESPs[rodName] = entry
+				end
+
+				local adornee = nil
+				if part and part:IsDescendantOf(workspace) then
+					adornee = part
+					if entry.att then
+						pcall(function()
+							entry.att:Destroy()
+						end)
+						entry.att = nil
+					end
+				else
+					local terrain = workspace:FindFirstChildOfClass("Terrain")
+					if terrain then
+						if not (entry.att and entry.att.Parent == terrain) then
+							local att = Instance.new("Attachment")
+							att.Name = "StarCrowSecretRodAtt_" .. rodName
+							att.Parent = terrain
+							entry.att = att
+						end
+						entry.att.WorldPosition = pos
+						adornee = entry.att
+					end
+				end
+
+				if obj and part and part:IsDescendantOf(workspace) then
+					if not (entry.hl and entry.hl.Parent == obj) then
+						if entry.hl then
+							pcall(function()
+								entry.hl:Destroy()
+							end)
+						end
+						local hl = Instance.new("Highlight")
+						hl.Name = "StarCrowSecretRodHL"
+						hl.Adornee = obj
+						hl.FillColor = purpleFill
+						hl.OutlineColor = purpleOutline
+						hl.FillTransparency = 0.35
+						hl.OutlineTransparency = 0
+						hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+						hl.Parent = obj
+						entry.hl = hl
+					else
+						entry.hl.FillColor = purpleFill
+						entry.hl.OutlineColor = purpleOutline
+						entry.hl.Enabled = true
+					end
+				elseif entry.hl then
+					pcall(function()
+						entry.hl:Destroy()
+					end)
+					entry.hl = nil
+				end
+
+				if adornee then
+					if not (entry.gui and entry.gui.Parent) then
+						local bb = Instance.new("BillboardGui")
+						bb.Name = "StarCrowSecretRodESP"
+						bb.Size = UDim2.new(0, 220, 0, 24)
+						bb.StudsOffset = Vector3.new(0, 3.5, 0)
+						bb.AlwaysOnTop = true
+						bb.MaxDistance = math.huge
+
+						local nameLbl = Instance.new("TextLabel")
+						nameLbl.Name = "NameText"
+						nameLbl.Size = UDim2.new(1, 0, 1, 0)
+						nameLbl.BackgroundTransparency = 1
+						nameLbl.TextScaled = false
+						nameLbl.TextSize = 13
+						nameLbl.Font = Enum.Font.GothamBold
+						nameLbl.TextColor3 = purpleText
+						nameLbl.TextStrokeTransparency = 0
+						nameLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+						nameLbl.TextXAlignment = Enum.TextXAlignment.Center
+						nameLbl.Parent = bb
+
+						entry.gui = bb
+					end
+
+					entry.gui.Adornee = adornee
+					if entry.gui.Parent ~= adornee then
+						entry.gui.Parent = adornee
+					end
+
+					local nameLbl = entry.gui:FindFirstChild("NameText")
+					if nameLbl then
+						nameLbl.TextColor3 = purpleText
+						nameLbl.Text = SanitizeUIText(rodName)
+					end
+				end
+			end
+		end
+
+		for k, entry in pairs(ActiveSecretRodESPs) do
+			if not activeKeys[k] then
+				destroyESPEntry(entry)
+				ActiveSecretRodESPs[k] = nil
+			end
+		end
+	end
+
+	local function MatchSacredBossKind(inst)
+		if not inst or not (inst:IsA("Model") or inst:IsA("BasePart") or inst:IsA("Folder")) then
+			return nil
+		end
+		if inst:IsA("Model") and Players:GetPlayerFromCharacter(inst) then
+			return nil
+		end
+		local candidates = {
+			inst.Name,
+			inst:GetAttribute("FishName"),
+			inst:GetAttribute("Name"),
+		}
+		local fnVal = inst:FindFirstChild("FishName")
+		if fnVal and fnVal:IsA("StringValue") then
+			table.insert(candidates, fnVal.Value)
+		end
+		for _, raw in ipairs(candidates) do
+			if raw and raw ~= "" then
+				local norm = string.lower(tostring(raw)):gsub("[_%-]+", " "):gsub("%s+", " ")
+				if string.find(norm, "black tortoise", 1, true) then
+					return "BlackTortoise"
+				elseif
+					string.find(norm, "vermilion", 1, true)
+					or string.find(norm, "vermillion", 1, true)
+					or string.find(norm, "birdblood", 1, true)
+				then
+					return "Vermilion"
+				elseif
+					string.find(norm, "nameless octoparasite", 1, true)
+					or string.find(norm, "octoparasite", 1, true)
+				then
+					return "Nameless"
+				end
+			end
+		end
+		return nil
+	end
+
+	local function FindSacredBossTargets()
+		local foundBT = nil
+		local foundVermi = nil
+		local foundNameless = nil
+		local ocean = workspace:FindFirstChild("Ocean")
+		local npcFolder = workspace:FindFirstChild("NPC")
+		local containers = {
+			workspace:FindFirstChild("WorldBoss"),
+			workspace:FindFirstChild("Boss"),
+			workspace:FindFirstChild("BossSetUp"),
+			ocean and ocean:FindFirstChild("Boss"),
+			npcFolder and npcFolder:FindFirstChild("Boss"),
+			workspace:FindFirstChild("Fishes"),
+		}
+
+		local function normalizeBossNode(node)
+			if not node then
+				return nil
+			end
+			if node:IsA("Model") or node:IsA("BasePart") then
+				return node
+			end
+			if node:IsA("Folder") then
+				local m = node:FindFirstChildWhichIsA("Model")
+				if m then
+					return m
+				end
+				return node
+			end
+			if node.Parent and (node.Parent:IsA("Model") or node.Parent:IsA("BasePart")) then
+				return node.Parent
+			end
+			return nil
+		end
+
+		local function inspectNode(node)
+			local kind = MatchSacredBossKind(node)
+			if not kind then
+				return
+			end
+			local resolved = normalizeBossNode(node)
+			if not resolved then
+				return
+			end
+			if kind == "BlackTortoise" and not foundBT then
+				foundBT = resolved
+			elseif kind == "Vermilion" and not foundVermi then
+				foundVermi = resolved
+			elseif kind == "Nameless" and not foundNameless then
+				foundNameless = resolved
+			end
+		end
+
+		for _, c in ipairs(containers) do
+			if c then
+				inspectNode(c)
+				for _, desc in ipairs(c:GetDescendants()) do
+					inspectNode(desc)
+					if foundBT and foundVermi and foundNameless then
+						return foundBT, foundVermi, foundNameless
+					end
+				end
+			end
+		end
+
+		if ocean and not (foundBT and foundVermi and foundNameless) then
+			if not foundNameless then
+				local directNl = ocean:FindFirstChild("Nameless Octoparasite", true)
+				if directNl then
+					foundNameless = normalizeBossNode(directNl)
+				end
+			end
+			if not foundBT then
+				local directBt = ocean:FindFirstChild("Black Tortoise Bloodline", true)
+				if directBt then
+					foundBT = normalizeBossNode(directBt)
+				end
+			end
+			if not foundVermi then
+				local directVm = ocean:FindFirstChild("Vermilion Birdblood", true)
+				if directVm then
+					foundVermi = normalizeBossNode(directVm)
+				end
+			end
+			if not (foundBT and foundVermi and foundNameless) then
+				for _, child in ipairs(ocean:GetChildren()) do
+					if child.Name ~= "Water" and child.Name ~= "Boss" then
+						inspectNode(child)
+						for _, desc in ipairs(child:GetDescendants()) do
+							inspectNode(desc)
+							if foundBT and foundVermi and foundNameless then
+								return foundBT, foundVermi, foundNameless
+							end
+						end
+					end
+				end
+			end
+		end
+
+		for _, child in ipairs(workspace:GetChildren()) do
+			if child:IsA("Model") then
+				inspectNode(child)
+				if foundBT and foundVermi and foundNameless then
+					break
+				end
+			end
+		end
+
+		return foundBT, foundVermi, foundNameless
+	end
+
+	local function applySingleSacredBossESP(key, targetObj, labelText)
+		if not targetObj then
+			if ActiveSacredBossESPs[key] then
+				destroyESPEntry(ActiveSacredBossESPs[key])
+				ActiveSacredBossESPs[key] = nil
+			end
+			return
+		end
+		local pos, part = ResolveObjectWorldPos(targetObj)
+		if not pos then
+			if ActiveSacredBossESPs[key] then
+				destroyESPEntry(ActiveSacredBossESPs[key])
+				ActiveSacredBossESPs[key] = nil
+			end
+			return
+		end
+
+		local purpleFill = Color3.fromRGB(170, 50, 255)
+		local purpleOutline = Color3.fromRGB(225, 165, 255)
+		local purpleText = Color3.fromRGB(195, 100, 255)
+
+		local entry = ActiveSacredBossESPs[key]
+		if not entry then
+			entry = {}
+			ActiveSacredBossESPs[key] = entry
+		end
+
+		local adornee = nil
+		if part and part:IsDescendantOf(workspace) then
+			adornee = part
+			if entry.att then
+				pcall(function()
+					entry.att:Destroy()
+				end)
+				entry.att = nil
+			end
+		else
+			local terrain = workspace:FindFirstChildOfClass("Terrain")
+			if terrain then
+				if not (entry.att and entry.att.Parent == terrain) then
+					local att = Instance.new("Attachment")
+					att.Name = "StarCrowBossAtt_" .. key
+					att.Parent = terrain
+					entry.att = att
+				end
+				entry.att.WorldPosition = pos
+				adornee = entry.att
+			end
+		end
+
+		if part and part:IsDescendantOf(workspace) then
+			if not (entry.hl and entry.hl.Parent == targetObj) then
+				if entry.hl then
+					pcall(function()
+						entry.hl:Destroy()
+					end)
+				end
+				local hl = Instance.new("Highlight")
+				hl.Name = "StarCrowBossHL_" .. key
+				hl.Adornee = targetObj
+				hl.FillColor = purpleFill
+				hl.OutlineColor = purpleOutline
+				hl.FillTransparency = 0.32
+				hl.OutlineTransparency = 0
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Parent = targetObj
+				entry.hl = hl
+			else
+				entry.hl.FillColor = purpleFill
+				entry.hl.OutlineColor = purpleOutline
+				entry.hl.Enabled = true
+			end
+		elseif entry.hl then
+			pcall(function()
+				entry.hl:Destroy()
+			end)
+			entry.hl = nil
+		end
+
+		if adornee then
+			if not (entry.gui and entry.gui.Parent) then
+				local bb = Instance.new("BillboardGui")
+				bb.Name = "StarCrowBossESP_" .. key
+				bb.Size = UDim2.new(0, 230, 0, 26)
+				bb.StudsOffset = Vector3.new(0, 6, 0)
+				bb.AlwaysOnTop = true
+				bb.MaxDistance = math.huge
+
+				local lbl = Instance.new("TextLabel")
+				lbl.Name = "NameText"
+				lbl.Size = UDim2.new(1, 0, 1, 0)
+				lbl.BackgroundTransparency = 1
+				lbl.TextScaled = false
+				lbl.TextSize = 13
+				lbl.Font = Enum.Font.GothamBold
+				lbl.TextColor3 = purpleText
+				lbl.TextStrokeTransparency = 0
+				lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+				lbl.TextXAlignment = Enum.TextXAlignment.Center
+				lbl.Parent = bb
+
+				entry.gui = bb
+			end
+			entry.gui.Adornee = adornee
+			if entry.gui.Parent ~= adornee then
+				entry.gui.Parent = adornee
+			end
+			local lbl = entry.gui:FindFirstChild("NameText")
+			if lbl then
+				lbl.TextColor3 = purpleText
+				lbl.Text = labelText
+			end
+		end
+	end
+
+	clearSacredBossESP = function(tag)
+		if tag then
+			if ActiveSacredBossESPs[tag] then
+				destroyESPEntry(ActiveSacredBossESPs[tag])
+				ActiveSacredBossESPs[tag] = nil
+			end
+		else
+			for k, entry in pairs(ActiveSacredBossESPs) do
+				destroyESPEntry(entry)
+				ActiveSacredBossESPs[k] = nil
+			end
+		end
+	end
+
+	updateSacredBossESP = function(btObj, vermiObj, namelessObj, preScanned)
+		if not Config.ESPBlackTortoise and not Config.ESPVermilion and not Config.ESPNameless then
+			clearSacredBossESP()
+			return
+		end
+		if not preScanned then
+			btObj, vermiObj, namelessObj = FindSacredBossTargets()
+		end
+		if Config.ESPBlackTortoise then
+			applySingleSacredBossESP("BlackTortoise", btObj, "Black Tortoise Bloodline")
+		else
+			clearSacredBossESP("BlackTortoise")
+		end
+
+		if Config.ESPVermilion then
+			applySingleSacredBossESP("Vermilion", vermiObj, "Vermilion Birdblood")
+		else
+			clearSacredBossESP("Vermilion")
+		end
+
+		if Config.ESPNameless then
+			applySingleSacredBossESP("Nameless", namelessObj, "Nameless Octoparasite")
+		else
+			clearSacredBossESP("Nameless")
+		end
+		return btObj, vermiObj
+	end
+
+	checkSacredBossWebhooks = function(btObj, vermiObj, preScanned)
+		if not Config.WebhookBlackTortoise and not Config.WebhookVermilionBirdblood then
+			return
+		end
+		local url = (Config.WebhookUrl and Config.WebhookUrl ~= "") and Config.WebhookUrl or (Config.BossWebhookUrl or "")
+		if url == "" then
+			return
+		end
+		if not preScanned then
+			btObj, vermiObj = FindSacredBossTargets()
+		end
+
+		if Config.WebhookBlackTortoise then
 			local key = "BlackTortoise_" .. tostring(game.JobId)
-			if not NotifiedWebhookEntities[key] then
-				NotifiedWebhookEntities[key] = true
-				local part = GetLiveModelPart(btModel)
-				local isl = part and GetNearestIslandName(part.Position) or "Unknown"
-				SendDiscordWebhook(
-					url,
-					"🐢 Black Tortoise Bloodline Detected",
-					"Boss **Black Tortoise Bloodline** has spawned!",
-					3407793,
-					{
-						{
-							name = "Island",
-							value = isl,
-							inline = true,
-						},
-					}
-				)
+			if btObj then
+				local pos = ResolveObjectWorldPos(btObj)
+				if pos and not NotifiedWebhookEntities[key] then
+					NotifiedWebhookEntities[key] = true
+					local isl = GetNearestIslandName(pos)
+					SendBossWebhook(
+						"🐢 Black Tortoise Bloodline",
+						"Black Tortoise Bloodline has spawned!",
+						3407793,
+						isl
+					)
+				end
+			else
+				NotifiedWebhookEntities[key] = nil
 			end
-		else
-			NotifiedWebhookEntities["BlackTortoise_" .. tostring(game.JobId)] = nil
+		end
+
+		if Config.WebhookVermilionBirdblood then
+			local key = "VermilionBirdblood_" .. tostring(game.JobId)
+			if vermiObj then
+				local pos = ResolveObjectWorldPos(vermiObj)
+				if pos and not NotifiedWebhookEntities[key] then
+					NotifiedWebhookEntities[key] = true
+					local isl = GetNearestIslandName(pos)
+					SendBossWebhook(
+						"🔥 Vermilion Birdblood",
+						"Vermilion Birdblood has spawned!",
+						16721408,
+						isl
+					)
+				end
+			else
+				NotifiedWebhookEntities[key] = nil
+			end
 		end
 	end
 
-	if Config.WebhookVermilionBirdblood then
-		local vbModel = FindBossLiveModel("vermilion")
-		if vbModel then
-			local key = "VermilionBirdblood_" .. tostring(game.JobId)
-			if not NotifiedWebhookEntities[key] then
-				NotifiedWebhookEntities[key] = true
-				local part = GetLiveModelPart(vbModel)
-				local isl = part and GetNearestIslandName(part.Position) or "Unknown"
-				SendDiscordWebhook(
-					url,
-					"🔥 Vermilion Birdblood Detected",
-					"Boss **Vermilion Birdblood** has spawned!",
-					16721408,
-					{
-						{
-							name = "Island",
-							value = isl,
-							inline = true,
-						},
-					}
-				)
-			end
-		else
-			NotifiedWebhookEntities["VermilionBirdblood_" .. tostring(game.JobId)] = nil
+	TeleportToSpecialBoss = function(choiceStr)
+		local raw = tostring(choiceStr or Config.SelectedTPBoss or "")
+		local lower = string.lower(raw)
+		local btObj, vermiObj, namelessObj = FindSacredBossTargets()
+		local targetObj = nil
+		local bossLabel = raw ~= "" and raw or "Boss"
+
+		if string.find(lower, "nameless", 1, true) or string.find(lower, "octoparasite", 1, true) then
+			targetObj = namelessObj
+			bossLabel = "Nameless Octoparasite"
+		elseif string.find(lower, "black tortoise", 1, true) or string.find(lower, "tortoise", 1, true) then
+			targetObj = btObj
+			bossLabel = "Black Tortoise Bloodline"
+		elseif string.find(lower, "vermilion", 1, true) or string.find(lower, "birdblood", 1, true) then
+			targetObj = vermiObj
+			bossLabel = "Vermilion Birdblood"
 		end
+
+		if not targetObj then
+			pcall(function()
+				Fluent:Notify({
+					Title = "Teleport Boss",
+					Content = bossLabel .. " has not spawned on the map yet!",
+					Duration = 4,
+				})
+			end)
+			return
+		end
+
+		local pos = ResolveObjectWorldPos(targetObj)
+		if not pos then
+			pcall(function()
+				Fluent:Notify({
+					Title = "Teleport Boss",
+					Content = "Could not resolve position for " .. bossLabel,
+					Duration = 4,
+				})
+			end)
+			return
+		end
+
+		local char = LocalPlayer.Character or cachedChar
+		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if not hrp then
+			return
+		end
+
+		pcall(function()
+			LocalPlayer:RequestStreamAroundAsync(pos, 2)
+		end)
+		local refreshedPos = ResolveObjectWorldPos(targetObj) or pos
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 12, 0))
 	end
 end
 
@@ -2492,8 +3653,25 @@ task.spawn(function()
 			else
 				clearEntityESP()
 			end
-			if Config.WebhookBlackTortoise or Config.WebhookVermilionBirdblood then
-				checkBossModelWebhook()
+			if Config.ESPSecretRod then
+				updateSecretRodESP()
+			else
+				clearSecretRodESP()
+			end
+			local hasBossESP = Config.ESPBlackTortoise or Config.ESPVermilion or Config.ESPNameless
+			local hasBossWH = Config.WebhookBlackTortoise or Config.WebhookVermilionBirdblood
+			if hasBossESP or hasBossWH then
+				local btObj, vermiObj = nil, nil
+				if hasBossESP then
+					btObj, vermiObj = updateSacredBossESP()
+				else
+					clearSacredBossESP()
+				end
+				if hasBossWH then
+					checkSacredBossWebhooks(btObj, vermiObj, hasBossESP)
+				end
+			else
+				clearSacredBossESP()
 			end
 		end
 	end
@@ -4543,140 +5721,105 @@ end);
 
 	local NPCTargets = {}
 
+	local function ResolveNPCModelCFrame(obj)
+		if not obj then
+			return nil
+		end
+		local part = GetModelPart(obj)
+		if part and part:IsDescendantOf(workspace) then
+			return part.CFrame, true
+		end
+		if obj:IsA("PVInstance") then
+			local ok, cf = pcall(function()
+				return obj:GetPivot()
+			end)
+			if ok and cf and cf.Position.Magnitude > 1 then
+				return cf, false
+			end
+		end
+		return nil, false
+	end
+
 	local function GetNPCList()
 		local list = {}
 		local seen = {}
 		table.clear(NPCTargets)
 
-		local blacklist = {
-			bachang = true,
-			biaodi = true,
-			biaoge = true,
-			buybait = true,
-			buyfishingrod = true,
-			captain = true,
-			chuxin = true,
-			dashixiong = true,
-			["function"] = true,
-			hadiao = true,
-			hadieu = true,
-			hadieude = true,
-			hadiaode = true,
-			hadiaodi = true,
-			laongo = true,
-			laomo = true,
-			nana = true,
-			pirateguy = true,
-			learnskill = true,
-			setspawn = true,
-			sellfish = true,
-			spawnboat = true,
-			xiaodaoshi = true,
-		}
+		local function normKey(s)
+			return string.lower(string.gsub(tostring(s or ""), "%s+", ""))
+		end
 
-		local function addNPC(name, part)
-			if not name or name == "" then
+		local function addNPC(rawName, obj)
+			local clean = tostring(rawName or ""):gsub("[%(%)]", ""):gsub("^%s*(.-)%s*$", "%1")
+			if clean == "" then
 				return
 			end
-			local norm = string.lower(string.gsub(name, "%s+", ""))
-			if norm == "longdiaohai" then
-				name = "Long DiaoHai"
-			end
-			if norm == "green" or norm == "blue" or norm == "yellow" or norm == "godspirit" then
-				name = "God Spirit"
+			local norm = normKey(clean)
+			if norm == "taosi" or norm == "taoist" then
+				clean = "Taoist"
+				norm = "taoist"
+			elseif norm == "maosan" or norm == "maoshan" then
+				clean = "Maoshan"
+				norm = "maoshan"
+			elseif norm == "longdiaohai" then
+				clean = "Long DiaoHai"
+				norm = "longdiaohai"
+			elseif norm == "enzo" then
+				clean = "Enzo"
+				norm = "enzo"
+			elseif norm == "green" or norm == "blue" or norm == "yellow" or norm == "godspirit" then
+				clean = "God Spirit"
 				norm = "godspirit"
 			end
-			if blacklist[norm] then
-				return
-			end
-			if part and part:IsDescendantOf(workspace) then
-				NPCTargets[name] = part
-				NPCTargets[norm] = part
+			if obj and obj:IsDescendantOf(workspace) then
+				NPCTargets[clean] = obj
+				NPCTargets[norm] = obj
 			end
 			if not seen[norm] then
 				seen[norm] = true
-				table.insert(list, name)
+				table.insert(list, clean)
 			end
 		end
 
-		for _, folderName in ipairs({ "Merchant", "NPCDialogue", "NPCPVP", "NPC", "BossSetUp" }) do
-			local f = workspace:FindFirstChild(folderName) or ReplicatedStorage:FindFirstChild(folderName)
-			if f then
-				for _, child in ipairs(f:GetChildren()) do
-					local name = tostring(child.Name)
-					if name ~= "" and name ~= "Lamp" and name ~= "Boss" and name ~= "God" then
-						local wsFolder = workspace:FindFirstChild(folderName)
-						local liveModel = wsFolder and wsFolder:FindFirstChild(name)
-						local part = liveModel and GetModelPart(liveModel)
-						addNPC(name, part)
-					elseif name == "Boss" or name == "God" then
-						for _, b in ipairs(child:GetChildren()) do
-							local bName = tostring(b.Name)
-							if bName ~= "" and bName ~= "God" then
-								local wsFolder = workspace:FindFirstChild(folderName)
-								local wsSub = wsFolder and wsFolder:FindFirstChild(name)
-								local liveSub = wsSub and wsSub:FindFirstChild(bName)
-								local part = liveSub and GetModelPart(liveSub)
-								addNPC(bName, part)
-							end
-						end
-					end
+		local wsNPC = workspace:FindFirstChild("NPC")
+		local funcFolder = wsNPC and wsNPC:FindFirstChild("Function")
+		if funcFolder then
+			for _, child in ipairs(funcFolder:GetChildren()) do
+				if not child:IsA("Folder") and child.Name ~= "" then
+					addNPC(child.Name, child)
 				end
 			end
 		end
 
-		local godFolder = workspace:FindFirstChild("God") or ReplicatedStorage:FindFirstChild("God")
-		if godFolder then
-			for _, child in ipairs(godFolder:GetChildren()) do
-				local name = tostring(child.Name)
-				if name ~= "" and name ~= "Lamp" and name ~= "God" then
-					local liveModel = workspace:FindFirstChild("God") and workspace.God:FindFirstChild(name)
-					local part = liveModel and GetModelPart(liveModel)
-					addNPC(name, part)
+		local rsNPC = ReplicatedStorage:FindFirstChild("NPC")
+		local rsFunc = rsNPC and rsNPC:FindFirstChild("Function")
+		if rsFunc then
+			for _, child in ipairs(rsFunc:GetChildren()) do
+				if not child:IsA("Folder") and child.Name ~= "" then
+					addNPC(child.Name, nil)
 				end
 			end
 		end
-		local gPart = FindGodSpiritPart()
-		addNPC("God Spirit", gPart)
-		addNPC("Long DiaoHai")
 
-		local priorityOrder = {
-			"The Shadow",
-			"TheShadow",
-			"Shadow",
-			"???",
-			"Taoist",
-			"Taosi",
-			"Maoshan",
-			"Maosan",
-			"God Spirit",
-			"GodSpirit",
-			"Long DiaoHai",
-			"LongDiaoHai",
-			"Longdiaohai",
-			"Enzo",
-			"Nanjiang",
-			"Zeng Tianguo",
+		addNPC("Taoist", nil)
+		addNPC("Maoshan", nil)
+		addNPC("God Spirit", nil)
+		addNPC("Enzo", nil)
+		addNPC("Long DiaoHai", nil)
+
+		local priorityRank = {
+			taoist = 1,
+			maoshan = 2,
+			godspirit = 3,
+			enzo = 4,
+			longdiaohai = 5,
 		}
 
-		local priorityRank = {}
-		for rank, name in ipairs(priorityOrder) do
-			local lower = string.lower(string.gsub(name, "%s+", ""))
-			if not priorityRank[lower] then
-				priorityRank[lower] = rank
-			end
-		end
-
-		local function getRank(name)
-			local lower = string.lower(string.gsub(tostring(name), "%s+", ""))
-			return priorityRank[lower] or 9999
-		end
-
 		table.sort(list, function(a, b)
-			local rankA = getRank(a)
-			local rankB = getRank(b)
-			if rankA ~= rankB then
-				return rankA < rankB
+			local rA = priorityRank[normKey(a)] or 999
+			local rB = priorityRank[normKey(b)] or 999
+			if rA ~= rB then
+				return rA < rB
 			end
 			return tostring(a):lower() < tostring(b):lower()
 		end)
@@ -4688,11 +5831,16 @@ end);
 			return
 		end
 		local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
-		local targetPart = nil
+		local targetCF = nil
+		local targetObj = nil
 
 		if lowerNpc == "blue" or lowerNpc == "green" or lowerNpc == "yellow" or lowerNpc == "godspirit" then
-			targetPart = FindGodSpiritPart()
-			if not targetPart then
+			local gList = FindAllGodSpirits()
+			if #gList > 0 then
+				targetObj = gList[1].obj or gList[1].part
+				targetCF = gList[1].cf
+			end
+			if not targetCF then
 				pcall(function()
 					Fluent:Notify({
 						Title = "Teleport NPC",
@@ -4703,78 +5851,84 @@ end);
 				return
 			end
 		elseif lowerNpc == "taoist" or lowerNpc == "taosi" then
-			local _, tPart = FindSpecialEntities()
-			if tPart and tPart:IsDescendantOf(workspace) then
-				targetPart = tPart
+			local _, tInfo = FindSpecialEntities()
+			if tInfo and tInfo.cf then
+				targetObj = tInfo.obj or tInfo.part
+				targetCF = tInfo.cf
 			end
 		elseif lowerNpc == "maoshan" or lowerNpc == "maosan" then
-			local mPart = FindSpecialEntities()
-			if mPart and mPart:IsDescendantOf(workspace) then
-				targetPart = mPart
+			local mInfo = FindSpecialEntities()
+			if mInfo and mInfo.cf then
+				targetObj = mInfo.obj or mInfo.part
+				targetCF = mInfo.cf
 			end
-		elseif string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
-			local _, bossPart = FindBossTarget(string.find(lowerNpc, "longdiaohai") ~= nil)
+		elseif string.find(lowerNpc, "longdiaohai", 1, true) or lowerNpc == "enzo" then
+			local wantSecret = string.find(lowerNpc, "longdiaohai", 1, true) ~= nil
+			local bossObj, bossPart = FindBossTarget(wantSecret)
 			if bossPart and bossPart:IsDescendantOf(workspace) then
-				targetPart = bossPart
-			end
-		end
-
-		local candidates = {}
-		if not targetPart then
-			for _, folderName in ipairs({ "NPC", "Merchant", "NPCDialogue", "NPCPVP", "God", "BossSetUp" }) do
-				local wsFolder = workspace:FindFirstChild(folderName)
-				if wsFolder then
-					for _, desc in ipairs(wsFolder:GetDescendants()) do
-						if
-							(desc:IsA("Model") or desc:IsA("BasePart"))
-							and not desc:IsA("Folder")
-							and (desc.Name == npcName or desc:GetAttribute("Name") == npcName)
-							and desc.Name ~= "God"
-						then
-							local p = GetModelPart(desc)
-							if p and p:IsDescendantOf(workspace) then
-								table.insert(candidates, { folder = folderName, part = p })
+				targetObj = bossObj or bossPart
+				targetCF = bossPart.CFrame
+			else
+				local wsNPC = workspace:FindFirstChild("NPC")
+				local bossFolder = wsNPC and wsNPC:FindFirstChild("Boss")
+				if bossFolder then
+					for _, boss in ipairs(bossFolder:GetChildren()) do
+						if IsSecretBossEntity(boss) == wantSecret then
+							local cf = ResolveNPCModelCFrame(boss)
+							if cf then
+								targetObj = boss
+								targetCF = cf
+								break
 							end
 						end
 					end
 				end
 			end
 		end
-		if not targetPart and #candidates == 0 then
-			local directWs = workspace:FindFirstChild(npcName)
-			if directWs then
-				local p = GetModelPart(directWs)
-				if p and p:IsDescendantOf(workspace) then
-					targetPart = p
+
+		if not targetCF then
+			local wsNPC = workspace:FindFirstChild("NPC")
+			local funcFolder = wsNPC and wsNPC:FindFirstChild("Function")
+			if funcFolder then
+				local direct = funcFolder:FindFirstChild(npcName)
+				if direct and not direct:IsA("Folder") then
+					local cf = ResolveNPCModelCFrame(direct)
+					if cf then
+						targetObj = direct
+						targetCF = cf
+					end
+				end
+				if not targetCF then
+					for _, child in ipairs(funcFolder:GetChildren()) do
+						if not child:IsA("Folder") then
+							local cNorm = string.lower(string.gsub(tostring(child.Name), "%s+", ""))
+							local aNorm = string.lower(string.gsub(tostring(child:GetAttribute("Name") or ""), "%s+", ""))
+							if cNorm == lowerNpc or aNorm == lowerNpc then
+								local cf = ResolveNPCModelCFrame(child)
+								if cf then
+									targetObj = child
+									targetCF = cf
+									break
+								end
+							end
+						end
+					end
 				end
 			end
 		end
-		if #candidates > 0 then
-			if (npcName == "Maoshan" or npcName == "Taoist") and #candidates > 1 then
-				local daShixiong = workspace:FindFirstChild("Da Shixiong", true)
-				local dsPart = daShixiong and GetModelPart(daShixiong)
-				for _, cand in ipairs(candidates) do
-					if cand.folder == "NPC" then
-						targetPart = cand.part
-						break
-					end
-					if dsPart and (cand.part.Position - dsPart.Position).Magnitude > 15 then
-						targetPart = cand.part
-						break
-					end
-				end
-			end
-			if not targetPart then
-				targetPart = candidates[1].part
-			end
-		end
-		if not targetPart or not targetPart:IsDescendantOf(workspace) then
+
+		if not targetCF then
 			local cached = NPCTargets[npcName] or NPCTargets[lowerNpc]
 			if cached and cached:IsDescendantOf(workspace) then
-				targetPart = cached
+				local cf = ResolveNPCModelCFrame(cached)
+				if cf then
+					targetObj = cached
+					targetCF = cf
+				end
 			end
 		end
-		if not targetPart or not targetPart:IsDescendantOf(workspace) then
+
+		if not targetCF then
 			pcall(function()
 				Fluent:Notify({
 					Title = "Teleport NPC",
@@ -4784,10 +5938,21 @@ end);
 			end)
 			return
 		end
+
 		local char = LocalPlayer.Character or cachedChar
 		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if hrp and targetPart then
-			hrp.CFrame = targetPart.CFrame * CFrame.new(0, 3, -4)
+		if hrp then
+			pcall(function()
+				LocalPlayer:RequestStreamAroundAsync(targetCF.Position, 2)
+			end)
+			if targetObj and targetObj:IsDescendantOf(workspace) then
+				local refreshedCF = ResolveNPCModelCFrame(targetObj)
+				if refreshedCF then
+					targetCF = refreshedCF
+				end
+			end
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.CFrame = targetCF * CFrame.new(0, 3, -4)
 		end
 	end
 
@@ -5301,6 +6466,31 @@ end);
 		end,
 	})
 
+	Tabs.Main:AddSection("Sky Farm")
+
+	Tabs.Main:AddToggle("SkyFarmToggle", {
+		Title = "Sky Farm",
+		Default = Config.SkyFarm,
+		Callback = function(Value)
+			Config.SkyFarm = Value
+			SaveConfig()
+			SetSkyFarm(Value)
+		end,
+	})
+
+	Tabs.Main:AddSlider("SkyFarmHeightSlider", {
+		Title = "Sky Height",
+		Default = Config.SkyFarmHeight or 609,
+		Min = 100,
+		Max = 1000,
+		Rounding = 0,
+		Callback = function(Value)
+			Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Value) or 609), 100, 1000)
+			SaveConfig()
+			SetSkyFarmHeight(Config.SkyFarmHeight)
+		end,
+	})
+
 	Tabs.Main:AddSection("Fishing")
 
 	Tabs.Main:AddToggle("AutoCastToggle", {
@@ -5618,16 +6808,17 @@ end);
 						local uiList = desc:FindFirstChildOfClass("UIListLayout")
 						if uiList and not holder:FindFirstChild("DropdownSearchBox") then
 							local hasMatch = false
+							local optCount = 0
 							for _, opt in ipairs(desc:GetChildren()) do
 								if opt:IsA("TextButton") and opt:FindFirstChild("ButtonLabel") then
+									optCount = optCount + 1
 									local bText = opt.ButtonLabel.Text
 									if table.find(bossListItems, bText) then
 										hasMatch = true
-										break
 									end
 								end
 							end
-							if hasMatch then
+							if hasMatch and optCount > 5 then
 								local searchBox = Instance.new("TextBox")
 								searchBox.Name = "DropdownSearchBox"
 								searchBox.Size = UDim2.new(1, -12, 0, 26)
@@ -5844,6 +7035,38 @@ end);
 			SaveConfig()
 		end,
 	})
+
+	Tabs.Boss:AddSection("Teleport Boss")
+
+	do
+		local tpBossOptions = {
+			"Nameless Octoparasite",
+			"Black Tortoise Bloodline",
+			"Vermilion Birdblood",
+		}
+		if not table.find(tpBossOptions, Config.SelectedTPBoss) then
+			Config.SelectedTPBoss = tpBossOptions[1]
+		end
+
+		local TPBossDropdown = Tabs.Boss:AddDropdown("SelectTPBossDropdown", {
+			Title = "Select Boss",
+			Values = tpBossOptions,
+			Default = Config.SelectedTPBoss,
+			Multi = false,
+			Callback = function(Value)
+				Config.SelectedTPBoss = Value or tpBossOptions[1]
+				SaveConfig()
+			end,
+		})
+
+		Tabs.Boss:AddButton({
+			Title = "Teleport To Boss",
+			Callback = function()
+				local chosen = (TPBossDropdown and TPBossDropdown.Value) or Config.SelectedTPBoss
+				TeleportToSpecialBoss(chosen)
+			end,
+		})
+	end
 
 	Tabs.Quest:AddSection("Auto Claim Daily Quest")
 
@@ -6169,6 +7392,9 @@ end);
 		end
 
 		local function ApplyHideNameAndID(enabled)
+			if enabled and isHiding and #hideConnections > 0 then
+				return
+			end
 			isHiding = enabled
 			if enabled then
 				scanContainer(LocalPlayer:WaitForChild("PlayerGui"))
@@ -6225,108 +7451,565 @@ end);
 		})
 	end
 	(function()
-		local superFpsBoostActive = false
-		local function ApplySuperFPSBoost()
-			pcall(function()
-				if setfpscap then
-					setfpscap(999)
-				end
-			end)
-			pcall(function()
-				local s = settings()
-				s.Rendering.QualityLevel = Enum.QualityLevel.Level01
-				s.Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
-			end)
-			pcall(function()
-				Lighting.GlobalShadows = false
-				Lighting.FogEnd = 9e9
-				Lighting.FogStart = 9e9
-				Lighting.Brightness = 1
-				Lighting.ClockTime = 14
-				Lighting.ExposureCompensation = 0
-				Lighting.ShadowSoftness = 0
-				Lighting.EnvironmentDiffuseScale = 0
-				Lighting.EnvironmentSpecularScale = 0
-				for _, child in ipairs(Lighting:GetChildren()) do
-					if
-						child:IsA("PostProcessEffect")
-						or child:IsA("Atmosphere")
-						or child:IsA("Clouds")
-						or child:IsA("Sky")
-					then
-						child.Enabled = false
-					end
-				end
-			end)
-			pcall(function()
-				local terrain = workspace:FindFirstChildOfClass("Terrain")
-				if terrain then
-					terrain.WaterWaveSize = 0
-					terrain.WaterWaveSpeed = 0
-					terrain.WaterReflectance = 0
-					terrain.WaterTransparency = 0
-					terrain.Decoration = false
-				end
-			end)
-			local function OptimizeDescendant(obj)
-				pcall(function()
-					if obj:IsA("BasePart") then
-						obj.Material = Enum.Material.SmoothPlastic
-						obj.Reflectance = 0
-						obj.CastShadow = false
-						if obj:IsA("MeshPart") then
-							obj.TextureID = ""
-						end
-					elseif obj:IsA("SpecialMesh") then
-						obj.TextureId = ""
-					elseif obj:IsA("Decal") or obj:IsA("Texture") then
-						obj.Transparency = 1
-					elseif obj:IsA("SurfaceAppearance") then
-						obj:Destroy()
-					elseif
-						obj:IsA("ParticleEmitter")
-						or obj:IsA("Trail")
-						or obj:IsA("Smoke")
-						or obj:IsA("Fire")
-						or obj:IsA("Sparkles")
-						or obj:IsA("Beam")
-					then
-						obj.Enabled = false
-					elseif obj:IsA("Highlight") then
-						obj.Enabled = false
-					elseif obj:IsA("Light") then
-						obj.Enabled = false
-					elseif obj:IsA("Explosion") then
-						obj.Visible = false
-					end
+		local savedUltraProps = setmetatable({}, { __mode = "k" })
+		local ultraConns = {}
+		local ultraGeneration = 0
+		local NIL_MARKER = {}
+
+		local function RecordAndSet(inst, prop, newVal)
+			if not inst then
+				return
+			end
+			local bucket = savedUltraProps[inst]
+			if not bucket then
+				bucket = {}
+				savedUltraProps[inst] = bucket
+			end
+			if bucket[prop] == nil then
+				local ok, cur = pcall(function()
+					return inst[prop]
 				end)
-			end
-			for _, desc in ipairs(workspace:GetDescendants()) do
-				OptimizeDescendant(desc)
-			end
-			if not superFpsBoostActive then
-				superFpsBoostActive = true
-				workspace.DescendantAdded:Connect(OptimizeDescendant)
+				if ok then
+					bucket[prop] = cur == nil and NIL_MARKER or cur
+				end
 			end
 			pcall(function()
-				collectgarbage("collect")
+				inst[prop] = newVal
 			end)
 		end
 
-		Tabs.Player:AddButton({
-			Title = "Fps Boost",
-			Callback = function()
-				ApplySuperFPSBoost()
+		local function DisconnectUltraConns()
+			for _, c in ipairs(ultraConns) do
 				pcall(function()
-					Fluent:Notify({
-						Title = "Fps Boost",
-						Content = "Applied",
-						Duration = 2,
-					})
+					c:Disconnect()
 				end)
+			end
+			table.clear(ultraConns)
+		end
+
+		local function IsStarCrowManaged(inst)
+			local n = tostring(inst and inst.Name or "")
+			return string.sub(n, 1, 8) == "StarCrow"
+		end
+
+		local function ApplyUltraToInstance(inst)
+			if not inst or IsStarCrowManaged(inst) then
+				return
+			end
+			if inst:IsA("BasePart") then
+				RecordAndSet(inst, "Material", Enum.Material.SmoothPlastic)
+				RecordAndSet(inst, "Reflectance", 0)
+				RecordAndSet(inst, "CastShadow", false)
+				RecordAndSet(inst, "MaterialVariant", "")
+				if inst:IsA("MeshPart") then
+					RecordAndSet(inst, "TextureID", "")
+				end
+			elseif inst:IsA("SpecialMesh") then
+				RecordAndSet(inst, "TextureId", "")
+				RecordAndSet(inst, "VertexColor", Vector3.new(1, 1, 1))
+			elseif inst:IsA("Decal") or inst:IsA("Texture") then
+				RecordAndSet(inst, "Transparency", 1)
+				RecordAndSet(inst, "Texture", "")
+			elseif inst:IsA("SurfaceAppearance") then
+				RecordAndSet(inst, "Parent", nil)
+			elseif inst:IsA("Sky") then
+				RecordAndSet(inst, "SkyboxBk", "")
+				RecordAndSet(inst, "SkyboxDn", "")
+				RecordAndSet(inst, "SkyboxFt", "")
+				RecordAndSet(inst, "SkyboxLf", "")
+				RecordAndSet(inst, "SkyboxRt", "")
+				RecordAndSet(inst, "SkyboxUp", "")
+				RecordAndSet(inst, "CelestialBodiesShown", false)
+			elseif
+				inst:IsA("ParticleEmitter")
+				or inst:IsA("Trail")
+				or inst:IsA("Beam")
+				or inst:IsA("Smoke")
+				or inst:IsA("Fire")
+				or inst:IsA("Sparkles")
+				or inst:IsA("Highlight")
+				or inst:IsA("Light")
+				or inst:IsA("PostEffect")
+			then
+				RecordAndSet(inst, "Enabled", false)
+			elseif inst:IsA("Atmosphere") or inst:IsA("Clouds") then
+				RecordAndSet(inst, "Parent", nil)
+			elseif inst:IsA("Explosion") then
+				RecordAndSet(inst, "Visible", false)
+			end
+		end
+
+		local function RestoreUltraFPSBoost()
+			ultraGeneration = ultraGeneration + 1
+			local myGen = ultraGeneration
+			DisconnectUltraConns()
+			task.spawn(function()
+				local count = 0
+				for inst, props in pairs(savedUltraProps) do
+					if myGen ~= ultraGeneration then
+						return
+					end
+					if inst then
+						if props.Parent ~= nil then
+							local pVal = props.Parent ~= NIL_MARKER and props.Parent or nil
+							pcall(function()
+								inst.Parent = pVal
+							end)
+						end
+						for prop, orig in pairs(props) do
+							if prop ~= "Parent" then
+								local rVal = orig ~= NIL_MARKER and orig or nil
+								pcall(function()
+									inst[prop] = rVal
+								end)
+							end
+						end
+					end
+					savedUltraProps[inst] = nil
+					count = count + 1
+					if count % 350 == 0 then
+						task.wait()
+					end
+				end
+				pcall(function()
+					local s = settings()
+					s.Rendering.QualityLevel = Enum.QualityLevel.Automatic
+				end)
+				if Config.FullBright or Config.NoFog then
+					pcall(ApplyLightingSettings)
+				end
+			end)
+		end
+
+		local function EnableUltraFPSBoost()
+			ultraGeneration = ultraGeneration + 1
+			local myGen = ultraGeneration
+			DisconnectUltraConns()
+			task.spawn(function()
+				pcall(function()
+					if setfpscap then
+						setfpscap(999)
+					end
+				end)
+				pcall(function()
+					local s = settings()
+					s.Rendering.QualityLevel = Enum.QualityLevel.Level01
+					s.Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+				end)
+				RecordAndSet(Lighting, "GlobalShadows", false)
+				RecordAndSet(Lighting, "FogEnd", 9e9)
+				RecordAndSet(Lighting, "FogStart", 9e9)
+				RecordAndSet(Lighting, "ShadowSoftness", 0)
+				RecordAndSet(Lighting, "EnvironmentDiffuseScale", 0)
+				RecordAndSet(Lighting, "EnvironmentSpecularScale", 0)
+
+				local terrain = workspace:FindFirstChildOfClass("Terrain")
+				if terrain then
+					RecordAndSet(terrain, "Decoration", false)
+					RecordAndSet(terrain, "WaterWaveSize", 0)
+					RecordAndSet(terrain, "WaterWaveSpeed", 0)
+					RecordAndSet(terrain, "WaterReflectance", 0)
+					RecordAndSet(terrain, "WaterTransparency", 1)
+					RecordAndSet(terrain, "WaterColor", Color3.fromRGB(245, 245, 245))
+				end
+
+				local function WatchContainer(container)
+					table.insert(
+						ultraConns,
+						container.DescendantAdded:Connect(function(child)
+							if Config.UltraFPSBoost and myGen == ultraGeneration then
+								task.defer(function()
+									if Config.UltraFPSBoost then
+										pcall(ApplyUltraToInstance, child)
+									end
+								end)
+							end
+						end)
+					)
+				end
+
+				WatchContainer(workspace)
+				WatchContainer(Lighting)
+
+				local count = 0
+				for _, container in ipairs({ Lighting, workspace }) do
+					for _, desc in ipairs(container:GetDescendants()) do
+						if myGen ~= ultraGeneration or not Config.UltraFPSBoost then
+							return
+						end
+						pcall(ApplyUltraToInstance, desc)
+						count = count + 1
+						if count % 300 == 0 then
+							task.wait()
+						end
+					end
+				end
+
+				pcall(function()
+					collectgarbage("collect")
+				end)
+			end)
+		end
+
+		Tabs.Player:AddToggle("UltraFPSBoostToggle", {
+			Title = "Ultra FPS Boost",
+			Default = Config.UltraFPSBoost,
+			Callback = function(Value)
+				Config.UltraFPSBoost = Value
+				SaveConfig()
+				if Value then
+					EnableUltraFPSBoost()
+				else
+					RestoreUltraFPSBoost()
+				end
 			end,
 		})
+
+		if Config.UltraFPSBoost then
+			EnableUltraFPSBoost()
+		end
 	end)()
+
+	do
+		local fakeConns = {}
+		local hookedLabels = setmetatable({}, { __mode = "k" })
+		local origLabelTexts = setmetatable({}, { __mode = "k" })
+		local lastFakeTexts = setmetatable({}, { __mode = "k" })
+		local updatingLabels = setmetatable({}, { __mode = "k" })
+		local hookedBars = setmetatable({}, { __mode = "k" })
+		local origBarSizes = setmetatable({}, { __mode = "k" })
+		local updatingBars = setmetatable({}, { __mode = "k" })
+
+		local FAKE_RAW = "99999999"
+		local FAKE_FORMATTED = "99,999,999"
+
+		local function ComputeFakeTextForKind(kind, baseRealText)
+			if kind == "Cash" or kind == "Gems" or kind == "Tickets" or kind == "Orbs" then
+				return FAKE_FORMATTED
+			elseif kind == "LevelBar" then
+				local src = tostring(baseRealText or "")
+				local replaced, count = string.gsub(src, "^(%s*[Ll]evel%s*:%s*)[%d,]+", "%1" .. FAKE_RAW, 1)
+				replaced = string.gsub(replaced, "%[[%d,%s]+/[%d,%s]+%]", "[" .. FAKE_RAW .. "/" .. FAKE_RAW .. "]")
+				replaced = string.gsub(replaced, "([%d,]+)%s*/%s*([%d,]+)", FAKE_RAW .. "/" .. FAKE_RAW)
+				if count > 0 then
+					return replaced
+				end
+				return "Level: " .. FAKE_RAW .. " [" .. FAKE_RAW .. "/" .. FAKE_RAW .. "]"
+			elseif kind == "ExpOnly" then
+				local src = tostring(baseRealText or "")
+				local replaced, count = string.gsub(src, "[%d,]+%s*/%s*[%d,]+", FAKE_RAW .. "/" .. FAKE_RAW, 1)
+				if count > 0 then
+					return replaced
+				end
+				return FAKE_RAW .. "/" .. FAKE_RAW
+			elseif kind == "LevelRaw" then
+				return FAKE_RAW
+			end
+			return nil
+		end
+
+		local function IsInsidePopupMenu(inst, mainGui)
+			local cur = inst.Parent
+			while cur and cur ~= mainGui do
+				local n = cur.Name
+				if n == "Menu" or n == "Fishing" or n == "Dialogue" or n == "Shop" or n == "Quest" or n == "Index" then
+					return true
+				end
+				cur = cur.Parent
+			end
+			return false
+		end
+
+		local function ClassifyStatLabel(lbl, mainGui)
+			if not lbl or not lbl:IsA("TextLabel") then
+				return nil
+			end
+			if IsInsidePopupMenu(lbl, mainGui) then
+				return nil
+			end
+
+			local mainFrame = mainGui:FindFirstChild("Main")
+			local statsFrame = (mainFrame and mainFrame:FindFirstChild("Stats")) or mainGui:FindFirstChild("Stats")
+			if statsFrame and lbl:IsDescendantOf(statsFrame) then
+				local cur = lbl
+				while cur and cur.Parent ~= statsFrame do
+					cur = cur.Parent
+				end
+				if cur then
+					local entryLower = string.lower(cur.Name)
+					if string.find(entryLower, "cash", 1, true) or string.find(entryLower, "money", 1, true) or string.find(entryLower, "coin", 1, true) then
+						return "Cash"
+					elseif string.find(entryLower, "crystal", 1, true) or string.find(entryLower, "gem", 1, true) or string.find(entryLower, "diamond", 1, true) then
+						return "Gems"
+					elseif string.find(entryLower, "ticket", 1, true) then
+						return "Tickets"
+					elseif string.find(entryLower, "orb", 1, true) or string.find(entryLower, "essence", 1, true) then
+						return "Orbs"
+					end
+				end
+			end
+
+			local rawText = tostring(origLabelTexts[lbl] or lbl.Text or "")
+			local lowerText = string.lower(rawText)
+			if
+				string.find(lowerText, "unlock", 1, true)
+				or string.find(lowerText, "friend", 1, true)
+				or string.find(lowerText, "boost", 1, true)
+				or string.find(lowerText, "luck", 1, true)
+			then
+				return nil
+			end
+
+			if string.match(lowerText, "^%s*level%s*:%s*[%d,]+") then
+				return "LevelBar"
+			end
+
+			local fullLower = string.lower(lbl:GetFullName())
+			local isBottomLeftHud = lbl.AbsolutePosition.X <= 420
+			local hasDigit = string.find(rawText, "%d") ~= nil
+
+			if
+				(string.find(fullLower, "level", 1, true) or string.find(fullLower, "exp", 1, true) or string.find(fullLower, "xp", 1, true))
+				and string.match(lowerText, "^[%s%[]*[%d,]+%s*/%s*[%d,]+[%s%]]*$")
+			then
+				return "ExpOnly"
+			end
+
+			if ((mainFrame and lbl:IsDescendantOf(mainFrame)) or isBottomLeftHud) and hasDigit then
+				if string.find(fullLower, "cash", 1, true) or string.find(fullLower, "money", 1, true) or string.find(fullLower, "coin", 1, true) then
+					return "Cash"
+				elseif string.find(fullLower, "crystal", 1, true) or string.find(fullLower, "gem", 1, true) or string.find(fullLower, "diamond", 1, true) then
+					return "Gems"
+				elseif string.find(fullLower, "ticket", 1, true) then
+					return "Tickets"
+				elseif string.find(fullLower, "essenceorb", 1, true) or string.find(fullLower, "essence", 1, true) or string.find(fullLower, ".orb", 1, true) then
+					return "Orbs"
+				elseif string.find(fullLower, ".level", 1, true) and not isBottomLeftHud then
+					return "LevelRaw"
+				end
+			end
+
+			return nil
+		end
+
+		local function HookExpFillBarNearLabel(lbl)
+			local container = lbl and lbl.Parent
+			if not container or not container:IsA("GuiObject") then
+				return
+			end
+			for _, child in ipairs(container:GetChildren()) do
+				if child:IsA("Frame") then
+					local cLower = string.lower(child.Name)
+					local sz = child.Size
+					local isNameMatch = string.find(cLower, "bar", 1, true)
+						or string.find(cLower, "fill", 1, true)
+						or string.find(cLower, "exp", 1, true)
+						or string.find(cLower, "xp", 1, true)
+						or string.find(cLower, "progress", 1, true)
+					local isShapeMatch = child.BackgroundTransparency < 0.85
+						and sz.X.Offset == 0
+						and sz.X.Scale >= 0
+						and sz.X.Scale <= 1
+						and sz.Y.Scale >= 0.6
+					if isNameMatch or isShapeMatch then
+						if origBarSizes[child] == nil then
+							origBarSizes[child] = sz
+						end
+						local baseSz = origBarSizes[child]
+						local fullSz = UDim2.new(1, 0, baseSz.Y.Scale, baseSz.Y.Offset)
+						if child.Size ~= fullSz then
+							updatingBars[child] = true
+							child.Size = fullSz
+							updatingBars[child] = false
+						end
+						if not hookedBars[child] then
+							hookedBars[child] = true
+							local bConn = child:GetPropertyChangedSignal("Size"):Connect(function()
+								if updatingBars[child] or not Config.FakeStats then
+									return
+								end
+								local curSz = child.Size
+								local targetSz = UDim2.new(1, 0, curSz.Y.Scale, curSz.Y.Offset)
+								if curSz ~= targetSz then
+									origBarSizes[child] = curSz
+									updatingBars[child] = true
+									child.Size = targetSz
+									updatingBars[child] = false
+								end
+							end)
+							table.insert(fakeConns, bConn)
+						end
+					end
+				end
+			end
+		end
+
+		local function ApplyFakeToSingleLabel(lbl, kind)
+			if not lbl or not lbl.Parent or not kind then
+				return
+			end
+			if kind == "LevelBar" or kind == "ExpOnly" then
+				HookExpFillBarNearLabel(lbl)
+			end
+			if origLabelTexts[lbl] == nil then
+				origLabelTexts[lbl] = lbl.Text
+			end
+			local newText = ComputeFakeTextForKind(kind, origLabelTexts[lbl])
+			if newText and lbl.Text ~= newText then
+				updatingLabels[lbl] = true
+				lastFakeTexts[lbl] = newText
+				lbl.Text = newText
+				updatingLabels[lbl] = false
+			elseif newText then
+				lastFakeTexts[lbl] = newText
+			end
+
+			if not hookedLabels[lbl] then
+				hookedLabels[lbl] = kind
+				local conn = lbl:GetPropertyChangedSignal("Text"):Connect(function()
+					if updatingLabels[lbl] or not Config.FakeStats then
+						return
+					end
+					local curText = lbl.Text
+					if curText ~= lastFakeTexts[lbl] then
+						origLabelTexts[lbl] = curText
+						local refreshed = ComputeFakeTextForKind(hookedLabels[lbl], origLabelTexts[lbl])
+						if refreshed and lbl.Text ~= refreshed then
+							updatingLabels[lbl] = true
+							lastFakeTexts[lbl] = refreshed
+							lbl.Text = refreshed
+							updatingLabels[lbl] = false
+						end
+					end
+				end)
+				table.insert(fakeConns, conn)
+			else
+				hookedLabels[lbl] = kind
+			end
+		end
+
+		local function RefreshAllFakeStats()
+			if not Config.FakeStats then
+				return
+			end
+			local pg = LocalPlayer:FindFirstChild("PlayerGui")
+			local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
+			if not mg then
+				return
+			end
+			for _, desc in ipairs(mg:GetDescendants()) do
+				if desc:IsA("TextLabel") then
+					local kind = hookedLabels[desc] or ClassifyStatLabel(desc, mg)
+					if kind then
+						ApplyFakeToSingleLabel(desc, kind)
+					end
+				end
+			end
+		end
+
+		local function EnableFakeStats()
+			for _, c in ipairs(fakeConns) do
+				pcall(function()
+					c:Disconnect()
+				end)
+			end
+			table.clear(fakeConns)
+			table.clear(hookedLabels)
+			table.clear(hookedBars)
+
+			RefreshAllFakeStats()
+
+			local pg = LocalPlayer:FindFirstChild("PlayerGui")
+			if pg then
+				local mg = pg:FindFirstChild("MainGui")
+				if mg then
+					local dConn = mg.DescendantAdded:Connect(function(desc)
+						if not Config.FakeStats then
+							return
+						end
+						if desc:IsA("TextLabel") then
+							task.defer(function()
+								if Config.FakeStats and desc and desc.Parent then
+									local kind = ClassifyStatLabel(desc, mg)
+									if kind then
+										ApplyFakeToSingleLabel(desc, kind)
+									end
+								end
+							end)
+						end
+					end)
+					table.insert(fakeConns, dConn)
+				end
+
+				local pgConn = pg.ChildAdded:Connect(function(child)
+					if Config.FakeStats and child.Name == "MainGui" then
+						task.delay(0.3, function()
+							if Config.FakeStats then
+								EnableFakeStats()
+							end
+						end)
+					end
+				end)
+				table.insert(fakeConns, pgConn)
+			end
+		end
+
+		local function DisableFakeStats()
+			for _, c in ipairs(fakeConns) do
+				pcall(function()
+					c:Disconnect()
+				end)
+			end
+			table.clear(fakeConns)
+			table.clear(hookedLabels)
+			table.clear(hookedBars)
+
+			for lbl, orig in pairs(origLabelTexts) do
+				pcall(function()
+					if lbl and lbl.Parent then
+						updatingLabels[lbl] = true
+						lbl.Text = orig
+						updatingLabels[lbl] = false
+					end
+				end)
+			end
+			for bar, origSz in pairs(origBarSizes) do
+				pcall(function()
+					if bar and bar.Parent then
+						updatingBars[bar] = true
+						bar.Size = origSz
+						updatingBars[bar] = false
+					end
+				end)
+			end
+			table.clear(origLabelTexts)
+			table.clear(lastFakeTexts)
+			table.clear(origBarSizes)
+		end
+
+		Tabs.Player:AddToggle("FakeStatsToggle", {
+			Title = "Fake Stats",
+			Default = Config.FakeStats,
+			Callback = function(Value)
+				Config.FakeStats = Value
+				SaveConfig()
+				if Value then
+					EnableFakeStats()
+				else
+					DisableFakeStats()
+				end
+			end,
+		})
+
+		if Config.FakeStats then
+			task.spawn(function()
+				task.wait(0.8)
+				if Config.FakeStats then
+					EnableFakeStats()
+				end
+			end)
+		end
+	end
 
 	Tabs.Player:AddSection("Upgrade Character")
 
@@ -6422,6 +8105,38 @@ end);
 				SaveConfig()
 			end,
 		})
+
+		local npcRefreshQueued = false
+		local function refreshNPCDropdown()
+			if npcRefreshQueued then
+				return
+			end
+			npcRefreshQueued = true
+			task.delay(0.25, function()
+				npcRefreshQueued = false
+				pcall(function()
+					local updated = GetNPCList()
+					NPCDropdown:SetValues(updated)
+				end)
+			end)
+		end
+
+		pcall(function()
+			local wsNPC = workspace:FindFirstChild("NPC")
+			local funcFolder = wsNPC and wsNPC:FindFirstChild("Function")
+			if funcFolder then
+				funcFolder.ChildAdded:Connect(refreshNPCDropdown)
+				funcFolder.ChildRemoved:Connect(refreshNPCDropdown)
+			elseif wsNPC then
+				wsNPC.ChildAdded:Connect(function(child)
+					if child.Name == "Function" then
+						refreshNPCDropdown()
+						child.ChildAdded:Connect(refreshNPCDropdown)
+						child.ChildRemoved:Connect(refreshNPCDropdown)
+					end
+				end)
+			end
+		end)
 
 		Tabs.Teleport:AddButton({
 			Title = "Teleport To NPC",
@@ -6700,6 +8415,86 @@ end);
 		end,
 	})
 
+	Tabs.Shop:AddSection("Buy Rod")
+
+	do
+		local normalRodList = GetNormalBuyRodOptions()
+		if Config.SelectedBuyRod ~= "" then
+			Config.SelectedBuyRod = string.match(Config.SelectedBuyRod, "^(.-)%s+%-%s+") or Config.SelectedBuyRod
+		end
+		if
+			(Config.SelectedBuyRod == "" or not table.find(normalRodList, Config.SelectedBuyRod))
+			and #normalRodList > 0
+		then
+			Config.SelectedBuyRod = normalRodList[1]
+		end
+
+		Tabs.Shop:AddDropdown("SelectNormalBuyRodDropdown", {
+			Title = "Select Rod",
+			Values = normalRodList,
+			Default = Config.SelectedBuyRod ~= "" and Config.SelectedBuyRod or normalRodList[1],
+			Multi = false,
+			Callback = function(Value)
+				Config.SelectedBuyRod = Value or ""
+				SaveConfig()
+			end,
+		})
+	end
+
+	Tabs.Shop:AddButton({
+		Title = "Buy Rod",
+		Callback = function()
+			if Config.SelectedBuyRod ~= "" then
+				DoBuyRodByChoice(Config.SelectedBuyRod, "normal")
+			end
+		end,
+	})
+
+	Tabs.Shop:AddSection("Buy Secret Rod")
+
+	do
+		local secretRodList = GetSecretBuyRodOptions()
+		if Config.SelectedSecretRod ~= "" then
+			Config.SelectedSecretRod = string.match(Config.SelectedSecretRod, "^(.-)%s+%-%s+")
+				or Config.SelectedSecretRod
+		end
+		if
+			(Config.SelectedSecretRod == "" or not table.find(secretRodList, Config.SelectedSecretRod))
+			and #secretRodList > 0
+		then
+			Config.SelectedSecretRod = secretRodList[1]
+		end
+
+		local secretRodDropdown = Tabs.Shop:AddDropdown("SelectSecretRodDropdown", {
+			Title = "Select Secret Rod",
+			Values = secretRodList,
+			Default = Config.SelectedSecretRod ~= "" and Config.SelectedSecretRod or secretRodList[1],
+			Multi = false,
+			Callback = function(Value)
+				Config.SelectedSecretRod = Value or ""
+				SaveConfig()
+			end,
+		})
+
+		local secretFolder = workspace:FindFirstChild("SecretRod")
+		if secretFolder then
+			secretFolder.ChildAdded:Connect(function()
+				pcall(function()
+					secretRodDropdown:SetValues(GetSecretBuyRodOptions())
+				end)
+			end)
+		end
+	end
+
+	Tabs.Shop:AddButton({
+		Title = "Buy Secret Rod",
+		Callback = function()
+			if Config.SelectedSecretRod ~= "" then
+				DoBuyRodByChoice(Config.SelectedSecretRod, "secret")
+			end
+		end,
+	})
+
 	Tabs.ESP:AddSection("Players")
 
 	Tabs.ESP:AddToggle("ESPPlayers", {
@@ -6748,6 +8543,62 @@ end);
 			SaveConfig()
 			if not Value then
 				clearEntityESP("GodSpirit")
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPSecretRodToggle", {
+		Title = "ESP Secret Rod",
+		Default = Config.ESPSecretRod,
+		Callback = function(Value)
+			Config.ESPSecretRod = Value
+			SaveConfig()
+			if Value then
+				task.spawn(updateSecretRodESP)
+			else
+				clearSecretRodESP()
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPBlackTortoiseToggle", {
+		Title = "ESP Black Tortoise Bloodline",
+		Default = Config.ESPBlackTortoise,
+		Callback = function(Value)
+			Config.ESPBlackTortoise = Value
+			SaveConfig()
+			if Value then
+				task.spawn(updateSacredBossESP)
+			else
+				clearSacredBossESP("BlackTortoise")
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPVermilionToggle", {
+		Title = "ESP Vermilion Birdblood",
+		Default = Config.ESPVermilion,
+		Callback = function(Value)
+			Config.ESPVermilion = Value
+			SaveConfig()
+			if Value then
+				task.spawn(updateSacredBossESP)
+			else
+				clearSacredBossESP("Vermilion")
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPNamelessToggle", {
+		Title = "ESP Nameless Octoparasite",
+		Default = Config.ESPNameless,
+		Callback = function(Value)
+			Config.ESPNameless = Value
+			SaveConfig()
+			if Value then
+				task.spawn(updateSacredBossESP)
+			else
+				clearSacredBossESP("Nameless")
 			end
 		end,
 	})
@@ -7980,7 +9831,7 @@ end
 				Config.WebhookBlackTortoise = Value
 				SaveConfig()
 				if Value then
-					task.spawn(checkBossModelWebhook)
+					task.spawn(checkSacredBossWebhooks)
 				end
 			end,
 		})
@@ -7992,7 +9843,7 @@ end
 				Config.WebhookVermilionBirdblood = Value
 				SaveConfig()
 				if Value then
-					task.spawn(checkBossModelWebhook)
+					task.spawn(checkSacredBossWebhooks)
 				end
 			end,
 		})
