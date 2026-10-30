@@ -1,4 +1,9 @@
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+pcall(function()
+	if Fluent and Fluent.GUI then
+		Fluent.GUI.DisplayOrder = 5000
+	end
+end)
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -55,7 +60,6 @@ local Config = {
 	SelectedIsland = "",
 	SelectedNPC = "",
 	SelectedPlayer = "",
-	SelectedTPBoss = "Nameless Octoparasite",
 	ESPEnabled = false,
 	WalkOnWater = false,
 	InstantInteract = false,
@@ -85,6 +89,8 @@ local Config = {
 	SelectedSecretRod = "",
 	UltraFPSBoost = false,
 	FakeStats = false,
+	BlackScreen = false,
+	HideGameUI = false,
 	AutoTicketQuest = false,
 	TicketQuestMode = "Hard",
 	AutoZengTianguoQuest = false,
@@ -2730,7 +2736,7 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 end
 
-local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, TeleportToSpecialBoss, checkSacredBossWebhooks
+local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, checkSacredBossWebhooks
 
 do
 	local NormalRodDefs = {
@@ -2923,7 +2929,7 @@ do
 
 	DoBuyRodByChoice = function(choiceStr, fallbackKind)
 		local raw = tostring(choiceStr or "")
-		if raw == "" or IsBuyingSecretRod then
+		if raw == "" then
 			return
 		end
 		if next(RodChoiceLookup) == nil then
@@ -2934,95 +2940,16 @@ do
 		local meta = RodChoiceLookup[raw] or RodChoiceLookup[strippedName]
 		if not meta then
 			meta = {
-				kind = fallbackKind or "secret",
+				kind = fallbackKind or "normal",
 				name = strippedName,
 			}
 		end
 
 		task.spawn(function()
-			local char = LocalPlayer.Character or cachedChar
-			local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-			if not hrp then
-				return
-			end
-
-			IsBuyingSecretRod = true
 			local boughtOk = false
 			local failMsg = nil
 
 			local ok, err = pcall(function()
-				if meta.kind == "normal" then
-					local sellerObj = FindRodSellerNPC(meta.seller)
-					local sellerPos = ResolveObjectWorldPos(sellerObj)
-					if not sellerPos and meta.island then
-						local islandCF = GetIslandFarmCFrame(meta.island)
-						if islandCF then
-							if LocalPlayer.RequestStreamAroundAsync then
-								task.spawn(function()
-									pcall(function()
-										LocalPlayer:RequestStreamAroundAsync(islandCF.Position, 2)
-									end)
-								end)
-							end
-							pcall(function()
-								hrp.AssemblyLinearVelocity = Vector3.zero
-								hrp.AssemblyAngularVelocity = Vector3.zero
-							end)
-							hrp.CFrame = islandCF
-							task.wait(0.3)
-							sellerObj = FindRodSellerNPC(meta.seller)
-							sellerPos = ResolveObjectWorldPos(sellerObj) or islandCF.Position
-						end
-					end
-					if not sellerPos then
-						failMsg = "Cannot find seller for " .. meta.name
-						return
-					end
-					if LocalPlayer.RequestStreamAroundAsync then
-						task.spawn(function()
-							pcall(function()
-								LocalPlayer:RequestStreamAroundAsync(sellerPos, 2)
-							end)
-						end)
-					end
-					pcall(function()
-						hrp.AssemblyLinearVelocity = Vector3.zero
-						hrp.AssemblyAngularVelocity = Vector3.zero
-					end)
-					hrp.CFrame = CFrame.new(sellerPos + Vector3.new(0, 3, 0))
-					task.wait(0.22)
-					local refreshedSeller = FindRodSellerNPC(meta.seller)
-					local refreshedPos = ResolveObjectWorldPos(refreshedSeller)
-					if refreshedPos then
-						hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 3, 0))
-					end
-					task.wait(0.1)
-				else
-					local pos = ResolveSecretRodPosition(meta.name)
-					if not pos then
-						failMsg = "Cannot find location for " .. meta.name
-						return
-					end
-					if LocalPlayer.RequestStreamAroundAsync then
-						task.spawn(function()
-							pcall(function()
-								LocalPlayer:RequestStreamAroundAsync(pos, 2)
-							end)
-						end)
-					end
-					pcall(function()
-						hrp.AssemblyLinearVelocity = Vector3.zero
-						hrp.AssemblyAngularVelocity = Vector3.zero
-					end)
-					hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-					task.wait(0.25)
-					local refreshedPos = ResolveSecretRodPosition(meta.name)
-					if refreshedPos then
-						hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 3, 0))
-					end
-					task.wait(0.1)
-				end
-
 				local buyEv = Events:FindFirstChild("BuyFishingRod") or Events:WaitForChild("BuyFishingRod", 3)
 				if buyEv then
 					if buyEv:IsA("RemoteEvent") then
@@ -3034,13 +2961,7 @@ do
 				else
 					failMsg = "Remote BuyFishingRod not found"
 				end
-				task.wait(0.15)
 			end)
-
-			IsBuyingSecretRod = false
-			if Config.SkyFarm then
-				SetSkyFarm(true, true)
-			end
 
 			if ok and boughtOk then
 				Fluent:Notify({
@@ -3579,61 +3500,6 @@ do
 				NotifiedWebhookEntities[key] = nil
 			end
 		end
-	end
-
-	TeleportToSpecialBoss = function(choiceStr)
-		local raw = tostring(choiceStr or Config.SelectedTPBoss or "")
-		local lower = string.lower(raw)
-		local btObj, vermiObj, namelessObj = FindSacredBossTargets()
-		local targetObj = nil
-		local bossLabel = raw ~= "" and raw or "Boss"
-
-		if string.find(lower, "nameless", 1, true) or string.find(lower, "octoparasite", 1, true) then
-			targetObj = namelessObj
-			bossLabel = "Nameless Octoparasite"
-		elseif string.find(lower, "black tortoise", 1, true) or string.find(lower, "tortoise", 1, true) then
-			targetObj = btObj
-			bossLabel = "Black Tortoise Bloodline"
-		elseif string.find(lower, "vermilion", 1, true) or string.find(lower, "birdblood", 1, true) then
-			targetObj = vermiObj
-			bossLabel = "Vermilion Birdblood"
-		end
-
-		if not targetObj then
-			pcall(function()
-				Fluent:Notify({
-					Title = "Teleport Boss",
-					Content = bossLabel .. " has not spawned on the map yet!",
-					Duration = 4,
-				})
-			end)
-			return
-		end
-
-		local pos = ResolveObjectWorldPos(targetObj)
-		if not pos then
-			pcall(function()
-				Fluent:Notify({
-					Title = "Teleport Boss",
-					Content = "Could not resolve position for " .. bossLabel,
-					Duration = 4,
-				})
-			end)
-			return
-		end
-
-		local char = LocalPlayer.Character or cachedChar
-		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if not hrp then
-			return
-		end
-
-		pcall(function()
-			LocalPlayer:RequestStreamAroundAsync(pos, 2)
-		end)
-		local refreshedPos = ResolveObjectWorldPos(targetObj) or pos
-		hrp.AssemblyLinearVelocity = Vector3.zero
-		hrp.CFrame = CFrame.new(refreshedPos + Vector3.new(0, 12, 0))
 	end
 end
 
@@ -5680,9 +5546,9 @@ end);
 			GetIslandList()
 		end
 		local targetPart = IslandTargets[islandName]
-		local char = LocalPlayer.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hrp and targetPart then
+		local char = LocalPlayer.Character or cachedChar
+		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if targetPart and hrp then
 			hrp.CFrame = targetPart.CFrame + Vector3.new(0, 5, 0)
 		end
 	end
@@ -5698,11 +5564,6 @@ end);
 		if not targetPart then
 			return
 		end
-		local char = LocalPlayer.Character or cachedChar
-		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if not hrp then
-			return
-		end
 		local waterY = -25
 		local ocean = workspace:FindFirstChild("Ocean")
 		if ocean then
@@ -5716,7 +5577,11 @@ end);
 		end
 		local targetPos =
 			Vector3.new(targetPart.Position.X, math.min(waterY, targetPart.Position.Y - 15), targetPart.Position.Z)
-		hrp.CFrame = CFrame.new(targetPos)
+		local char = LocalPlayer.Character or cachedChar
+		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if hrp then
+			hrp.CFrame = CFrame.new(targetPos)
+		end
 	end
 
 	local NPCTargets = {}
@@ -5942,17 +5807,22 @@ end);
 		local char = LocalPlayer.Character or cachedChar
 		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
 		if hrp then
-			pcall(function()
-				LocalPlayer:RequestStreamAroundAsync(targetCF.Position, 2)
-			end)
-			if targetObj and targetObj:IsDescendantOf(workspace) then
-				local refreshedCF = ResolveNPCModelCFrame(targetObj)
-				if refreshedCF then
-					targetCF = refreshedCF
+			task.spawn(function()
+				pcall(function()
+					LocalPlayer:RequestStreamAroundAsync(targetCF.Position, 2)
+				end)
+				if targetObj and targetObj:IsDescendantOf(workspace) then
+					local refreshedCF = ResolveNPCModelCFrame(targetObj)
+					if refreshedCF then
+						targetCF = refreshedCF
+					end
 				end
-			end
-			hrp.AssemblyLinearVelocity = Vector3.zero
-			hrp.CFrame = targetCF * CFrame.new(0, 3, -4)
+				local char = LocalPlayer.Character or cachedChar
+				local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+				if hrp then
+					hrp.CFrame = targetCF * CFrame.new(0, 3, -4)
+				end
+			end)
 		end
 	end
 
@@ -6374,6 +6244,11 @@ end);
 		Theme = "Amethyst",
 		MinimizeKey = Enum.KeyCode.LeftControl,
 	})
+	pcall(function()
+		if Fluent and Fluent.GUI then
+			Fluent.GUI.DisplayOrder = 5000
+		end
+	end)
 
 	local DoServerHop
 
@@ -7035,38 +6910,6 @@ end);
 			SaveConfig()
 		end,
 	})
-
-	Tabs.Boss:AddSection("Teleport Boss")
-
-	do
-		local tpBossOptions = {
-			"Nameless Octoparasite",
-			"Black Tortoise Bloodline",
-			"Vermilion Birdblood",
-		}
-		if not table.find(tpBossOptions, Config.SelectedTPBoss) then
-			Config.SelectedTPBoss = tpBossOptions[1]
-		end
-
-		local TPBossDropdown = Tabs.Boss:AddDropdown("SelectTPBossDropdown", {
-			Title = "Select Boss",
-			Values = tpBossOptions,
-			Default = Config.SelectedTPBoss,
-			Multi = false,
-			Callback = function(Value)
-				Config.SelectedTPBoss = Value or tpBossOptions[1]
-				SaveConfig()
-			end,
-		})
-
-		Tabs.Boss:AddButton({
-			Title = "Teleport To Boss",
-			Callback = function()
-				local chosen = (TPBossDropdown and TPBossDropdown.Value) or Config.SelectedTPBoss
-				TeleportToSpecialBoss(chosen)
-			end,
-		})
-	end
 
 	Tabs.Quest:AddSection("Auto Claim Daily Quest")
 
@@ -8006,6 +7849,165 @@ end);
 				task.wait(0.8)
 				if Config.FakeStats then
 					EnableFakeStats()
+				end
+			end)
+		end
+	end
+
+	do
+		local CoreGui = game:GetService("CoreGui")
+		local screenOverlay = CoreGui:FindFirstChild("StarCrow_ScreenOverlay")
+		if screenOverlay then
+			pcall(function()
+				screenOverlay:Destroy()
+			end)
+		end
+		screenOverlay = Instance.new("ScreenGui")
+		screenOverlay.Name = "StarCrow_ScreenOverlay"
+		screenOverlay.IgnoreGuiInset = true
+		screenOverlay.ResetOnSpawn = false
+		screenOverlay.DisplayOrder = -100
+		screenOverlay.Enabled = false
+		pcall(function()
+			screenOverlay.Parent = CoreGui
+		end)
+		if not screenOverlay.Parent then
+			screenOverlay.Parent = LocalPlayer:WaitForChild("PlayerGui")
+		end
+
+		local screenFrame = Instance.new("Frame")
+		screenFrame.Size = UDim2.fromScale(1, 1)
+		screenFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+		screenFrame.BackgroundTransparency = 0
+		screenFrame.BorderSizePixel = 0
+		screenFrame.Active = false
+		screenFrame.ZIndex = -1
+		screenFrame.Parent = screenOverlay
+
+		local function ensureFluentOnTop()
+			pcall(function()
+				if Fluent and Fluent.GUI then
+					Fluent.GUI.DisplayOrder = 5000
+				end
+			end)
+			pcall(function()
+				local parentList = { game:GetService("CoreGui") }
+				if gethui then
+					table.insert(parentList, gethui())
+				end
+				for _, root in ipairs(parentList) do
+					for _, g in ipairs(root:GetChildren()) do
+						if g:IsA("ScreenGui") and g ~= screenOverlay and g.Name ~= "StarCrow_ScreenOverlay" and g.Name ~= "StarCrow_LogoGui" then
+							g.DisplayOrder = 5000
+						end
+					end
+				end
+			end)
+		end
+
+		local function updateScreenOverlay()
+			screenOverlay.Enabled = Config.BlackScreen == true
+			if Config.BlackScreen then
+				ensureFluentOnTop()
+			end
+		end
+
+		Tabs.Player:AddToggle("BlackScreenToggle", {
+			Title = "Black Screen",
+			Default = Config.BlackScreen,
+			Callback = function(Value)
+				Config.BlackScreen = Value
+				SaveConfig()
+				updateScreenOverlay()
+			end,
+		})
+
+		if Config.BlackScreen then
+			updateScreenOverlay()
+		end
+
+		local gameUiHideState = { items = {} }
+		local function rememberGameUiState(inst)
+			if not inst or gameUiHideState.items[inst] then
+				return
+			end
+			gameUiHideState.items[inst] = {
+				visible = inst:IsA("GuiObject") and inst.Visible or nil,
+				enabled = inst:IsA("LayerCollector") and inst.Enabled or nil,
+			}
+		end
+
+		local function RequestHideUI()
+			local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+			local mGui = pGui and pGui:FindFirstChild("MainGui")
+			if not mGui then
+				return
+			end
+			for _, item in ipairs(mGui:GetChildren()) do
+				if item.Name ~= "Fishing" then
+					rememberGameUiState(item)
+					if item:IsA("GuiObject") then
+						item.Visible = false
+					elseif item:IsA("LayerCollector") then
+						item.Enabled = false
+					end
+				end
+			end
+		end
+
+		local function RequestShowUI()
+			for key, entry in pairs(gameUiHideState.items) do
+				if key and key.Parent then
+					if key:IsA("GuiObject") and entry.visible ~= nil then
+						key.Visible = entry.visible
+					end
+					if key:IsA("LayerCollector") and entry.enabled ~= nil then
+						key.Enabled = entry.enabled
+					end
+				end
+			end
+		end
+
+		local mainGuiConn = nil
+		local function SetupHideUIWatcher()
+			local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+			local mGui = pGui and pGui:FindFirstChild("MainGui")
+			if mGui and not mainGuiConn then
+				mainGuiConn = mGui.ChildAdded:Connect(function(item)
+					if Config.HideGameUI and item.Name ~= "Fishing" then
+						task.wait()
+						rememberGameUiState(item)
+						if item:IsA("GuiObject") then
+							item.Visible = false
+						elseif item:IsA("LayerCollector") then
+							item.Enabled = false
+						end
+					end
+				end)
+			end
+		end
+
+		Tabs.Player:AddToggle("HideGameUIToggle", {
+			Title = "Hide Game UI",
+			Default = Config.HideGameUI,
+			Callback = function(Value)
+				Config.HideGameUI = Value
+				SaveConfig()
+				if Value then
+					RequestHideUI()
+					SetupHideUIWatcher()
+				else
+					RequestShowUI()
+				end
+			end,
+		})
+
+		if Config.HideGameUI then
+			task.spawn(function()
+				task.wait(1)
+				if Config.HideGameUI then
+					RequestHideUI()
+					SetupHideUIWatcher()
 				end
 			end)
 		end
