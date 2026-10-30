@@ -4236,6 +4236,7 @@ end);
 		"Thunder Bull Shark",
 		"Black Tortoise Bloodline",
 		"Vermilion Birdblood",
+		"Wraith Orca",
 	}
 
 	local function GetBossList()
