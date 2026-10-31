@@ -100,6 +100,11 @@ local Config = {
 	AutoEquipBait = false,
 	SelectedEquipBait = "",
 	AutoGiveFish = false,
+	AutoGiveWraithOrca = false,
+	AutoGiveWraithOrcaFavorite = false,
+	AutoGiveWraithOrcaLock = false,
+	AutoFarmEvent = false,
+	SelectedFarmEventIsland = "Beginning Isle",
 	AutoFavoriteBoss = false,
 	AutoFavoriteBossTarget = {},
 	AutoHopWeather = false,
@@ -649,6 +654,15 @@ local function IsSpecialWeather(wName)
 	return false
 end
 
+local StepAutoFarmEvent
+local function IsFoggyWeather()
+	local w = tostring(workspace:GetAttribute("Weather") or "")
+	if w == "" then
+		return false
+	end
+	return string.find(string.lower(w), "fog", 1, true) ~= nil
+end
+
 local lastNotifiedWeatherKey = ""
 local function CheckAndNotifyWeather(wName)
 	if not Config.WebhookWeather then
@@ -672,12 +686,18 @@ end
 workspace:GetAttributeChangedSignal("Weather"):Connect(function()
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
+	if Config.AutoFarmEvent and IsFoggyWeather() and StepAutoFarmEvent then
+		StepAutoFarmEvent(cachedChar)
+	end
 end)
 
 task.spawn(function()
 	task.wait(2)
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
+	if Config.AutoFarmEvent and IsFoggyWeather() and StepAutoFarmEvent then
+		StepAutoFarmEvent(cachedChar)
+	end
 end)
 
 local ModuleCache = {}
@@ -1142,7 +1162,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmIsland or (Config.AutoFarmEvent and IsFoggyWeather()) or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -1159,10 +1179,29 @@ local function StepAutoFarmIsland(char)
 	end
 end
 
+function StepAutoFarmEvent(char)
+	if not Config.AutoFarmEvent or not IsFoggyWeather() or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+		return
+	end
+	if Config.AutoBoss or Config.AutoSecretBoss then
+		return
+	end
+	local targetCF = GetIslandFarmCFrame(Config.SelectedFarmEventIsland)
+	if not targetCF then
+		return
+	end
+	local c = char or cachedChar or LocalPlayer.Character
+	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+	if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
+		hrp.CFrame = targetCF
+	end
+end
+
 if cachedChar then
 	task.spawn(function()
 		StepAutoTPPos(cachedChar)
 		StepAutoFarmIsland(cachedChar)
+		StepAutoFarmEvent(cachedChar)
 		if Config.SkyFarm then
 			SetSkyFarm(true)
 		end
@@ -1178,6 +1217,7 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	task.wait(0.3)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
+	StepAutoFarmEvent(newChar)
 	if Config.SkyFarm then
 		SetSkyFarm(true)
 	end
@@ -1885,7 +1925,8 @@ do
 	local fmEv = Events:FindFirstChild("FishingMinigame")
 	if fmEv and fmEv:IsA("RemoteEvent") then
 		fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
-			if Config.FilterFishEnabled and type(fishData) == "table" then
+			local eventFilterActive = Config.AutoFarmEvent and IsFoggyWeather()
+			if (Config.FilterFishEnabled or eventFilterActive) and type(fishData) == "table" then
 				local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
 				if rawFishName == "" then
 					local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
@@ -1896,25 +1937,30 @@ do
 				end
 				if rawFishName ~= "" then
 					local targets = {}
-					if type(Config.FilterFishTarget) == "table" then
-						for k, v in pairs(Config.FilterFishTarget) do
-							local name = nil
-							if type(k) == "string" and v == true then
-								name = k
-							elseif type(v) == "string" and v ~= "" then
-								name = v
-							end
-							if name then
-								local clean = string.lower(string.gsub(name, "^%s*(.-)%s*$", "%1"))
-								if clean ~= "" and not table.find(targets, clean) then
-									table.insert(targets, clean)
+					if eventFilterActive then
+						table.insert(targets, "wraith orca")
+					end
+					if Config.FilterFishEnabled then
+						if type(Config.FilterFishTarget) == "table" then
+							for k, v in pairs(Config.FilterFishTarget) do
+								local name = nil
+								if type(k) == "string" and v == true then
+									name = k
+								elseif type(v) == "string" and v ~= "" then
+									name = v
+								end
+								if name then
+									local clean = string.lower(string.gsub(name, "^%s*(.-)%s*$", "%1"))
+									if clean ~= "" and not table.find(targets, clean) then
+										table.insert(targets, clean)
+									end
 								end
 							end
-						end
-					elseif type(Config.FilterFishTarget) == "string" and Config.FilterFishTarget ~= "" then
-						local clean = string.lower(string.gsub(Config.FilterFishTarget, "^%s*(.-)%s*$", "%1"))
-						if clean ~= "" then
-							table.insert(targets, clean)
+						elseif type(Config.FilterFishTarget) == "string" and Config.FilterFishTarget ~= "" then
+							local clean = string.lower(string.gsub(Config.FilterFishTarget, "^%s*(.-)%s*$", "%1"))
+							if clean ~= "" and not table.find(targets, clean) then
+								table.insert(targets, clean)
+							end
 						end
 					end
 					if #targets > 0 then
@@ -1982,18 +2028,21 @@ task.spawn(function()
 			lastMinigameEndTick = now
 		end
 		wasMinigameActive = isMinigame
+		local isEventFarmActive = Config.AutoFarmEvent and IsFoggyWeather()
 		local activeReel = Config.AutoReel
 			or Config.AutoMiniGame
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-		local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.SkyFarm
+			or isEventFarmActive
+		local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.SkyFarm or isEventFarmActive
 		local activeSkill = Config.AutoSkill
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
+			or isEventFarmActive
 
 		if not isMinigame then
 			skillSeqIndex = 1
@@ -2054,6 +2103,7 @@ task.spawn(function()
 			if not isMinigame then
 				StepAutoTPPos(cachedChar)
 				StepAutoFarmIsland(cachedChar)
+				StepAutoFarmEvent(cachedChar)
 			end
 			if activeCast and not isMinigame then
 				local minCastInterval = (Config.AutoCastMethod == "Instant") and 0.05
@@ -2091,6 +2141,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
+			or (Config.AutoFarmEvent and IsFoggyWeather())
 		)
 		and remote
 	then
@@ -2129,6 +2180,7 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
+			or (Config.AutoFarmEvent and IsFoggyWeather())
 		)
 		and remote
 	then
@@ -4539,6 +4591,172 @@ local StepAutoGiveFish
 	end
 end)()
 
+local StepAutoGiveWraithOrca
+(function()
+	local lastGiveWraithTick = 0
+
+	local function GetRikuObject()
+		local npc = workspace:FindFirstChild("NPC")
+		local fn = npc and npc:FindFirstChild("Function")
+		local riku = fn and fn:FindFirstChild("Riku")
+		if riku then
+			return riku
+		end
+		local ok, res = pcall(function()
+			return workspace.NPC.Function.Riku
+		end)
+		if ok and res and res.Parent then
+			return res
+		end
+		local direct = workspace:FindFirstChild("Riku", true)
+		if direct then
+			return direct
+		end
+		local okWait, waitRes = pcall(function()
+			return workspace:WaitForChild("NPC", 2):WaitForChild("Function", 2):WaitForChild("Riku", 2)
+		end)
+		if okWait and waitRes then
+			return waitRes
+		end
+		return nil
+	end
+
+	local function MatchesWraithOrca(itemName)
+		if not itemName or itemName == "" then
+			return false
+		end
+		local lower = string.lower(itemName)
+		if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
+			return false
+		end
+		if not string.find(lower, "wraith orca", 1, true) then
+			return false
+		end
+		local isFav = (string.find(itemName, "Favorite", 1, true) ~= nil) or (string.find(itemName, "Lock", 1, true) ~= nil)
+		local allowNormal = (Config.AutoGiveWraithOrca == true)
+		local allowFav = (Config.AutoGiveWraithOrcaFavorite == true or Config.AutoGiveWraithOrcaLock == true)
+		if isFav then
+			return allowFav
+		else
+			return allowNormal
+		end
+	end
+
+	local function FindAvailableHotbarSlot()
+		local hotbar = PlayerData and PlayerData:FindFirstChild("Hotbar")
+		if not hotbar then
+			return "4"
+		end
+		for i = 4, 10 do
+			local slot = hotbar:FindFirstChild(tostring(i))
+			if slot then
+				local valName = slot:FindFirstChild("ValueName")
+				local qty = slot:FindFirstChild("Quantity")
+				if (not valName or valName.Value == "") or (qty and qty.Value <= 0) then
+					return tostring(i)
+				end
+			end
+		end
+		return "4"
+	end
+
+	function StepAutoGiveWraithOrca()
+		local allowNormal = (Config.AutoGiveWraithOrca == true)
+		local allowFav = (Config.AutoGiveWraithOrcaFavorite == true or Config.AutoGiveWraithOrcaLock == true)
+		if not allowNormal and not allowFav then
+			return
+		end
+		local now = os.clock()
+		if now - lastGiveWraithTick < 1.2 then
+			return
+		end
+
+		local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+		if not pData then
+			return
+		end
+
+		local riku = GetRikuObject()
+		if not riku then
+			return
+		end
+
+		local targetSlot = nil
+		local hotbar = pData:FindFirstChild("Hotbar")
+		if hotbar then
+			for i = 2, 10 do
+				local slot = hotbar:FindFirstChild(tostring(i))
+				local valName = slot and slot:FindFirstChild("ValueName")
+				local qty = slot and slot:FindFirstChild("Quantity")
+				if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
+					if MatchesWraithOrca(valName.Value) then
+						targetSlot = tostring(i)
+						break
+					end
+				end
+			end
+		end
+
+		if not targetSlot then
+			local inv = pData:FindFirstChild("Inventory")
+			if inv then
+				local foundItem = nil
+				for _, child in ipairs(inv:GetChildren()) do
+					if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
+						if MatchesWraithOrca(child.Name) then
+							foundItem = child
+							break
+						end
+					end
+				end
+				if foundItem then
+					local freeSlot = FindAvailableHotbarSlot()
+					local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
+					if moveEv then
+						pcall(function()
+							moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
+						end)
+						task.wait(0.25)
+					end
+					targetSlot = freeSlot
+				end
+			end
+		end
+
+		if targetSlot then
+			lastGiveWraithTick = os.clock()
+			local slot = hotbar and hotbar:FindFirstChild(targetSlot)
+			local valName = slot and slot:FindFirstChild("ValueName")
+			local itemStr = tostring(valName and valName.Value or "")
+			if string.find(itemStr, "Favorite", 1, true) then
+				local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+				if favRemote then
+					pcall(function()
+						favRemote:FireServer(itemStr)
+					end)
+					task.wait(0.15)
+				end
+			end
+			pcall(function()
+				ToggleHotbar:InvokeServer(targetSlot)
+			end)
+			task.wait(0.2)
+			local args = {
+				[1] = "Riku",
+				[2] = 1,
+				[3] = "GiveFish",
+				[4] = {
+					[1] = riku,
+				},
+			}
+			pcall(function()
+				local chooseEv = ChooseDialogueOption or (Events and Events:FindFirstChild("ChooseDialogueOption")) or game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("ChooseDialogueOption", 9e9)
+				chooseEv:FireServer(unpack(args))
+			end)
+		end
+	end
+end)()
+
 local StepAutoEquipBestBait, StepAutoEquipBait
 (function()
 	local function CleanBaitName(str)
@@ -5216,6 +5434,9 @@ task.spawn(function()
 		end
 		if Config.AutoGiveFish then
 			StepAutoGiveFish()
+		end
+		if Config.AutoGiveWraithOrca or Config.AutoGiveWraithOrcaFavorite or Config.AutoGiveWraithOrcaLock then
+			StepAutoGiveWraithOrca()
 		end
 		if Config.AutoClaimDailyQuest then
 			StepAutoClaimDailyQuest()
@@ -6254,6 +6475,7 @@ end);
 
 	local Tabs = {
 		Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+		Halloween = Window:AddTab({ Title = "Halloween", Icon = "ghost" }),
 		Boss = Window:AddTab({ Title = "Boss", Icon = "skull" }),
 		Quest = Window:AddTab({ Title = "Quest", Icon = "scroll" }),
 		Player = Window:AddTab({ Title = "Player", Icon = "user" }),
@@ -6647,6 +6869,82 @@ end);
 			end)
 		end
 	end)
+
+	Tabs.Halloween:AddSection("Auto Farm Event")
+
+	do
+		local eventIslandList = GetIslandList()
+		if
+			(Config.SelectedFarmEventIsland == "" or not table.find(eventIslandList, Config.SelectedFarmEventIsland))
+			and #eventIslandList > 0
+		then
+			Config.SelectedFarmEventIsland = eventIslandList[1]
+		end
+
+		Tabs.Halloween:AddDropdown("SelectFarmEventIslandDropdown", {
+			Title = "Select Island",
+			Values = eventIslandList,
+			Default = Config.SelectedFarmEventIsland ~= "" and Config.SelectedFarmEventIsland or eventIslandList[1],
+			Multi = false,
+			Callback = function(Value)
+				Config.SelectedFarmEventIsland = Value or ""
+				SaveConfig()
+				if Config.AutoFarmEvent and IsFoggyWeather() then
+					StepAutoFarmEvent(LocalPlayer.Character)
+				end
+			end,
+		})
+
+		Tabs.Halloween:AddToggle("AutoFarmEventToggle", {
+			Title = "Auto Farm Event",
+			Default = Config.AutoFarmEvent,
+			Callback = function(Value)
+				Config.AutoFarmEvent = Value
+				SaveConfig()
+				if Value then
+					if IsFoggyWeather() then
+						pcall(function()
+							Fluent:Notify({
+								Title = "Auto Farm Event",
+								Content = "Foggy weather active! Teleporting to farm...",
+								Duration = 4,
+							})
+						end)
+						StepAutoFarmEvent(LocalPlayer.Character)
+					else
+						pcall(function()
+							Fluent:Notify({
+								Title = "Auto Farm Event",
+								Content = "No Foggy weather yet! Waiting for Foggy...",
+								Duration = 4,
+							})
+						end)
+					end
+				end
+			end,
+		})
+	end
+
+	Tabs.Halloween:AddSection("Auto Give Fish")
+
+	Tabs.Halloween:AddToggle("AutoGiveWraithOrcaToggle", {
+		Title = "Auto Give Wraith Orca",
+		Default = Config.AutoGiveWraithOrca,
+		Callback = function(Value)
+			Config.AutoGiveWraithOrca = Value
+			SaveConfig()
+		end,
+	})
+
+	Tabs.Halloween:AddToggle("AutoGiveWraithOrcaFavoriteToggle", {
+		Title = "Auto Give Wraith Orca Favorite",
+		Default = Config.AutoGiveWraithOrcaFavorite or Config.AutoGiveWraithOrcaLock,
+		Callback = function(Value)
+			Config.AutoGiveWraithOrcaFavorite = Value
+			Config.AutoGiveWraithOrcaLock = Value
+			SaveConfig()
+		end,
+	})
 
 	Tabs.Boss:AddSection("Filter Boss")
 
@@ -8206,6 +8504,170 @@ end);
 			end,
 		})
 	end
+
+	Tabs.Teleport:AddSection("Boss")
+
+	local function GetBossModelCFrame(inst)
+		if not inst then
+			return nil
+		end
+		local ok, cf = pcall(function()
+			if inst:IsA("BasePart") then
+				return inst.CFrame
+			end
+			if inst:IsA("Model") then
+				if inst.PrimaryPart then
+					return inst.PrimaryPart.CFrame
+				end
+				return inst:GetPivot()
+			end
+			local bp = inst:FindFirstChildWhichIsA("BasePart", true)
+			if bp then
+				return bp.CFrame
+			end
+			return nil
+		end)
+		if ok and cf then
+			return cf
+		end
+		return nil
+	end
+
+	local function FindBossObject(bossName)
+		local bLower = string.lower(bossName)
+		local ocean = workspace:FindFirstChild("Ocean")
+		local searchContainers = {
+			workspace:FindFirstChild("WorldBoss"),
+			workspace:FindFirstChild("Boss"),
+			workspace:FindFirstChild("BossSetUp"),
+			ocean and ocean:FindFirstChild("Boss"),
+			workspace:FindFirstChild("Fishes"),
+			ocean,
+		}
+
+		local function matchBoss(inst)
+			if not inst then
+				return false
+			end
+			local checkStrs = {}
+			if inst.Name and inst.Name ~= "" then
+				table.insert(checkStrs, string.lower(inst.Name))
+			end
+			local fnVal = inst:FindFirstChild("FishName")
+			if fnVal and fnVal:IsA("StringValue") and fnVal.Value ~= "" then
+				table.insert(checkStrs, string.lower(fnVal.Value))
+			end
+			local attr = inst:GetAttribute("FishName")
+			if attr and tostring(attr) ~= "" then
+				table.insert(checkStrs, string.lower(tostring(attr)))
+			end
+			for _, s in ipairs(checkStrs) do
+				local norm = s:gsub("[_%-]+", " "):gsub("%s+", " ")
+				if bLower == "vermilion birdblood" then
+					if string.find(norm, "vermilion birdblood", 1, true) or string.find(norm, "vermillion birdblood", 1, true) or string.find(norm, "vermilion", 1, true) or string.find(norm, "birdblood", 1, true) then
+						return true
+					end
+				elseif bLower == "black tortoise bloodline" then
+					if string.find(norm, "black tortoise bloodline", 1, true) or string.find(norm, "black tortoise", 1, true) or string.find(norm, "tortoise", 1, true) then
+						return true
+					end
+				elseif bLower == "nameless octoparasite" then
+					if string.find(norm, "nameless octoparasite", 1, true) or string.find(norm, "octoparasite", 1, true) or string.find(norm, "nameless", 1, true) then
+						return true
+					end
+				end
+			end
+			return false
+		end
+
+		for _, c in ipairs(searchContainers) do
+			if c then
+				if matchBoss(c) then
+					return c
+				end
+				for _, desc in ipairs(c:GetDescendants()) do
+					if matchBoss(desc) then
+						if desc:IsA("Model") or desc:IsA("BasePart") then
+							return desc
+						end
+						if desc.Parent and (desc.Parent:IsA("Model") or desc.Parent:IsA("BasePart")) then
+							return desc.Parent
+						end
+						return desc
+					end
+				end
+			end
+		end
+
+		for _, child in ipairs(workspace:GetChildren()) do
+			if child:IsA("Model") and matchBoss(child) then
+				return child
+			end
+		end
+
+		local direct = workspace:FindFirstChild(bossName, true)
+		if direct then
+			return direct
+		end
+
+		return nil
+	end
+
+	local function TeleportToBossTarget(bossFullName)
+		local char = LocalPlayer.Character or cachedChar
+		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if not hrp then
+			pcall(function()
+				Fluent:Notify({
+					Title = bossFullName,
+					Content = "Character not found!",
+					Duration = 3,
+				})
+			end)
+			return false
+		end
+
+		local bossObj = FindBossObject(bossFullName)
+		local bossCF = bossObj and GetBossModelCFrame(bossObj)
+		if not bossObj or not bossCF then
+			pcall(function()
+				Fluent:Notify({
+					Title = bossFullName,
+					Content = bossFullName .. " has not spawned in this server!",
+					Duration = 3,
+				})
+			end)
+			return false
+		end
+
+		hrp.CFrame = bossCF + Vector3.new(0, 12, 0)
+		pcall(function()
+			Fluent:Notify({
+				Title = bossFullName,
+				Content = "Teleported to " .. bossFullName .. "!",
+				Duration = 3,
+			})
+		end)
+		return true
+	end
+
+	local selectedBossToTP = "Vermilion Birdblood"
+	Tabs.Teleport:AddDropdown("SelectBossToTPDropdown", {
+		Title = "Select Boss",
+		Values = { "Vermilion Birdblood", "Black Tortoise Bloodline", "Nameless Octoparasite" },
+		Default = "Vermilion Birdblood",
+		Multi = false,
+		Callback = function(Value)
+			selectedBossToTP = Value or "Vermilion Birdblood"
+		end,
+	})
+
+	Tabs.Teleport:AddButton({
+		Title = "Teleport To Boss",
+		Callback = function()
+			TeleportToBossTarget(selectedBossToTP)
+		end,
+	})
 
 	Tabs.Shop:AddSection("Selling")
 
