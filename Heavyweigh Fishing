@@ -2216,26 +2216,173 @@ local BossFarmPositions = {
 	LongDiaoHai = CFrame.new(-2873.62, 32.17, 1337.38, -0.09, 0.00, -1.00, 0.00, 1.00, 0.00, 1.00, -0.00, -0.09),
 }
 
-local function GetBossFarmCFrame(wantSecret)
-	return wantSecret and BossFarmPositions.LongDiaoHai or BossFarmPositions.Enzo
+local function GetBossFarmCFrame(target)
+	if target == true or target == "Long Diaohai" or target == "LongDiaoHai" then
+		return BossFarmPositions.LongDiaoHai
+	end
+	return BossFarmPositions.Enzo
 end
 
+local enzoCooldownUntil = 0
+local longDiaohaiCooldownUntil = 0
+local currentBossTarget = nil
 local lastBossActionTick = 0
 
+local function ParseBossCooldownSeconds(text)
+	if not text or text == "" then
+		return nil
+	end
+	local lower = string.lower(text)
+	local m, s = string.match(lower, "(%d+)%s*:%s*(%d+)")
+	if m and s then
+		return (tonumber(m) or 0) * 60 + (tonumber(s) or 0)
+	end
+	local mPart = string.match(lower, "(%d+)%s*m")
+	local sPart = string.match(lower, "(%d+)%s*s")
+	if mPart or sPart then
+		return (tonumber(mPart) or 0) * 60 + (tonumber(sPart) or 0)
+	end
+	local secOnly = string.match(lower, "(%d+)%s*sec")
+	if secOnly then
+		return tonumber(secOnly) or 0
+	end
+	return nil
+end
+
+local function CheckBossCooldownText(text)
+	if not text or text == "" then
+		return
+	end
+	local lower = string.lower(text)
+	local isEnzo = string.find(lower, "enzo", 1, true) ~= nil
+	local isLong = (string.find(lower, "long diaohai", 1, true) ~= nil)
+		or (string.find(lower, "longdiaohai", 1, true) ~= nil)
+		or (string.find(lower, "diaohai", 1, true) ~= nil)
+
+	if not isEnzo and not isLong then
+		return
+	end
+
+	local now = os.clock()
+	if string.find(lower, "cooldown", 1, true) then
+		local sec = ParseBossCooldownSeconds(lower)
+		if sec and sec > 0 and sec <= 3600 then
+			if isEnzo then
+				enzoCooldownUntil = now + sec
+			elseif isLong then
+				longDiaohaiCooldownUntil = now + sec
+			end
+		end
+	elseif string.find(lower, "already being fought", 1, true) then
+		if isEnzo then
+			if now >= enzoCooldownUntil then
+				enzoCooldownUntil = now + 5
+			end
+		elseif isLong then
+			if now >= longDiaohaiCooldownUntil then
+				longDiaohaiCooldownUntil = now + 5
+			end
+		end
+	end
+end
+
+pcall(function()
+	local function HookGui(pg)
+		if not pg then
+			return
+		end
+		for _, desc in ipairs(pg:GetDescendants()) do
+			if desc:IsA("TextLabel") and desc.Text ~= "" then
+				CheckBossCooldownText(desc.Text)
+			end
+		end
+		pg.DescendantAdded:Connect(function(desc)
+			if desc:IsA("TextLabel") then
+				CheckBossCooldownText(desc.Text)
+				desc:GetPropertyChangedSignal("Text"):Connect(function()
+					CheckBossCooldownText(desc.Text)
+				end)
+			end
+		end)
+	end
+
+	local initialPg = LocalPlayer and (LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5))
+	if initialPg then
+		HookGui(initialPg)
+	end
+
+	if LocalPlayer then
+		LocalPlayer.CharacterAdded:Connect(function()
+			task.delay(1, function()
+				local newPg = LocalPlayer:FindFirstChild("PlayerGui")
+				if newPg then
+					HookGui(newPg)
+				end
+			end)
+		end)
+	end
+end)
+
+pcall(function()
+	for _, ev in ipairs(Events:GetChildren()) do
+		if ev:IsA("RemoteEvent") then
+			ev.OnClientEvent:Connect(function(...)
+				local args = { ... }
+				for _, a in ipairs(args) do
+					if type(a) == "string" then
+						CheckBossCooldownText(a)
+					elseif type(a) == "table" then
+						for _, sub in pairs(a) do
+							if type(sub) == "string" then
+								CheckBossCooldownText(sub)
+							end
+						end
+					end
+				end
+			end)
+		end
+	end
+	Events.ChildAdded:Connect(function(child)
+		if child:IsA("RemoteEvent") then
+			child.OnClientEvent:Connect(function(...)
+				local args = { ... }
+				for _, a in ipairs(args) do
+					if type(a) == "string" then
+						CheckBossCooldownText(a)
+					elseif type(a) == "table" then
+						for _, sub in pairs(a) do
+							if type(sub) == "string" then
+								CheckBossCooldownText(sub)
+							end
+						end
+					end
+				end
+			end)
+		end
+	end)
+end)
+
 local function CheckBossStatusOnToggle(wantSecret)
+	local bossName = (wantSecret == true or wantSecret == "Long Diaohai") and "Long Diaohai" or "Enzo"
+	local now = os.clock()
+	local isCooldown = (bossName == "Long Diaohai") and (now < longDiaohaiCooldownUntil) or (now < enzoCooldownUntil)
+
 	local char = cachedChar or LocalPlayer.Character
 	if char and char:GetAttribute("Type") ~= "Fishing Rod" then
 		pcall(function()
 			ToggleHotbar:InvokeServer("1")
 		end)
 	end
-	pcall(function()
-		local args = {
-			[1] = wantSecret and "Long Diaohai" or "Enzo",
-			[2] = Config.BossMode or "Normal",
-		}
-		game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
-	end)
+
+	if not isCooldown then
+		pcall(function()
+			local args = {
+				[1] = bossName,
+				[2] = Config.BossMode or "Normal",
+			}
+			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
+		end)
+	end
 end
 
 local function CancelCurrentFishing(sessionToken)
@@ -2323,27 +2470,72 @@ local function StepAutoBoss(char, isMinigame)
 	if isMinigame then
 		return
 	end
+
+	local enzoOn = Config.AutoBoss == true
+	local longOn = Config.AutoSecretBoss == true
+
+	if not enzoOn and not longOn then
+		return
+	end
+
 	local now = os.clock()
 	if now - lastBossActionTick < 0.5 then
 		return
 	end
 	lastBossActionTick = now
 
-	local wantSecret = Config.AutoSecretBoss
+	local enzoReady = enzoOn and (now >= enzoCooldownUntil)
+	local longReady = longOn and (now >= longDiaohaiCooldownUntil)
 
-	if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+	local targetBoss = nil
+	if enzoOn and longOn then
+		if enzoReady and not longReady then
+			targetBoss = "Enzo"
+		elseif longReady and not enzoReady then
+			targetBoss = "Long Diaohai"
+		elseif enzoReady and longReady then
+			if currentBossTarget == "Long Diaohai" then
+				targetBoss = "Long Diaohai"
+			else
+				targetBoss = "Enzo"
+			end
+		else
+			if enzoCooldownUntil <= longDiaohaiCooldownUntil then
+				targetBoss = "Enzo"
+			else
+				targetBoss = "Long Diaohai"
+			end
+		end
+	elseif enzoOn then
+		targetBoss = "Enzo"
+	elseif longOn then
+		targetBoss = "Long Diaohai"
+	end
+
+	if not targetBoss then
+		return
+	end
+
+	currentBossTarget = targetBoss
+
+	local isTargetReady = (targetBoss == "Long Diaohai") and (now >= longDiaohaiCooldownUntil) or (now >= enzoCooldownUntil)
+
+	local c = char or cachedChar or LocalPlayer.Character
+	if c and c:GetAttribute("Type") ~= "Fishing Rod" then
 		pcall(function()
 			ToggleHotbar:InvokeServer("1")
 		end)
 	end
 
-	pcall(function()
-		local args = {
-			[1] = wantSecret and "Long Diaohai" or "Enzo",
-			[2] = Config.BossMode or "Normal",
-		}
-		game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
-	end)
+	if isTargetReady then
+		pcall(function()
+			local args = {
+				[1] = targetBoss,
+				[2] = Config.BossMode or "Normal",
+			}
+			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
+		end)
+	end
 end
 
 local lastMinigameEndTick = 0
@@ -7836,29 +8028,67 @@ end);
 	end
 
 	do
-		local fakeName = "StarCrow Hub"
 		local oldName = LocalPlayer.Name
 		local oldDisplayName = LocalPlayer.DisplayName
 		local oldUserId = tostring(LocalPlayer.UserId)
+		local oldGuild = nil
+		local oldTitle = nil
 		local hideConnections = {}
 		local originalTexts = setmetatable({}, { __mode = "k" })
+		local hiddenCosmetics = setmetatable({}, { __mode = "k" })
 		local isHiding = false
+		local origDisplayDistanceType = nil
+		local origNameDistance = nil
+		local origHealthDistance = nil
+
+		local function escapePattern(str)
+			return (string.gsub(str, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+		end
+
+		local function syncGuildAndTitle()
+			pcall(function()
+				local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+				local gObj = leaderstats and leaderstats:FindFirstChild("Guild")
+				if gObj and gObj:IsA("ValueBase") and tostring(gObj.Value) ~= "" then
+					oldGuild = tostring(gObj.Value)
+				end
+			end)
+			pcall(function()
+				local c = LocalPlayer.Character
+				local hrp = c and c:FindFirstChild("HumanoidRootPart")
+				local eqTitle = hrp and hrp:FindFirstChild("EquippedTitle")
+				if eqTitle then
+					local lbl = eqTitle:FindFirstChildWhichIsA("TextLabel", true)
+					if lbl and lbl.Text ~= "" then
+						oldTitle = lbl.Text
+					end
+				end
+			end)
+		end
 
 		local function replaceInText(text)
 			if typeof(text) ~= "string" or text == "" then
 				return text, false
 			end
 			local changed = false
-			if string.find(text, oldUserId, 1, true) then
-				text = string.gsub(text, oldUserId, fakeName)
+			if oldUserId ~= "" and string.find(text, oldUserId, 1, true) then
+				text = string.gsub(text, escapePattern(oldUserId), "")
 				changed = true
 			end
-			if string.find(text, oldDisplayName, 1, true) then
-				text = string.gsub(text, oldDisplayName, fakeName)
+			if oldDisplayName ~= "" and string.find(text, oldDisplayName, 1, true) then
+				text = string.gsub(text, escapePattern(oldDisplayName), "")
 				changed = true
 			end
-			if string.find(text, oldName, 1, true) then
-				text = string.gsub(text, oldName, fakeName)
+			if oldName ~= "" and string.find(text, oldName, 1, true) then
+				text = string.gsub(text, escapePattern(oldName), "")
+				changed = true
+			end
+			if oldGuild and oldGuild ~= "" and string.find(text, oldGuild, 1, true) then
+				text = string.gsub(text, escapePattern(oldGuild), "")
+				changed = true
+			end
+			if oldTitle and oldTitle ~= "" and string.find(text, oldTitle, 1, true) then
+				text = string.gsub(text, escapePattern(oldTitle), "")
 				changed = true
 			end
 			return text, changed
@@ -7905,21 +8135,108 @@ end);
 			end)
 		end
 
+		local function hideCosmeticInst(inst)
+			if not inst then
+				return
+			end
+			if not hiddenCosmetics[inst] then
+				hiddenCosmetics[inst] = {
+					enabled = inst:IsA("BillboardGui") and inst.Enabled,
+					visible = inst:IsA("GuiObject") and inst.Visible,
+				}
+			end
+			if inst:IsA("BillboardGui") then
+				inst.Enabled = false
+			elseif inst:IsA("GuiObject") then
+				inst.Visible = false
+			end
+		end
+
+		local function hideCosmeticTree(inst)
+			if not inst then
+				return
+			end
+			hideCosmeticInst(inst)
+			for _, desc in ipairs(inst:GetDescendants()) do
+				if desc:IsA("BillboardGui") or desc:IsA("GuiObject") then
+					hideCosmeticInst(desc)
+				end
+			end
+		end
+
+		local function hookCosmeticInst(inst)
+			if inst:IsA("BillboardGui") then
+				local c = inst:GetPropertyChangedSignal("Enabled"):Connect(function()
+					if isHiding and inst.Enabled then
+						inst.Enabled = false
+					end
+				end)
+				table.insert(hideConnections, c)
+			end
+			if inst:IsA("GuiObject") then
+				local c = inst:GetPropertyChangedSignal("Visible"):Connect(function()
+					if isHiding and inst.Visible then
+						inst.Visible = false
+					end
+				end)
+				table.insert(hideConnections, c)
+			end
+		end
+
+		local function applyCharacterCosmetics(char)
+			if not char then
+				return
+			end
+			for _, desc in ipairs(char:GetDescendants()) do
+				if desc.Name == "EquippedTitle" or desc.Name == "GuildFrame" then
+					hideCosmeticTree(desc)
+					hookCosmeticInst(desc)
+				end
+			end
+			local dConn = char.DescendantAdded:Connect(function(desc)
+				if isHiding and (desc.Name == "EquippedTitle" or desc.Name == "GuildFrame") then
+					hideCosmeticTree(desc)
+					hookCosmeticInst(desc)
+				end
+			end)
+			table.insert(hideConnections, dConn)
+		end
+
 		local function updateCharacterDisplay(char)
 			if not char then
 				return
 			end
+			syncGuildAndTitle()
 			pcall(function()
 				local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 3)
 				if hum then
 					if isHiding then
-						hum.DisplayName = fakeName
+						if origDisplayDistanceType == nil then
+							origDisplayDistanceType = hum.DisplayDistanceType
+							origNameDistance = hum.NameDisplayDistance
+							origHealthDistance = hum.HealthDisplayDistance
+						end
+						hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+						hum.NameDisplayDistance = 0
+						hum.HealthDisplayDistance = 0
+						hum.DisplayName = ""
 					else
+						if origDisplayDistanceType ~= nil then
+							hum.DisplayDistanceType = origDisplayDistanceType
+							hum.NameDisplayDistance = origNameDistance or 100
+							hum.HealthDisplayDistance = origHealthDistance or 100
+							origDisplayDistanceType = nil
+						else
+							hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+							hum.NameDisplayDistance = 100
+							hum.HealthDisplayDistance = 100
+						end
 						hum.DisplayName = (oldDisplayName ~= "" and oldDisplayName) or oldName
 					end
 				end
 			end)
 			if isHiding then
+				applyCharacterCosmetics(char)
 				scanContainer(char)
 			end
 		end
@@ -7930,6 +8247,7 @@ end);
 			end
 			isHiding = enabled
 			if enabled then
+				syncGuildAndTitle()
 				scanContainer(LocalPlayer:WaitForChild("PlayerGui"))
 				scanContainer(workspace)
 				pcall(function()
@@ -7945,6 +8263,27 @@ end);
 					end
 				end)
 				table.insert(hideConnections, charConn)
+
+				pcall(function()
+					local leaderstats = LocalPlayer:WaitForChild("leaderstats", 5)
+					if leaderstats then
+						local gObj = leaderstats:FindFirstChild("Guild")
+						if gObj and gObj:IsA("ValueBase") then
+							oldGuild = tostring(gObj.Value)
+							local gConn = gObj.Changed:Connect(function(newVal)
+								oldGuild = tostring(newVal)
+								if isHiding then
+									scanContainer(LocalPlayer:WaitForChild("PlayerGui"))
+									scanContainer(workspace)
+									pcall(function()
+										scanContainer(game:GetService("CoreGui"))
+									end)
+								end
+							end)
+							table.insert(hideConnections, gConn)
+						end
+					end
+				end)
 			else
 				for _, conn in ipairs(hideConnections) do
 					pcall(function()
@@ -7960,6 +8299,18 @@ end);
 					end)
 				end
 				table.clear(originalTexts)
+				for inst, orig in pairs(hiddenCosmetics) do
+					pcall(function()
+						if inst and inst.Parent then
+							if inst:IsA("BillboardGui") and orig.enabled ~= nil then
+								inst.Enabled = orig.enabled
+							elseif inst:IsA("GuiObject") and orig.visible ~= nil then
+								inst.Visible = orig.visible
+							end
+						end
+					end)
+				end
+				table.clear(hiddenCosmetics)
 				if LocalPlayer.Character then
 					updateCharacterDisplay(LocalPlayer.Character)
 				end
