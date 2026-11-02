@@ -83,6 +83,8 @@ local Config = {
 	AutoTPPos = false,
 	AutoFarmIsland = false,
 	SelectedFarmIsland = "Beginning Isle",
+	AutoFarmMaterialBait = false,
+	SelectedMaterialBait = "Rainbow Bait",
 	SkyFarm = false,
 	SkyFarmHeight = 609,
 	SelectedBuyRod = "",
@@ -1162,7 +1164,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or (Config.AutoFarmEvent and IsFoggyWeather()) or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or (Config.AutoFarmEvent and IsFoggyWeather()) or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -1197,11 +1199,336 @@ function StepAutoFarmEvent(char)
 	end
 end
 
+local BAIT_RECIPES = {
+	["Rainbow Bait"] = {
+		{ name = "Colossal Tigerfish", minKg = 3000000, maxKg = 6000000 },
+		{ name = "Heavenpiercer Turtle", minKg = 3000000, maxKg = 6000000 },
+		{ name = "Golden Guardian Fish", minKg = 1000000, maxKg = 3000000 },
+		{ name = "Crimson Electric Eel", minKg = 3000000, maxKg = 4000000 },
+	},
+	["Frost Bait"] = {
+		{ name = "Frost Kingfish", minKg = 4000000, maxKg = 7000000 },
+		{ name = "Ascended Perch", minKg = 900000, maxKg = 1000000 },
+		{ name = "Primordial Kunfish Overlord", minKg = 1000000, maxKg = 1600000 },
+		{ name = "Warbringer Shark", minKg = 500000, maxKg = 800000 },
+	},
+	["Intuitive Bait"] = {
+		{ name = "Aquatic Fish", minKg = 1000000, maxKg = 3000000 },
+		{ name = "Flame Fish", minKg = 1000000, maxKg = 3000000 },
+		{ name = "Thunder Fish", minKg = 1000000, maxKg = 3000000 },
+		{ name = "Wind Fish", minKg = 1000000, maxKg = 3000000 },
+	},
+}
+
+local MAT_WEATHER_REQUIRED = {
+	["Frost Kingfish"] = {
+		weathers = { snowy = true, frost = true, snow = true },
+		island = "Frost Isle",
+		label = "Snowy",
+	},
+	["Heavenpiercer Turtle"] = {
+		weathers = { foggy = true, fog = true },
+		island = "Coconut Isle",
+		label = "Foggy",
+	},
+	["Crimson Electric Eel"] = {
+		weathers = { thunderstorm = true, thunder = true, storm = true },
+		island = "Bamboo Isle",
+		label = "Thunderstorm",
+	},
+	["Aquatic Fish"] = {
+		weathers = { rainy = true, rain = true },
+		island = "Weather Isle",
+		label = "Rainy",
+	},
+	["Flame Fish"] = {
+		weathers = { ["blazing sun"] = true, blazingsun = true, blazing = true, sun = true },
+		island = "Weather Isle",
+		label = "Blazing Sun",
+	},
+	["Thunder Fish"] = {
+		weathers = { thunderstorm = true, thunder = true, storm = true },
+		island = "Weather Isle",
+		label = "Thunderstorm",
+	},
+	["Wind Fish"] = {
+		weathers = { windy = true, wind = true },
+		island = "Weather Isle",
+		label = "Windy",
+	},
+}
+
+local NAMELESS_BAIT_FARM_CFRAME = CFrame.new(3013.15, 15.53, -124.57)
+
+local function GetMaterialFishCount(fishName, minKg, maxKg)
+	local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+	if not pData then
+		return 0
+	end
+	local inv = pData:FindFirstChild("Inventory")
+	if not inv then
+		return 0
+	end
+	local count = 0
+	local gsMod = nil
+	pcall(function()
+		local cm = ReplicatedStorage:FindFirstChild("ClientModule")
+		local gs = cm and cm:FindFirstChild("GameService")
+		if gs then
+			gsMod = require(gs)
+		end
+	end)
+	for _, entry in ipairs(inv:GetChildren()) do
+		local rawName = entry.Name
+		local cleanName = string.split(rawName, "| Favorite")[1]
+		cleanName = string.gsub(cleanName, "^%s*(.-)%s*$", "%1")
+		local matchedName = (rawName == fishName) or (cleanName == fishName)
+		local weightNum = nil
+		if gsMod and gsMod.DestringFish then
+			local ok, res = pcall(gsMod.DestringFish, cleanName)
+			if ok and res then
+				if res.FishName and res.FishName == fishName then
+					matchedName = true
+				end
+				if res.Weight then
+					weightNum = tonumber(res.Weight)
+				end
+			end
+		end
+		if not weightNum then
+			if entry:IsA("StringValue") then
+				local parts = {}
+				for p in string.gmatch(entry.Value, "[^|]+") do
+					table.insert(parts, p)
+				end
+				if #parts >= 2 then
+					weightNum = tonumber(parts[2]:gsub("^%s+", ""):gsub("%s+$", ""))
+				elseif #parts == 1 then
+					weightNum = tonumber(parts[1]:gsub("^%s+", ""):gsub("%s+$", ""))
+				end
+			elseif entry:IsA("NumberValue") or entry:IsA("IntValue") then
+				weightNum = tonumber(entry.Value)
+			end
+		end
+		if not weightNum then
+			for num in string.gmatch(cleanName, "(%d+%.?%d*)%s*[kK][gG]") do
+				weightNum = tonumber(num)
+				break
+			end
+		end
+		if matchedName and weightNum and weightNum >= minKg and weightNum <= maxKg then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local MaterialFishIslands = {
+	["Colossal Tigerfish"] = "Battlefield Isle",
+	["Golden Guardian Fish"] = "Battlefield Isle",
+	["Heavenpiercer Turtle"] = "Coconut Isle",
+	["Crimson Electric Eel"] = "Bamboo Isle",
+	["Frost Kingfish"] = "Frost Isle",
+	["Ascended Perch"] = "Perch Isle",
+	["Primordial Kunfish Overlord"] = "Frost Isle",
+	["Primordial Kunfish"] = "Frost Isle",
+	["Warbringer Shark"] = "Coconut Isle",
+	["Aquatic Fish"] = "Weather Isle",
+	["Flame Fish"] = "Weather Isle",
+	["Thunder Fish"] = "Weather Isle",
+	["Wind Fish"] = "Weather Isle",
+}
+
+local currentMaterialTargets = {}
+
+local function GetIslandForMaterialFish(fishName)
+	if MaterialFishIslands[fishName] then
+		return MaterialFishIslands[fishName]
+	end
+	for k, v in pairs(MaterialFishIslands) do
+		if string.find(string.lower(fishName), string.lower(k), 1, true) or string.find(string.lower(k), string.lower(fishName), 1, true) then
+			return v
+		end
+	end
+	return "Beginning Isle"
+end
+
+local isMaterialFarmCastingAllowed = false
+
+local function IsWeatherMatching(curWeather, weatherTable)
+	if not weatherTable then
+		return true
+	end
+	local lowerW = string.lower(tostring(curWeather or ""))
+	if lowerW == "" then
+		return false
+	end
+	for k, _ in pairs(weatherTable) do
+		local lowerK = string.lower(tostring(k))
+		if lowerW == lowerK or string.find(lowerW, lowerK, 1, true) or string.find(lowerK, lowerW, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local lastMatNotifyTick = 0
+local function StepAutoFarmMaterialBait(char)
+	if not Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+		isMaterialFarmCastingAllowed = false
+		currentMaterialTargets = {}
+		return
+	end
+	if Config.AutoBoss or Config.AutoSecretBoss then
+		isMaterialFarmCastingAllowed = false
+		currentMaterialTargets = {}
+		return
+	end
+	local c = char or cachedChar or LocalPlayer.Character
+	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+	if not hrp then
+		isMaterialFarmCastingAllowed = false
+		return
+	end
+	local selectedBait = Config.SelectedMaterialBait or "Rainbow Bait"
+	if selectedBait == "Nameless Bait" then
+		local targetCF = IslandFarmPositions["Mistpeak Isle"] or GetIslandFarmCFrame("Mistpeak Isle")
+		if targetCF and (hrp.Position - targetCF.Position).Magnitude > 5 then
+			isMaterialFarmCastingAllowed = false
+			if c:GetAttribute("Fishing") then
+				pcall(function()
+					FishingEvent:FireServer(hrp.CFrame)
+				end)
+				task.wait(0.1)
+			end
+			hrp.CFrame = targetCF
+		else
+			isMaterialFarmCastingAllowed = true
+		end
+		currentMaterialTargets = { "nameless octoparasite", "octoparasitic fish", "nameless" }
+		return
+	end
+	if selectedBait == "Thunder Bait" then
+		local targetCF = IslandFarmPositions["Mystic Reef Isle"] or GetIslandFarmCFrame("Mystic Reef Isle")
+		if targetCF and (hrp.Position - targetCF.Position).Magnitude > 5 then
+			isMaterialFarmCastingAllowed = false
+			if c:GetAttribute("Fishing") then
+				pcall(function()
+					FishingEvent:FireServer(hrp.CFrame)
+				end)
+				task.wait(0.1)
+			end
+			hrp.CFrame = targetCF
+		else
+			isMaterialFarmCastingAllowed = true
+		end
+		currentMaterialTargets = {}
+		return
+	end
+	local recipe = BAIT_RECIPES[selectedBait]
+	if not recipe or #recipe == 0 then
+		isMaterialFarmCastingAllowed = false
+		currentMaterialTargets = {}
+		return
+	end
+
+	local curWeather = string.lower(tostring(workspace:GetAttribute("Weather") or ""))
+	local availableList = {}
+	for _, item in ipairs(recipe) do
+		local req = MAT_WEATHER_REQUIRED[item.name]
+		if not req or IsWeatherMatching(curWeather, req.weathers) then
+			table.insert(availableList, item)
+		end
+	end
+
+	if #availableList == 0 then
+		isMaterialFarmCastingAllowed = false
+		currentMaterialTargets = {}
+		if c:GetAttribute("Fishing") then
+			pcall(function()
+				FishingEvent:FireServer(hrp.CFrame)
+			end)
+		end
+		local now = os.clock()
+		if now - lastMatNotifyTick >= 6 then
+			lastMatNotifyTick = now
+			pcall(function()
+				Fluent:Notify({
+					Title = "Material Bait",
+					Content = selectedBait .. " waiting for weather...",
+					Duration = 3,
+				})
+			end)
+		end
+		return
+	end
+
+	local targetFish = nil
+	local minCount = math.huge
+	for _, item in ipairs(availableList) do
+		local cnt = GetMaterialFishCount(item.name, item.minKg, item.maxKg)
+		if cnt < minCount then
+			minCount = cnt
+			targetFish = item
+		end
+	end
+	if not targetFish then
+		isMaterialFarmCastingAllowed = false
+		currentMaterialTargets = {}
+		return
+	end
+
+	local islandName
+	local reqWeather = MAT_WEATHER_REQUIRED[targetFish.name]
+	if reqWeather then
+		islandName = reqWeather.island
+	else
+		islandName = GetIslandForMaterialFish(targetFish.name)
+	end
+
+	local matTargets = {}
+	for _, item in ipairs(availableList) do
+		local isl = GetIslandForMaterialFish(item.name)
+		if isl == islandName then
+			table.insert(matTargets, string.lower(item.name))
+			if item.name == "Primordial Kunfish Overlord" then
+				table.insert(matTargets, "primordial kunfish")
+			end
+		end
+	end
+	if #matTargets == 0 and targetFish then
+		table.insert(matTargets, string.lower(targetFish.name))
+		if targetFish.name == "Primordial Kunfish Overlord" then
+			table.insert(matTargets, "primordial kunfish")
+		end
+	end
+	currentMaterialTargets = matTargets
+
+	local targetCF = IslandFarmPositions[islandName] or GetIslandFarmCFrame(islandName)
+	if targetCF then
+		if (hrp.Position - targetCF.Position).Magnitude > 5 then
+			isMaterialFarmCastingAllowed = false
+			if c:GetAttribute("Fishing") then
+				pcall(function()
+					FishingEvent:FireServer(hrp.CFrame)
+				end)
+				task.wait(0.1)
+			end
+			hrp.CFrame = targetCF
+		else
+			isMaterialFarmCastingAllowed = true
+		end
+	else
+		isMaterialFarmCastingAllowed = false
+	end
+end
+
 if cachedChar then
 	task.spawn(function()
 		StepAutoTPPos(cachedChar)
 		StepAutoFarmIsland(cachedChar)
 		StepAutoFarmEvent(cachedChar)
+		StepAutoFarmMaterialBait(cachedChar)
 		if Config.SkyFarm then
 			SetSkyFarm(true)
 		end
@@ -1218,6 +1545,7 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
 	StepAutoFarmEvent(newChar)
+	StepAutoFarmMaterialBait(newChar)
 	if Config.SkyFarm then
 		SetSkyFarm(true)
 	end
@@ -1926,7 +2254,8 @@ do
 	if fmEv and fmEv:IsA("RemoteEvent") then
 		fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
 			local eventFilterActive = Config.AutoFarmEvent and IsFoggyWeather()
-			if (Config.FilterFishEnabled or eventFilterActive) and type(fishData) == "table" then
+			local materialFilterActive = Config.AutoFarmMaterialBait and currentMaterialTargets and #currentMaterialTargets > 0
+			if (Config.FilterFishEnabled or eventFilterActive or materialFilterActive) and type(fishData) == "table" then
 				local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
 				if rawFishName == "" then
 					local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
@@ -1937,10 +2266,15 @@ do
 				end
 				if rawFishName ~= "" then
 					local targets = {}
-					if eventFilterActive then
+					if materialFilterActive then
+						for _, t in ipairs(currentMaterialTargets) do
+							if not table.find(targets, t) then
+								table.insert(targets, t)
+							end
+						end
+					elseif eventFilterActive then
 						table.insert(targets, "wraith orca")
-					end
-					if Config.FilterFishEnabled then
+					elseif Config.FilterFishEnabled then
 						if type(Config.FilterFishTarget) == "table" then
 							for k, v in pairs(Config.FilterFishTarget) do
 								local name = nil
@@ -1967,7 +2301,7 @@ do
 						local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
 						local matched = false
 						for _, t in ipairs(targets) do
-							if hookedLower == t or string.find(hookedLower, t, 1, true) then
+							if hookedLower == t or string.find(hookedLower, t, 1, true) or string.find(t, hookedLower, 1, true) then
 								matched = true
 								break
 							end
@@ -2029,6 +2363,7 @@ task.spawn(function()
 		end
 		wasMinigameActive = isMinigame
 		local isEventFarmActive = Config.AutoFarmEvent and IsFoggyWeather()
+		local isMaterialFarmActive = Config.AutoFarmMaterialBait and isMaterialFarmCastingAllowed
 		local activeReel = Config.AutoReel
 			or Config.AutoMiniGame
 			or Config.AutoBoss
@@ -2036,13 +2371,22 @@ task.spawn(function()
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
 			or isEventFarmActive
-		local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.SkyFarm or isEventFarmActive
+			or isMaterialFarmActive
+		local activeCast = Config.AutoCast
+			or Config.AutoFarmIsland
+			or Config.SkyFarm
+			or isEventFarmActive
+			or isMaterialFarmActive
+		if Config.AutoFarmMaterialBait and not isMaterialFarmCastingAllowed then
+			activeCast = false
+		end
 		local activeSkill = Config.AutoSkill
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
 			or isEventFarmActive
+			or isMaterialFarmActive
 
 		if not isMinigame then
 			skillSeqIndex = 1
@@ -2104,6 +2448,7 @@ task.spawn(function()
 				StepAutoTPPos(cachedChar)
 				StepAutoFarmIsland(cachedChar)
 				StepAutoFarmEvent(cachedChar)
+				StepAutoFarmMaterialBait(cachedChar)
 			end
 			if activeCast and not isMinigame then
 				local minCastInterval = (Config.AutoCastMethod == "Instant") and 0.05
@@ -2142,6 +2487,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
 			or (Config.AutoFarmEvent and IsFoggyWeather())
+			or Config.AutoFarmMaterialBait
 		)
 		and remote
 	then
@@ -2181,6 +2527,7 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
 			or (Config.AutoFarmEvent and IsFoggyWeather())
+			or Config.AutoFarmMaterialBait
 		)
 		and remote
 	then
@@ -6551,11 +6898,20 @@ end);
 		})
 	end
 
-	Tabs.Main:AddToggle("AutoFarmIslandToggle", {
+	local AutoFarmIslandToggleObj, AutoFarmMaterialBaitToggleObj
+	AutoFarmIslandToggleObj = Tabs.Main:AddToggle("AutoFarmIslandToggle", {
 		Title = "Auto Farm",
 		Default = Config.AutoFarmIsland,
 		Callback = function(Value)
 			Config.AutoFarmIsland = Value
+			if Value and Config.AutoFarmMaterialBait then
+				Config.AutoFarmMaterialBait = false
+				if AutoFarmMaterialBaitToggleObj then
+					pcall(function()
+						AutoFarmMaterialBaitToggleObj:SetValue(false)
+					end)
+				end
+			end
 			SaveConfig()
 			if Value then
 				StepAutoFarmIsland(LocalPlayer.Character)
@@ -6869,6 +7225,42 @@ end);
 			end)
 		end
 	end)
+
+	Tabs.Main:AddSection("Material Bait Farming")
+
+	Tabs.Main:AddDropdown("SelectMaterialBaitDropdown", {
+		Title = "Select Bait",
+		Values = { "Rainbow Bait", "Frost Bait", "Intuitive Bait", "Nameless Bait", "Thunder Bait" },
+		Default = Config.SelectedMaterialBait or "Rainbow Bait",
+		Multi = false,
+		Callback = function(Value)
+			Config.SelectedMaterialBait = Value or "Rainbow Bait"
+			SaveConfig()
+			if Config.AutoFarmMaterialBait then
+				StepAutoFarmMaterialBait(LocalPlayer.Character)
+			end
+		end,
+	})
+
+	AutoFarmMaterialBaitToggleObj = Tabs.Main:AddToggle("AutoFarmMaterialBaitToggle", {
+		Title = "Auto Farm Materials",
+		Default = Config.AutoFarmMaterialBait,
+		Callback = function(Value)
+			Config.AutoFarmMaterialBait = Value
+			if Value and Config.AutoFarmIsland then
+				Config.AutoFarmIsland = false
+				if AutoFarmIslandToggleObj then
+					pcall(function()
+						AutoFarmIslandToggleObj:SetValue(false)
+					end)
+				end
+			end
+			SaveConfig()
+			if Value then
+				StepAutoFarmMaterialBait(LocalPlayer.Character)
+			end
+		end,
+	})
 
 	Tabs.Halloween:AddSection("Auto Farm Event")
 
