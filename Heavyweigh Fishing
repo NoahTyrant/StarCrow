@@ -2419,7 +2419,15 @@ local function CheckBossStatusOnToggle(wantSecret)
 	end
 end
 
+local isCancellingFishing = false
 local function CancelCurrentFishing(sessionToken)
+	if isCancellingFishing then
+		return
+	end
+	isCancellingFishing = true
+	local lockUntil = os.clock() + 1.2
+	lastMinigameEndTick = lockUntil
+	lastCastTry = lockUntil
 	pcall(function()
 		if sessionToken then
 			Events.FishingMinigame:FireServer(false, sessionToken, "Unequip")
@@ -2427,6 +2435,19 @@ local function CancelCurrentFishing(sessionToken)
 	end)
 	pcall(function()
 		ToggleHotbar:InvokeServer("1")
+	end)
+	task.delay(0.6, function()
+		pcall(function()
+			local c = cachedChar or LocalPlayer.Character
+			if c and c:GetAttribute("Type") ~= "Fishing Rod" then
+				ToggleHotbar:InvokeServer("1")
+			end
+			if FishingGui and FishingGui.Visible and not (c and c:GetAttribute("Fishing")) then
+				FishingGui.Visible = false
+			end
+		end)
+		task.wait(0.4)
+		isCancellingFishing = false
 	end)
 end
 
@@ -2580,10 +2601,26 @@ task.spawn(function()
 	local skillSeqIndex = 1
 	local pendingSkillKey = nil
 	local wasMinigameActive = false
+	local ghostMinigameCheckTick = 0
 	while task.wait(0.08) do
 		local now = os.clock()
 		RefreshGuiCache()
-		local isMinigame = FishingGui and FishingGui.Visible or false
+		local rawMinigame = FishingGui and FishingGui.Visible or false
+		local realFishing = cachedChar and cachedChar:GetAttribute("Fishing")
+		local isMinigame = rawMinigame
+		if rawMinigame and not realFishing then
+			if ghostMinigameCheckTick == 0 then
+				ghostMinigameCheckTick = now
+			elseif now - ghostMinigameCheckTick >= 2 then
+				pcall(function()
+					FishingGui.Visible = false
+				end)
+				isMinigame = false
+				ghostMinigameCheckTick = 0
+			end
+		else
+			ghostMinigameCheckTick = 0
+		end
 		if wasMinigameActive and not isMinigame then
 			lastMinigameEndTick = now
 		end
@@ -4411,11 +4448,38 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 	local lastTurnInAttempt = 0
 	local lastRecordedCooldownText = ""
 	local dailyLimitReached = false
+	local limitReachedDateStr = nil
 	local lastLimitNotificationTick = 0
 
 	function ResetTicketLimit()
 		dailyLimitReached = false
+		limitReachedDateStr = nil
 		lastLimitNotificationTick = 0
+		questCooldownUntil = 0
+	end
+
+	local function CheckUtcDayReset()
+		if not dailyLimitReached then
+			return
+		end
+		local curDateStr = os.date("!%Y-%m-%d", os.time())
+		if limitReachedDateStr and curDateStr ~= limitReachedDateStr then
+			dailyLimitReached = false
+			limitReachedDateStr = nil
+			questCooldownUntil = 0
+			lastAcceptAttempt = 0
+			lastTurnInAttempt = 0
+			lastRecordedCooldownText = ""
+			pcall(function()
+				if Fluent and Fluent.Notify then
+					Fluent:Notify({
+						Title = "Ticket Quest",
+						Content = "00:00 UTC reached! Resuming Auto Claim Ticket...",
+						Duration = 4,
+					})
+				end
+			end)
+		end
 	end
 
 	local function IsDailyLimitText(text)
@@ -4440,13 +4504,7 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 			return
 		end
 		dailyLimitReached = true
-		Config.AutoTicketQuest = false
-		SaveConfig()
-		if AutoTicketQuestToggleObj then
-			pcall(function()
-				AutoTicketQuestToggleObj:SetValue(false)
-			end)
-		end
+		limitReachedDateStr = os.date("!%Y-%m-%d", os.time())
 		local now = os.clock()
 		if now - lastLimitNotificationTick >= 5 then
 			lastLimitNotificationTick = now
@@ -4454,7 +4512,7 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 				if Fluent and Fluent.Notify then
 					Fluent:Notify({
 						Title = "Ticket Quest",
-						Content = "Daily limit of 20 ticket quests reached",
+						Content = "Daily limit of 20 reached. Waiting for 00:00 UTC reset...",
 						Duration = 4,
 					})
 				end
@@ -4543,6 +4601,7 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 	end
 
 	function StepSmartTicketQuest()
+		CheckUtcDayReset()
 		if dailyLimitReached then
 			return
 		end
