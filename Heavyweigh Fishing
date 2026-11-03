@@ -685,10 +685,43 @@ local function CheckAndNotifyWeather(wName)
 	end)
 end
 
+local wasFoggyWeather = nil
+
+local function HandleEventWeatherNotification(isFoggy)
+	if not Config.AutoFarmEvent then
+		wasFoggyWeather = isFoggy
+		return
+	end
+	if wasFoggyWeather == nil then
+		wasFoggyWeather = isFoggy
+		return
+	end
+	if isFoggy and not wasFoggyWeather then
+		wasFoggyWeather = true
+		pcall(function()
+			Fluent:Notify({
+				Title = "Auto Farm Event",
+				Content = "Foggy weather active! Filtering Wraith Orca...",
+				Duration = 4,
+			})
+		end)
+	elseif not isFoggy and wasFoggyWeather then
+		wasFoggyWeather = false
+		pcall(function()
+			Fluent:Notify({
+				Title = "Auto Farm Event",
+				Content = "Waiting for Foggy weather...",
+				Duration = 4,
+			})
+		end)
+	end
+end
+
 workspace:GetAttributeChangedSignal("Weather"):Connect(function()
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
-	if Config.AutoFarmEvent and IsFoggyWeather() and StepAutoFarmEvent then
+	HandleEventWeatherNotification(IsFoggyWeather())
+	if Config.AutoFarmEvent and StepAutoFarmEvent then
 		StepAutoFarmEvent(cachedChar)
 	end
 end)
@@ -697,7 +730,8 @@ task.spawn(function()
 	task.wait(2)
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
-	if Config.AutoFarmEvent and IsFoggyWeather() and StepAutoFarmEvent then
+	wasFoggyWeather = IsFoggyWeather()
+	if Config.AutoFarmEvent and StepAutoFarmEvent then
 		StepAutoFarmEvent(cachedChar)
 	end
 end)
@@ -1164,7 +1198,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or (Config.AutoFarmEvent and IsFoggyWeather()) or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmIsland or Config.AutoFarmEvent or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -1182,7 +1216,7 @@ local function StepAutoFarmIsland(char)
 end
 
 function StepAutoFarmEvent(char)
-	if not Config.AutoFarmEvent or not IsFoggyWeather() or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmEvent or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -2554,7 +2588,7 @@ task.spawn(function()
 			lastMinigameEndTick = now
 		end
 		wasMinigameActive = isMinigame
-		local isEventFarmActive = Config.AutoFarmEvent and IsFoggyWeather()
+		local isEventFarmActive = Config.AutoFarmEvent == true
 		local isMaterialFarmActive = Config.AutoFarmMaterialBait and isMaterialFarmCastingAllowed
 		local activeReel = Config.AutoReel
 			or Config.AutoMiniGame
@@ -2678,7 +2712,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-			or (Config.AutoFarmEvent and IsFoggyWeather())
+			or Config.AutoFarmEvent
 			or Config.AutoFarmMaterialBait
 		)
 		and remote
@@ -2718,7 +2752,7 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-			or (Config.AutoFarmEvent and IsFoggyWeather())
+			or Config.AutoFarmEvent
 			or Config.AutoFarmMaterialBait
 		)
 		and remote
@@ -7486,24 +7520,25 @@ end);
 				Config.AutoFarmEvent = Value
 				SaveConfig()
 				if Value then
-					if IsFoggyWeather() then
+					wasFoggyWeather = IsFoggyWeather()
+					if wasFoggyWeather then
 						pcall(function()
 							Fluent:Notify({
 								Title = "Auto Farm Event",
-								Content = "Foggy weather active! Teleporting to farm...",
+								Content = "Foggy weather active! Filtering Wraith Orca...",
 								Duration = 4,
 							})
 						end)
-						StepAutoFarmEvent(LocalPlayer.Character)
 					else
 						pcall(function()
 							Fluent:Notify({
 								Title = "Auto Farm Event",
-								Content = "No Foggy weather yet! Waiting for Foggy...",
+								Content = "Waiting for Foggy weather...",
 								Duration = 4,
 							})
 						end)
 					end
+					StepAutoFarmEvent(LocalPlayer.Character)
 				end
 			end,
 		})
