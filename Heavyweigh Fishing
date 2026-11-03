@@ -105,6 +105,7 @@ local Config = {
 	AutoGiveWraithOrca = false,
 	AutoGiveWraithOrcaFavorite = false,
 	AutoGiveWraithOrcaLock = false,
+	AutoFavoriteWraithOrca = false,
 	AutoFarmEvent = false,
 	SelectedFarmEventIsland = "Beginning Isle",
 	AutoFavoriteBoss = false,
@@ -3398,7 +3399,7 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 end
 
-local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, checkSacredBossWebhooks
+local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, checkSacredBossWebhooks, TeleportToSecretRod, GetSecretRodNames
 
 do
 	local NormalRodDefs = {
@@ -4162,6 +4163,92 @@ do
 				NotifiedWebhookEntities[key] = nil
 			end
 		end
+	end
+
+	GetSecretRodNames = function()
+		local list = {}
+		local seen = {}
+		for _, def in ipairs(SecretRodDefs) do
+			if not seen[def.name] then
+				seen[def.name] = true
+				table.insert(list, def.name)
+			end
+		end
+		local folder = workspace:FindFirstChild("SecretRod")
+		if folder then
+			for _, child in ipairs(folder:GetChildren()) do
+				if not seen[child.Name] then
+					seen[child.Name] = true
+					table.insert(list, child.Name)
+				end
+			end
+		end
+		table.sort(list)
+		return list
+	end
+
+	TeleportToSecretRod = function(rodName)
+		local char = LocalPlayer.Character or cachedChar
+		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		if not hrp then
+			pcall(function()
+				Fluent:Notify({
+					Title = "Secret Rod",
+					Content = "Character not found!",
+					Duration = 3,
+				})
+			end)
+			return false
+		end
+
+		local folder = workspace:FindFirstChild("SecretRod")
+		local rodObj = folder and folder:FindFirstChild(rodName)
+		if not rodObj then
+			rodObj = workspace:FindFirstChild(rodName, true)
+		end
+
+		local targetCF = nil
+		if rodObj then
+			local part = GetModelPart(rodObj)
+			if part then
+				targetCF = part.CFrame + Vector3.new(0, 3, 0)
+			elseif rodObj:IsA("PVInstance") then
+				local ok, piv = pcall(function()
+					return rodObj:GetPivot()
+				end)
+				if ok and piv then
+					targetCF = piv + Vector3.new(0, 3, 0)
+				end
+			end
+		end
+
+		if not targetCF and SecretRodFallbackCFrames[rodName] then
+			targetCF = SecretRodFallbackCFrames[rodName] + Vector3.new(0, 3, 0)
+		end
+
+		if not targetCF then
+			pcall(function()
+				Fluent:Notify({
+					Title = "Secret Rod",
+					Content = rodName .. " not found in server!",
+					Duration = 3,
+				})
+			end)
+			return false
+		end
+
+		pcall(function()
+			hrp.AssemblyLinearVelocity = Vector3.zero
+		end)
+		hrp.CFrame = targetCF
+		pcall(function()
+			Fluent:Notify({
+				Title = "Secret Rod",
+				Content = "Teleported to " .. rodName .. "!",
+				Duration = 3,
+			})
+		end)
+		return true
 	end
 end
 
@@ -6235,7 +6322,6 @@ end);
 		"Thunder Bull Shark",
 		"Black Tortoise Bloodline",
 		"Vermilion Birdblood",
-		"Wraith Orca",
 	}
 
 	local function GetBossList()
@@ -7427,6 +7513,32 @@ end);
 		return cleanStr
 	end
 
+	local function ScanAndFavoriteWraithOrca()
+		if not Config.AutoFavoriteWraithOrca then
+			return
+		end
+		local inv = PlayerData and PlayerData:FindFirstChild("Inventory")
+		if not inv then
+			return
+		end
+		local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+		if not favRemote then
+			return
+		end
+		for _, child in ipairs(inv:GetChildren()) do
+			local itemName = child.Name
+			if not string.find(itemName, "| Favorite", 1, true) then
+				local fName = string.lower(GetFishNameFromItem(itemName))
+				if string.find(fName, "wraith orca", 1, true) then
+					pcall(function()
+						favRemote:FireServer(itemName)
+					end)
+					task.wait(0.15)
+				end
+			end
+		end
+	end
+
 	local function ScanAndFavoriteBossFish()
 		if not Config.AutoFavoriteBoss then
 			return
@@ -7475,9 +7587,6 @@ end);
 		local inv = PlayerData and PlayerData:WaitForChild("Inventory", 5)
 		if inv then
 			inv.ChildAdded:Connect(function(child)
-				if not Config.AutoFavoriteBoss then
-					return
-				end
 				task.wait(0.2)
 				if not child or not child.Parent then
 					return
@@ -7485,25 +7594,36 @@ end);
 				local itemName = child.Name
 				if not string.find(itemName, "| Favorite", 1, true) then
 					local fName = string.lower(GetFishNameFromItem(itemName))
-					local targets = {}
-					if type(Config.AutoFavoriteBossTarget) == "table" then
-						for k, v in pairs(Config.AutoFavoriteBossTarget) do
-							if type(k) == "string" and v == true then
-								table.insert(targets, string.lower(k))
-							elseif type(v) == "string" and v ~= "" then
-								table.insert(targets, string.lower(v))
+					if Config.AutoFavoriteWraithOrca and string.find(fName, "wraith orca", 1, true) then
+						local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+						if favRemote then
+							pcall(function()
+								favRemote:FireServer(itemName)
+							end)
+						end
+						return
+					end
+					if Config.AutoFavoriteBoss then
+						local targets = {}
+						if type(Config.AutoFavoriteBossTarget) == "table" then
+							for k, v in pairs(Config.AutoFavoriteBossTarget) do
+								if type(k) == "string" and v == true then
+									table.insert(targets, string.lower(k))
+								elseif type(v) == "string" and v ~= "" then
+									table.insert(targets, string.lower(v))
+								end
 							end
 						end
-					end
-					for _, t in ipairs(targets) do
-						if fName == t or string.find(fName, t, 1, true) then
-							local favRemote = Events and Events:FindFirstChild("FavoriteItem")
-							if favRemote then
-								pcall(function()
-									favRemote:FireServer(itemName)
-								end)
+						for _, t in ipairs(targets) do
+							if fName == t or string.find(fName, t, 1, true) then
+								local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+								if favRemote then
+									pcall(function()
+										favRemote:FireServer(itemName)
+									end)
+								end
+								break
 							end
-							break
 						end
 					end
 				end
@@ -7598,6 +7718,18 @@ end);
 						end)
 					end
 					StepAutoFarmEvent(LocalPlayer.Character)
+				end
+			end,
+		})
+
+		Tabs.Halloween:AddToggle("AutoFavoriteWraithOrcaToggle", {
+			Title = "Auto Favorite Wraith Orca",
+			Default = Config.AutoFavoriteWraithOrca,
+			Callback = function(Value)
+				Config.AutoFavoriteWraithOrca = Value
+				SaveConfig()
+				if Value then
+					task.spawn(ScanAndFavoriteWraithOrca)
 				end
 			end,
 		})
@@ -9342,6 +9474,46 @@ end);
 		})
 	end
 
+	do
+		Tabs.Teleport:AddSection("Secret Rod")
+
+		local secretRodOptions = GetSecretRodNames and GetSecretRodNames() or { "Anchorbound Rod", "Ascendant Bamboo Rod", "Blazeshark Rod", "Demonic Rod", "Kraken Rod", "Legacy Rod", "Lifebloom Rod" }
+		local selectedSecretRodToTP = secretRodOptions[1] or "Anchorbound Rod"
+
+		local SecretRodTPDropdown = Tabs.Teleport:AddDropdown("SelectSecretRodToTPDropdown", {
+			Title = "Select Secret Rod",
+			Values = secretRodOptions,
+			Default = selectedSecretRodToTP,
+			Multi = false,
+			Callback = function(Value)
+				selectedSecretRodToTP = Value or selectedSecretRodToTP
+			end,
+		})
+
+		Tabs.Teleport:AddButton({
+			Title = "Teleport To Secret Rod",
+			Callback = function()
+				if TeleportToSecretRod then
+					TeleportToSecretRod(selectedSecretRodToTP)
+				end
+			end,
+		})
+
+		pcall(function()
+			local folder = workspace:FindFirstChild("SecretRod")
+			if folder then
+				folder.ChildAdded:Connect(function()
+					task.wait(0.5)
+					pcall(function()
+						if GetSecretRodNames and SecretRodTPDropdown then
+							SecretRodTPDropdown:SetValues(GetSecretRodNames())
+						end
+					end)
+				end)
+			end
+		end)
+	end
+
 	Tabs.Teleport:AddSection("Boss")
 
 	local function GetBossModelCFrame(inst)
@@ -9503,6 +9675,47 @@ end);
 		Title = "Teleport To Boss",
 		Callback = function()
 			TeleportToBossTarget(selectedBossToTP)
+		end,
+	})
+
+	Tabs.Teleport:AddButton({
+		Title = "Check Sacred Beast",
+		Callback = function()
+			task.spawn(function()
+				if IsCheckingSacredBeast then
+					return
+				end
+				IsCheckingSacredBeast = true
+				local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+				local appeared = IsSacredBeastAppeared(chuText)
+				if appeared then
+					local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+					local c = cachedChar or LocalPlayer.Character
+					local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+					if targetCF and h then
+						h.CFrame = targetCF
+					end
+					pcall(function()
+						Fluent:Notify({
+							Title = "Sacred Beast",
+							Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
+							Duration = 5,
+						})
+					end)
+					task.spawn(function()
+						NotifySacredBeastWebhook(chuText, islandName)
+					end)
+				else
+					pcall(function()
+						Fluent:Notify({
+							Title = "Sacred Beast",
+							Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
+							Duration = 4,
+						})
+					end)
+				end
+				IsCheckingSacredBeast = false
+			end)
 		end,
 	})
 
