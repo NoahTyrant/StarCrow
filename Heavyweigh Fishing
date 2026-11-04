@@ -125,8 +125,6 @@ local Config = {
 	UpgradeCharacterDelay = 5,
 	WebhookUrl = "",
 	WebhookSacredBeast = false,
-	WebhookBlackTortoise = false,
-	WebhookVermilionBirdblood = false,
 	WebhookWeather = false,
 	WebhookMaoshan = false,
 	WebhookTaoist = false,
@@ -135,9 +133,6 @@ local Config = {
 	ESPTaoist = false,
 	ESPGodSpirit = false,
 	ESPSecretRod = false,
-	ESPBlackTortoise = false,
-	ESPVermilion = false,
-	ESPNameless = false,
 	BossWebhookUrl = "",
 	WeatherWebhookUrl = "",
 }
@@ -2834,9 +2829,9 @@ local function updateESP()
 	if not Config.ESPEnabled then
 		return
 	end
-	local purpleFill = Color3.fromRGB(170, 50, 255)
-	local purpleOutline = Color3.fromRGB(225, 165, 255)
-	local purpleText = Color3.fromRGB(195, 100, 255)
+	local playerFill = Color3.fromRGB(255, 255, 255)
+	local playerOutline = Color3.fromRGB(200, 200, 200)
+	local playerText = Color3.fromRGB(255, 255, 255)
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer then
 			local char = player.Character
@@ -2846,22 +2841,10 @@ local function updateESP()
 				if head and hum then
 					local esp = head:FindFirstChild("StarCrowESP")
 					local hl = char:FindFirstChild("StarCrowPlayerHL")
+					if hl then
+						hl:Destroy()
+					end
 					if hum.Health > 0 then
-						if not hl then
-							hl = Instance.new("Highlight")
-							hl.Name = "StarCrowPlayerHL"
-							hl.Adornee = char
-							hl.FillColor = purpleFill
-							hl.OutlineColor = purpleOutline
-							hl.FillTransparency = 0.35
-							hl.OutlineTransparency = 0
-							hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-							hl.Parent = char
-						else
-							hl.FillColor = purpleFill
-							hl.OutlineColor = purpleOutline
-							hl.Enabled = true
-						end
 						if not esp then
 							esp = Instance.new("BillboardGui")
 							esp.Name = "StarCrowESP"
@@ -2878,20 +2861,17 @@ local function updateESP()
 							text.TextScaled = false
 							text.TextSize = 13
 							text.Font = Enum.Font.GothamBold
-							text.TextColor3 = purpleText
+							text.TextColor3 = playerText
 							text.TextStrokeTransparency = 0
 							text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 							text.TextXAlignment = Enum.TextXAlignment.Center
 							esp.Parent = head
 						end
-						esp.NameText.TextColor3 = purpleText
+						esp.NameText.TextColor3 = playerText
 						esp.NameText.Text = player.DisplayName
 					else
 						if esp then
 							esp:Destroy()
-						end
-						if hl then
-							hl:Destroy()
 						end
 					end
 				end
@@ -3133,9 +3113,30 @@ local function applyEntityESP(targetInfo, tag, title)
 	if not targetInfo or not targetInfo.pos then
 		return
 	end
-	local purpleFill = Color3.fromRGB(170, 50, 255)
-	local purpleOutline = Color3.fromRGB(225, 165, 255)
-	local purpleText = Color3.fromRGB(195, 100, 255)
+	local entityFill = Color3.fromRGB(170, 50, 255)
+	local entityOutline = Color3.fromRGB(225, 165, 255)
+	local entityText = Color3.fromRGB(195, 100, 255)
+	if tag == "Taoist" then
+		entityFill = Color3.fromRGB(255, 215, 0)
+		entityOutline = Color3.fromRGB(255, 240, 150)
+		entityText = Color3.fromRGB(255, 225, 50)
+	elseif tag == "Maoshan" then
+		entityFill = Color3.fromRGB(115, 118, 200)
+		entityOutline = Color3.fromRGB(165, 170, 255)
+		entityText = Color3.fromRGB(140, 145, 240)
+	elseif string.find(tag, "blue") then
+		entityFill = Color3.fromRGB(0, 150, 255)
+		entityOutline = Color3.fromRGB(120, 210, 255)
+		entityText = Color3.fromRGB(60, 180, 255)
+	elseif string.find(tag, "yellow") then
+		entityFill = Color3.fromRGB(255, 230, 0)
+		entityOutline = Color3.fromRGB(255, 255, 150)
+		entityText = Color3.fromRGB(255, 240, 50)
+	elseif string.find(tag, "green") then
+		entityFill = Color3.fromRGB(0, 230, 80)
+		entityOutline = Color3.fromRGB(140, 255, 170)
+		entityText = Color3.fromRGB(60, 255, 110)
+	end
 	local part = targetInfo.part
 	local obj = targetInfo.obj or part
 	local pos = targetInfo.pos
@@ -3172,29 +3173,7 @@ local function applyEntityESP(targetInfo, tag, title)
 		end
 	end
 
-	if obj and part and part:IsDescendantOf(workspace) then
-		if not (entry.hl and entry.hl.Parent == obj) then
-			if entry.hl then
-				pcall(function()
-					entry.hl:Destroy()
-				end)
-			end
-			local hl = Instance.new("Highlight")
-			hl.Name = "StarCrowEntityHL_" .. tag
-			hl.Adornee = obj
-			hl.FillColor = purpleFill
-			hl.OutlineColor = purpleOutline
-			hl.FillTransparency = 0.35
-			hl.OutlineTransparency = 0
-			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-			hl.Parent = obj
-			entry.hl = hl
-		else
-			entry.hl.FillColor = purpleFill
-			entry.hl.OutlineColor = purpleOutline
-			entry.hl.Enabled = true
-		end
-	elseif entry.hl then
+	if entry.hl then
 		pcall(function()
 			entry.hl:Destroy()
 		end)
@@ -3217,7 +3196,7 @@ local function applyEntityESP(targetInfo, tag, title)
 			text.TextScaled = false
 			text.TextSize = 13
 			text.Font = Enum.Font.GothamBold
-			text.TextColor3 = purpleText
+			text.TextColor3 = entityText
 			text.TextStrokeTransparency = 0
 			text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 			text.TextXAlignment = Enum.TextXAlignment.Center
@@ -3229,7 +3208,7 @@ local function applyEntityESP(targetInfo, tag, title)
 		end
 		local nameLabel = entry.gui:FindFirstChild("NameText")
 		if nameLabel then
-			nameLabel.TextColor3 = purpleText
+			nameLabel.TextColor3 = entityText
 			nameLabel.Text = title
 		end
 	end
@@ -3399,7 +3378,7 @@ local function checkWebhookNotifications(finalMaoshan, finalTaoist, godSpirits)
 	end
 end
 
-local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, updateSacredBossESP, clearSacredBossESP, checkSacredBossWebhooks, TeleportToSecretRod, GetSecretRodNames
+local GetNormalBuyRodOptions, GetSecretBuyRodOptions, DoBuyRodByChoice, updateSecretRodESP, clearSecretRodESP, TeleportToSecretRod, GetSecretRodNames
 
 do
 	local NormalRodDefs = {
@@ -3450,7 +3429,6 @@ do
 
 	local RodChoiceLookup = {}
 	local ActiveSecretRodESPs = {}
-	local ActiveSacredBossESPs = {}
 
 	local function SanitizeUIText(str)
 		return tostring(str or ""):gsub("[%(%)]", "")
@@ -3693,9 +3671,9 @@ do
 			end
 		end
 
-		local purpleFill = Color3.fromRGB(170, 50, 255)
-		local purpleOutline = Color3.fromRGB(225, 165, 255)
-		local purpleText = Color3.fromRGB(195, 100, 255)
+		local rodFill = Color3.fromRGB(255, 30, 30)
+		local rodOutline = Color3.fromRGB(255, 120, 120)
+		local rodText = Color3.fromRGB(255, 50, 50)
 		local activeKeys = {}
 
 		for _, item in ipairs(targets) do
@@ -3732,29 +3710,7 @@ do
 					end
 				end
 
-				if obj and part and part:IsDescendantOf(workspace) then
-					if not (entry.hl and entry.hl.Parent == obj) then
-						if entry.hl then
-							pcall(function()
-								entry.hl:Destroy()
-							end)
-						end
-						local hl = Instance.new("Highlight")
-						hl.Name = "StarCrowSecretRodHL"
-						hl.Adornee = obj
-						hl.FillColor = purpleFill
-						hl.OutlineColor = purpleOutline
-						hl.FillTransparency = 0.35
-						hl.OutlineTransparency = 0
-						hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-						hl.Parent = obj
-						entry.hl = hl
-					else
-						entry.hl.FillColor = purpleFill
-						entry.hl.OutlineColor = purpleOutline
-						entry.hl.Enabled = true
-					end
-				elseif entry.hl then
+				if entry.hl then
 					pcall(function()
 						entry.hl:Destroy()
 					end)
@@ -3777,7 +3733,7 @@ do
 						nameLbl.TextScaled = false
 						nameLbl.TextSize = 13
 						nameLbl.Font = Enum.Font.GothamBold
-						nameLbl.TextColor3 = purpleText
+						nameLbl.TextColor3 = rodText
 						nameLbl.TextStrokeTransparency = 0
 						nameLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 						nameLbl.TextXAlignment = Enum.TextXAlignment.Center
@@ -3793,7 +3749,7 @@ do
 
 					local nameLbl = entry.gui:FindFirstChild("NameText")
 					if nameLbl then
-						nameLbl.TextColor3 = purpleText
+						nameLbl.TextColor3 = rodText
 						nameLbl.Text = SanitizeUIText(rodName)
 					end
 				end
@@ -3804,363 +3760,6 @@ do
 			if not activeKeys[k] then
 				destroyESPEntry(entry)
 				ActiveSecretRodESPs[k] = nil
-			end
-		end
-	end
-
-	local function MatchSacredBossKind(inst)
-		if not inst or not (inst:IsA("Model") or inst:IsA("BasePart") or inst:IsA("Folder")) then
-			return nil
-		end
-		if inst:IsA("Model") and Players:GetPlayerFromCharacter(inst) then
-			return nil
-		end
-		local candidates = {
-			inst.Name,
-			inst:GetAttribute("FishName"),
-			inst:GetAttribute("Name"),
-		}
-		local fnVal = inst:FindFirstChild("FishName")
-		if fnVal and fnVal:IsA("StringValue") then
-			table.insert(candidates, fnVal.Value)
-		end
-		for _, raw in ipairs(candidates) do
-			if raw and raw ~= "" then
-				local norm = string.lower(tostring(raw)):gsub("[_%-]+", " "):gsub("%s+", " ")
-				if string.find(norm, "black tortoise", 1, true) then
-					return "BlackTortoise"
-				elseif
-					string.find(norm, "vermilion", 1, true)
-					or string.find(norm, "vermillion", 1, true)
-					or string.find(norm, "birdblood", 1, true)
-				then
-					return "Vermilion"
-				elseif
-					string.find(norm, "nameless octoparasite", 1, true)
-					or string.find(norm, "octoparasite", 1, true)
-				then
-					return "Nameless"
-				end
-			end
-		end
-		return nil
-	end
-
-	local function FindSacredBossTargets()
-		local foundBT = nil
-		local foundVermi = nil
-		local foundNameless = nil
-		local ocean = workspace:FindFirstChild("Ocean")
-		local npcFolder = workspace:FindFirstChild("NPC")
-		local containers = {
-			workspace:FindFirstChild("WorldBoss"),
-			workspace:FindFirstChild("Boss"),
-			workspace:FindFirstChild("BossSetUp"),
-			ocean and ocean:FindFirstChild("Boss"),
-			npcFolder and npcFolder:FindFirstChild("Boss"),
-			workspace:FindFirstChild("Fishes"),
-		}
-
-		local function normalizeBossNode(node)
-			if not node then
-				return nil
-			end
-			if node:IsA("Model") or node:IsA("BasePart") then
-				return node
-			end
-			if node:IsA("Folder") then
-				local m = node:FindFirstChildWhichIsA("Model")
-				if m then
-					return m
-				end
-				return node
-			end
-			if node.Parent and (node.Parent:IsA("Model") or node.Parent:IsA("BasePart")) then
-				return node.Parent
-			end
-			return nil
-		end
-
-		local function inspectNode(node)
-			local kind = MatchSacredBossKind(node)
-			if not kind then
-				return
-			end
-			local resolved = normalizeBossNode(node)
-			if not resolved then
-				return
-			end
-			if kind == "BlackTortoise" and not foundBT then
-				foundBT = resolved
-			elseif kind == "Vermilion" and not foundVermi then
-				foundVermi = resolved
-			elseif kind == "Nameless" and not foundNameless then
-				foundNameless = resolved
-			end
-		end
-
-		for _, c in ipairs(containers) do
-			if c then
-				inspectNode(c)
-				for _, desc in ipairs(c:GetDescendants()) do
-					inspectNode(desc)
-					if foundBT and foundVermi and foundNameless then
-						return foundBT, foundVermi, foundNameless
-					end
-				end
-			end
-		end
-
-		if ocean and not (foundBT and foundVermi and foundNameless) then
-			if not foundNameless then
-				local directNl = ocean:FindFirstChild("Nameless Octoparasite", true)
-				if directNl then
-					foundNameless = normalizeBossNode(directNl)
-				end
-			end
-			if not foundBT then
-				local directBt = ocean:FindFirstChild("Black Tortoise Bloodline", true)
-				if directBt then
-					foundBT = normalizeBossNode(directBt)
-				end
-			end
-			if not foundVermi then
-				local directVm = ocean:FindFirstChild("Vermilion Birdblood", true)
-				if directVm then
-					foundVermi = normalizeBossNode(directVm)
-				end
-			end
-			if not (foundBT and foundVermi and foundNameless) then
-				for _, child in ipairs(ocean:GetChildren()) do
-					if child.Name ~= "Water" and child.Name ~= "Boss" then
-						inspectNode(child)
-						for _, desc in ipairs(child:GetDescendants()) do
-							inspectNode(desc)
-							if foundBT and foundVermi and foundNameless then
-								return foundBT, foundVermi, foundNameless
-							end
-						end
-					end
-				end
-			end
-		end
-
-		for _, child in ipairs(workspace:GetChildren()) do
-			if child:IsA("Model") then
-				inspectNode(child)
-				if foundBT and foundVermi and foundNameless then
-					break
-				end
-			end
-		end
-
-		return foundBT, foundVermi, foundNameless
-	end
-
-	local function applySingleSacredBossESP(key, targetObj, labelText)
-		if not targetObj then
-			if ActiveSacredBossESPs[key] then
-				destroyESPEntry(ActiveSacredBossESPs[key])
-				ActiveSacredBossESPs[key] = nil
-			end
-			return
-		end
-		local pos, part = ResolveObjectWorldPos(targetObj)
-		if not pos then
-			if ActiveSacredBossESPs[key] then
-				destroyESPEntry(ActiveSacredBossESPs[key])
-				ActiveSacredBossESPs[key] = nil
-			end
-			return
-		end
-
-		local purpleFill = Color3.fromRGB(170, 50, 255)
-		local purpleOutline = Color3.fromRGB(225, 165, 255)
-		local purpleText = Color3.fromRGB(195, 100, 255)
-
-		local entry = ActiveSacredBossESPs[key]
-		if not entry then
-			entry = {}
-			ActiveSacredBossESPs[key] = entry
-		end
-
-		local adornee = nil
-		if part and part:IsDescendantOf(workspace) then
-			adornee = part
-			if entry.att then
-				pcall(function()
-					entry.att:Destroy()
-				end)
-				entry.att = nil
-			end
-		else
-			local terrain = workspace:FindFirstChildOfClass("Terrain")
-			if terrain then
-				if not (entry.att and entry.att.Parent == terrain) then
-					local att = Instance.new("Attachment")
-					att.Name = "StarCrowBossAtt_" .. key
-					att.Parent = terrain
-					entry.att = att
-				end
-				entry.att.WorldPosition = pos
-				adornee = entry.att
-			end
-		end
-
-		if part and part:IsDescendantOf(workspace) then
-			if not (entry.hl and entry.hl.Parent == targetObj) then
-				if entry.hl then
-					pcall(function()
-						entry.hl:Destroy()
-					end)
-				end
-				local hl = Instance.new("Highlight")
-				hl.Name = "StarCrowBossHL_" .. key
-				hl.Adornee = targetObj
-				hl.FillColor = purpleFill
-				hl.OutlineColor = purpleOutline
-				hl.FillTransparency = 0.32
-				hl.OutlineTransparency = 0
-				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-				hl.Parent = targetObj
-				entry.hl = hl
-			else
-				entry.hl.FillColor = purpleFill
-				entry.hl.OutlineColor = purpleOutline
-				entry.hl.Enabled = true
-			end
-		elseif entry.hl then
-			pcall(function()
-				entry.hl:Destroy()
-			end)
-			entry.hl = nil
-		end
-
-		if adornee then
-			if not (entry.gui and entry.gui.Parent) then
-				local bb = Instance.new("BillboardGui")
-				bb.Name = "StarCrowBossESP_" .. key
-				bb.Size = UDim2.new(0, 230, 0, 26)
-				bb.StudsOffset = Vector3.new(0, 6, 0)
-				bb.AlwaysOnTop = true
-				bb.MaxDistance = math.huge
-
-				local lbl = Instance.new("TextLabel")
-				lbl.Name = "NameText"
-				lbl.Size = UDim2.new(1, 0, 1, 0)
-				lbl.BackgroundTransparency = 1
-				lbl.TextScaled = false
-				lbl.TextSize = 13
-				lbl.Font = Enum.Font.GothamBold
-				lbl.TextColor3 = purpleText
-				lbl.TextStrokeTransparency = 0
-				lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-				lbl.TextXAlignment = Enum.TextXAlignment.Center
-				lbl.Parent = bb
-
-				entry.gui = bb
-			end
-			entry.gui.Adornee = adornee
-			if entry.gui.Parent ~= adornee then
-				entry.gui.Parent = adornee
-			end
-			local lbl = entry.gui:FindFirstChild("NameText")
-			if lbl then
-				lbl.TextColor3 = purpleText
-				lbl.Text = labelText
-			end
-		end
-	end
-
-	clearSacredBossESP = function(tag)
-		if tag then
-			if ActiveSacredBossESPs[tag] then
-				destroyESPEntry(ActiveSacredBossESPs[tag])
-				ActiveSacredBossESPs[tag] = nil
-			end
-		else
-			for k, entry in pairs(ActiveSacredBossESPs) do
-				destroyESPEntry(entry)
-				ActiveSacredBossESPs[k] = nil
-			end
-		end
-	end
-
-	updateSacredBossESP = function(btObj, vermiObj, namelessObj, preScanned)
-		if not Config.ESPBlackTortoise and not Config.ESPVermilion and not Config.ESPNameless then
-			clearSacredBossESP()
-			return
-		end
-		if not preScanned then
-			btObj, vermiObj, namelessObj = FindSacredBossTargets()
-		end
-		if Config.ESPBlackTortoise then
-			applySingleSacredBossESP("BlackTortoise", btObj, "Black Tortoise Bloodline")
-		else
-			clearSacredBossESP("BlackTortoise")
-		end
-
-		if Config.ESPVermilion then
-			applySingleSacredBossESP("Vermilion", vermiObj, "Vermilion Birdblood")
-		else
-			clearSacredBossESP("Vermilion")
-		end
-
-		if Config.ESPNameless then
-			applySingleSacredBossESP("Nameless", namelessObj, "Nameless Octoparasite")
-		else
-			clearSacredBossESP("Nameless")
-		end
-		return btObj, vermiObj
-	end
-
-	checkSacredBossWebhooks = function(btObj, vermiObj, preScanned)
-		if not Config.WebhookBlackTortoise and not Config.WebhookVermilionBirdblood then
-			return
-		end
-		local url = (Config.WebhookUrl and Config.WebhookUrl ~= "") and Config.WebhookUrl or (Config.BossWebhookUrl or "")
-		if url == "" then
-			return
-		end
-		if not preScanned then
-			btObj, vermiObj = FindSacredBossTargets()
-		end
-
-		if Config.WebhookBlackTortoise then
-			local key = "BlackTortoise_" .. tostring(game.JobId)
-			if btObj then
-				local pos = ResolveObjectWorldPos(btObj)
-				if pos and not NotifiedWebhookEntities[key] then
-					NotifiedWebhookEntities[key] = true
-					local isl = GetNearestIslandName(pos)
-					SendBossWebhook(
-						"🐢 Black Tortoise Bloodline",
-						"Black Tortoise Bloodline has spawned!",
-						3407793,
-						isl
-					)
-				end
-			else
-				NotifiedWebhookEntities[key] = nil
-			end
-		end
-
-		if Config.WebhookVermilionBirdblood then
-			local key = "VermilionBirdblood_" .. tostring(game.JobId)
-			if vermiObj then
-				local pos = ResolveObjectWorldPos(vermiObj)
-				if pos and not NotifiedWebhookEntities[key] then
-					NotifiedWebhookEntities[key] = true
-					local isl = GetNearestIslandName(pos)
-					SendBossWebhook(
-						"🔥 Vermilion Birdblood",
-						"Vermilion Birdblood has spawned!",
-						16721408,
-						isl
-					)
-				end
-			else
-				NotifiedWebhookEntities[key] = nil
 			end
 		end
 	end
@@ -4272,21 +3871,6 @@ task.spawn(function()
 				updateSecretRodESP()
 			else
 				clearSecretRodESP()
-			end
-			local hasBossESP = Config.ESPBlackTortoise or Config.ESPVermilion or Config.ESPNameless
-			local hasBossWH = Config.WebhookBlackTortoise or Config.WebhookVermilionBirdblood
-			if hasBossESP or hasBossWH then
-				local btObj, vermiObj = nil, nil
-				if hasBossESP then
-					btObj, vermiObj = updateSacredBossESP()
-				else
-					clearSacredBossESP()
-				end
-				if hasBossWH then
-					checkSacredBossWebhooks(btObj, vermiObj, hasBossESP)
-				end
-			else
-				clearSacredBossESP()
 			end
 		end
 	end
@@ -9514,211 +9098,6 @@ end);
 		end)
 	end
 
-	Tabs.Teleport:AddSection("Boss")
-
-	local function GetBossModelCFrame(inst)
-		if not inst then
-			return nil
-		end
-		local ok, cf = pcall(function()
-			if inst:IsA("BasePart") then
-				return inst.CFrame
-			end
-			if inst:IsA("Model") then
-				if inst.PrimaryPart then
-					return inst.PrimaryPart.CFrame
-				end
-				return inst:GetPivot()
-			end
-			local bp = inst:FindFirstChildWhichIsA("BasePart", true)
-			if bp then
-				return bp.CFrame
-			end
-			return nil
-		end)
-		if ok and cf then
-			return cf
-		end
-		return nil
-	end
-
-	local function FindBossObject(bossName)
-		local bLower = string.lower(bossName)
-		local ocean = workspace:FindFirstChild("Ocean")
-		local searchContainers = {
-			workspace:FindFirstChild("WorldBoss"),
-			workspace:FindFirstChild("Boss"),
-			workspace:FindFirstChild("BossSetUp"),
-			ocean and ocean:FindFirstChild("Boss"),
-			workspace:FindFirstChild("Fishes"),
-			ocean,
-		}
-
-		local function matchBoss(inst)
-			if not inst then
-				return false
-			end
-			local checkStrs = {}
-			if inst.Name and inst.Name ~= "" then
-				table.insert(checkStrs, string.lower(inst.Name))
-			end
-			local fnVal = inst:FindFirstChild("FishName")
-			if fnVal and fnVal:IsA("StringValue") and fnVal.Value ~= "" then
-				table.insert(checkStrs, string.lower(fnVal.Value))
-			end
-			local attr = inst:GetAttribute("FishName")
-			if attr and tostring(attr) ~= "" then
-				table.insert(checkStrs, string.lower(tostring(attr)))
-			end
-			for _, s in ipairs(checkStrs) do
-				local norm = s:gsub("[_%-]+", " "):gsub("%s+", " ")
-				if bLower == "vermilion birdblood" then
-					if string.find(norm, "vermilion birdblood", 1, true) or string.find(norm, "vermillion birdblood", 1, true) or string.find(norm, "vermilion", 1, true) or string.find(norm, "birdblood", 1, true) then
-						return true
-					end
-				elseif bLower == "black tortoise bloodline" then
-					if string.find(norm, "black tortoise bloodline", 1, true) or string.find(norm, "black tortoise", 1, true) or string.find(norm, "tortoise", 1, true) then
-						return true
-					end
-				elseif bLower == "nameless octoparasite" then
-					if string.find(norm, "nameless octoparasite", 1, true) or string.find(norm, "octoparasite", 1, true) or string.find(norm, "nameless", 1, true) then
-						return true
-					end
-				end
-			end
-			return false
-		end
-
-		for _, c in ipairs(searchContainers) do
-			if c then
-				if matchBoss(c) then
-					return c
-				end
-				for _, desc in ipairs(c:GetDescendants()) do
-					if matchBoss(desc) then
-						if desc:IsA("Model") or desc:IsA("BasePart") then
-							return desc
-						end
-						if desc.Parent and (desc.Parent:IsA("Model") or desc.Parent:IsA("BasePart")) then
-							return desc.Parent
-						end
-						return desc
-					end
-				end
-			end
-		end
-
-		for _, child in ipairs(workspace:GetChildren()) do
-			if child:IsA("Model") and matchBoss(child) then
-				return child
-			end
-		end
-
-		local direct = workspace:FindFirstChild(bossName, true)
-		if direct then
-			return direct
-		end
-
-		return nil
-	end
-
-	local function TeleportToBossTarget(bossFullName)
-		local char = LocalPlayer.Character or cachedChar
-		local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if not hrp then
-			pcall(function()
-				Fluent:Notify({
-					Title = bossFullName,
-					Content = "Character not found!",
-					Duration = 3,
-				})
-			end)
-			return false
-		end
-
-		local bossObj = FindBossObject(bossFullName)
-		local bossCF = bossObj and GetBossModelCFrame(bossObj)
-		if not bossObj or not bossCF then
-			pcall(function()
-				Fluent:Notify({
-					Title = bossFullName,
-					Content = bossFullName .. " has not spawned in this server!",
-					Duration = 3,
-				})
-			end)
-			return false
-		end
-
-		hrp.CFrame = bossCF + Vector3.new(0, 12, 0)
-		pcall(function()
-			Fluent:Notify({
-				Title = bossFullName,
-				Content = "Teleported to " .. bossFullName .. "!",
-				Duration = 3,
-			})
-		end)
-		return true
-	end
-
-	local selectedBossToTP = "Vermilion Birdblood"
-	Tabs.Teleport:AddDropdown("SelectBossToTPDropdown", {
-		Title = "Select Boss",
-		Values = { "Vermilion Birdblood", "Black Tortoise Bloodline", "Nameless Octoparasite" },
-		Default = "Vermilion Birdblood",
-		Multi = false,
-		Callback = function(Value)
-			selectedBossToTP = Value or "Vermilion Birdblood"
-		end,
-	})
-
-	Tabs.Teleport:AddButton({
-		Title = "Teleport To Boss",
-		Callback = function()
-			TeleportToBossTarget(selectedBossToTP)
-		end,
-	})
-
-	Tabs.Teleport:AddButton({
-		Title = "Check Sacred Beast",
-		Callback = function()
-			task.spawn(function()
-				if IsCheckingSacredBeast then
-					return
-				end
-				IsCheckingSacredBeast = true
-				local ok, chuText = CheckChuTianjiaoDialogue(3.5)
-				local appeared = IsSacredBeastAppeared(chuText)
-				if appeared then
-					local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
-					local c = cachedChar or LocalPlayer.Character
-					local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-					if targetCF and h then
-						h.CFrame = targetCF
-					end
-					pcall(function()
-						Fluent:Notify({
-							Title = "Sacred Beast",
-							Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
-							Duration = 5,
-						})
-					end)
-					task.spawn(function()
-						NotifySacredBeastWebhook(chuText, islandName)
-					end)
-				else
-					pcall(function()
-						Fluent:Notify({
-							Title = "Sacred Beast",
-							Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
-							Duration = 4,
-						})
-					end)
-				end
-				IsCheckingSacredBeast = false
-			end)
-		end,
-	})
-
 	Tabs.Shop:AddSection("Selling")
 
 	Tabs.Shop:AddToggle("AutoSellToggle", {
@@ -10075,47 +9454,6 @@ end);
 		end,
 	})
 
-	Tabs.ESP:AddToggle("ESPBlackTortoiseToggle", {
-		Title = "ESP Black Tortoise Bloodline",
-		Default = Config.ESPBlackTortoise,
-		Callback = function(Value)
-			Config.ESPBlackTortoise = Value
-			SaveConfig()
-			if Value then
-				task.spawn(updateSacredBossESP)
-			else
-				clearSacredBossESP("BlackTortoise")
-			end
-		end,
-	})
-
-	Tabs.ESP:AddToggle("ESPVermilionToggle", {
-		Title = "ESP Vermilion Birdblood",
-		Default = Config.ESPVermilion,
-		Callback = function(Value)
-			Config.ESPVermilion = Value
-			SaveConfig()
-			if Value then
-				task.spawn(updateSacredBossESP)
-			else
-				clearSacredBossESP("Vermilion")
-			end
-		end,
-	})
-
-	Tabs.ESP:AddToggle("ESPNamelessToggle", {
-		Title = "ESP Nameless Octoparasite",
-		Default = Config.ESPNameless,
-		Callback = function(Value)
-			Config.ESPNameless = Value
-			SaveConfig()
-			if Value then
-				task.spawn(updateSacredBossESP)
-			else
-				clearSacredBossESP("Nameless")
-			end
-		end,
-	})
 
 	Tabs.Misc:AddSection("Visual")
 
@@ -10983,47 +10321,6 @@ end
 		Tabs.Server:AddSection("Boss Hop")
 
 		do
-			Tabs.Server:AddButton({
-				Title = "Check Sacred Beast",
-				Callback = function()
-					task.spawn(function()
-						if IsCheckingSacredBeast then
-							return
-						end
-						IsCheckingSacredBeast = true
-						local ok, chuText = CheckChuTianjiaoDialogue(3.5)
-						local appeared = IsSacredBeastAppeared(chuText)
-						if appeared then
-							local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
-							local c = cachedChar or LocalPlayer.Character
-							local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-							if targetCF and h then
-								h.CFrame = targetCF
-							end
-							pcall(function()
-								Fluent:Notify({
-									Title = "Sacred Beast",
-									Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
-									Duration = 5,
-								})
-							end)
-							task.spawn(function()
-								NotifySacredBeastWebhook(chuText, islandName)
-							end)
-						else
-							pcall(function()
-								Fluent:Notify({
-									Title = "Sacred Beast",
-									Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
-									Duration = 4,
-								})
-							end)
-						end
-						IsCheckingSacredBeast = false
-					end)
-				end,
-			})
-
 			local AutoHopSacredBeastToggleObj
 			AutoHopSacredBeastToggleObj = Tabs.Server:AddToggle("AutoHopSacredBeastToggle", {
 				Title = "Auto Hop Sacred Beast",
@@ -11094,6 +10391,47 @@ end
 				Callback = function(Value)
 					Config.HopBossDelay = Value
 					SaveConfig()
+				end,
+			})
+
+			Tabs.Server:AddButton({
+				Title = "Check Sacred Beast",
+				Callback = function()
+					task.spawn(function()
+						if IsCheckingSacredBeast then
+							return
+						end
+						IsCheckingSacredBeast = true
+						local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+						local appeared = IsSacredBeastAppeared(chuText)
+						if appeared then
+							local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+							local c = cachedChar or LocalPlayer.Character
+							local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+							if targetCF and h then
+								h.CFrame = targetCF
+							end
+							pcall(function()
+								Fluent:Notify({
+									Title = "Sacred Beast",
+									Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
+									Duration = 5,
+								})
+							end)
+							task.spawn(function()
+								NotifySacredBeastWebhook(chuText, islandName)
+							end)
+						else
+							pcall(function()
+								Fluent:Notify({
+									Title = "Sacred Beast",
+									Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
+									Duration = 4,
+								})
+							end)
+						end
+						IsCheckingSacredBeast = false
+					end)
 				end,
 			})
 
@@ -11338,29 +10676,6 @@ end
 			end,
 		})
 
-		Tabs.Webhook:AddToggle("WebhookBlackTortoiseToggle", {
-			Title = "Black Tortoise Bloodline",
-			Default = Config.WebhookBlackTortoise,
-			Callback = function(Value)
-				Config.WebhookBlackTortoise = Value
-				SaveConfig()
-				if Value then
-					task.spawn(checkSacredBossWebhooks)
-				end
-			end,
-		})
-
-		Tabs.Webhook:AddToggle("WebhookVermilionBirdbloodToggle", {
-			Title = "Vermilion Birdblood",
-			Default = Config.WebhookVermilionBirdblood,
-			Callback = function(Value)
-				Config.WebhookVermilionBirdblood = Value
-				SaveConfig()
-				if Value then
-					task.spawn(checkSacredBossWebhooks)
-				end
-			end,
-		})
 
 		Tabs.Webhook:AddToggle("WebhookWeatherToggle", {
 			Title = "Weather",
