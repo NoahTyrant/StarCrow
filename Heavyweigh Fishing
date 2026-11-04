@@ -2421,28 +2421,18 @@ local function CancelCurrentFishing(sessionToken)
 		return
 	end
 	isCancellingFishing = true
-	local lockUntil = os.clock() + 1.2
-	lastMinigameEndTick = lockUntil
-	lastCastTry = lockUntil
 	pcall(function()
 		if sessionToken then
-			Events.FishingMinigame:FireServer(false, sessionToken, "Unequip")
+			Events.FishingMinigame:FireServer(false, sessionToken)
 		end
 	end)
-	pcall(function()
-		ToggleHotbar:InvokeServer("1")
-	end)
-	task.delay(0.6, function()
-		pcall(function()
-			local c = cachedChar or LocalPlayer.Character
-			if c and c:GetAttribute("Type") ~= "Fishing Rod" then
-				ToggleHotbar:InvokeServer("1")
-			end
-			if FishingGui and FishingGui.Visible and not (c and c:GetAttribute("Fishing")) then
-				FishingGui.Visible = false
-			end
-		end)
-		task.wait(0.4)
+	if FishingGui then
+		FishingGui.Visible = false
+	end
+	local now = os.clock()
+	lastMinigameEndTick = now
+	lastCastTry = now
+	task.delay(0.15, function()
 		isCancellingFishing = false
 	end)
 end
