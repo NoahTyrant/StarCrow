@@ -751,6 +751,139 @@ local function GetModuleData(mod)
 	return nil
 end
 
+local BossList = {
+	"Azure Carp",
+	"Jiaolong Dragonfish",
+	"Chainbound Shark",
+	"Adult Jiaolong Dragonfish",
+	"Elder Chainbound Shark",
+	"Elder Jiaolong Dragonfish",
+	"Trueform Jiaolongfish",
+	"Trueform Perch",
+	"Ascended Perch",
+	"Primordial Kunfish",
+	"Primordial Kunfish Overlord",
+	"Warbringer Shark",
+	"Dreadscale Grouper",
+	"Mutated Koid Whale",
+	"Radiant Goldfish",
+	"Serpent Fish",
+	"Dreadmare Eel",
+	"Chromatic Koi",
+	"Toxic Chromatic Koi",
+	"Crimson Bream Sovereign",
+	"Silver Bream Sovereign",
+	"Golden Guardian Fish",
+	"Colossal Tigerfish",
+	"Mountain Fish",
+	"Tiger Mirefish",
+	"Octoparasitic Fish",
+	"Dark kingfish",
+	"Golden Shark",
+	"Darkness Shark",
+	"White Heaven Kunfish",
+	"Crimson Bonefiend",
+	"Dragonfish Devourer",
+	"Yangfish Sovereign",
+	"Yangfish Empress",
+	"Yinfish Sovereign",
+	"Demon Bladefish",
+	"Apollo Swordfish",
+	"Killer Sawshark",
+	"Thunder Fish",
+	"Wind Fish",
+	"Intuitive Fish King",
+	"Aquatic Fish",
+	"Flame Fish",
+	"Verdant Alligator Gar",
+	"Verdant Grouper",
+	"Verdant Bonefang",
+	"Scarlet Fish",
+	"Mountain Dragonwhale",
+	"Flying Fish Emperor",
+	"Crimson Bonefang",
+	"Elder ScarletFish",
+	"Colossal Bull Shark",
+	"Flying Fish Empress",
+	"Draconic Koi",
+	"Tigerfang Whale",
+	"Golden Dragonfish",
+	"Crimson Electric Eel",
+	"Reborn Puffer Beast",
+	"Heavenpiercer Turtle",
+	"Sanguine Fish",
+	"Frost Kingfish",
+	"Dark Lionfish",
+	"Rainbow Dragonfish",
+	"Mirage lanternfish",
+	"Nameless Octoparasite",
+	"Frost QueenFish",
+	"Thunder Bull Shark",
+	"Black Tortoise Bloodline",
+	"Vermilion Birdblood",
+}
+
+local function GetFishNameFromItem(itemName)
+	if not itemName or itemName == "" then
+		return ""
+	end
+	local cleanStr = string.split(tostring(itemName), "| Favorite")[1]
+	cleanStr = string.split(cleanStr, "|")[1]
+	cleanStr = string.gsub(cleanStr, "^%s*(.-)%s*$", "%1")
+	local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+	local gs = clientMod and clientMod:FindFirstChild("GameService")
+	if gs then
+		local ok, res = pcall(function()
+			local gMod = require(gs)
+			return gMod and gMod.DestringFish and gMod.DestringFish(cleanStr)
+		end)
+		if ok and res and res.FishName then
+			return res.FishName
+		end
+	end
+	local parts = string.split(cleanStr, ",")
+	if #parts >= 1 and parts[1] ~= "" then
+		return parts[1]
+	end
+	return cleanStr
+end
+
+local function IsBossFish(fishName)
+	local clean = GetFishNameFromItem(fishName)
+	if clean == "" then
+		return false
+	end
+	local inv = Info and Info:FindFirstChild("Inventory")
+	if inv then
+		local mod = inv:FindFirstChild(clean)
+		if not mod then
+			local lowerClean = string.lower(clean)
+			for _, child in ipairs(inv:GetChildren()) do
+				if string.lower(child.Name) == lowerClean then
+					mod = child
+					break
+				end
+			end
+		end
+		if mod then
+			local data = GetModuleData(mod)
+			if data and data.Boss == true then
+				return true
+			end
+		end
+	end
+	if table.find(BossList, clean) then
+		return true
+	end
+	local cleanLower = string.lower(clean)
+	for _, b in ipairs(BossList) do
+		if string.lower(b) == cleanLower then
+			return true
+		end
+	end
+	return false
+end
+
 local lastAfkTick = os.clock()
 
 LocalPlayer.Idled:Connect(function()
@@ -2495,6 +2628,13 @@ do
 							end
 						end
 						if not matched then
+							task.spawn(function()
+								task.wait(0.05)
+								CancelCurrentFishing(sessionToken)
+							end)
+						end
+					elseif Config.FilterFishEnabled then
+						if not IsBossFish(rawFishName) then
 							task.spawn(function()
 								task.wait(0.05)
 								CancelCurrentFishing(sessionToken)
@@ -5826,83 +5966,50 @@ end);
 		return list
 	end
 
-	local BossList = {
-		"Azure Carp",
-		"Jiaolong Dragonfish",
-		"Chainbound Shark",
-		"Adult Jiaolong Dragonfish",
-		"Elder Chainbound Shark",
-		"Elder Jiaolong Dragonfish",
-		"Trueform Jiaolongfish",
-		"Trueform Perch",
-		"Ascended Perch",
-		"Primordial Kunfish",
-		"Primordial Kunfish Overlord",
-		"Warbringer Shark",
-		"Dreadscale Grouper",
-		"Mutated Koid Whale",
-		"Radiant Goldfish",
-		"Serpent Fish",
-		"Dreadmare Eel",
-		"Chromatic Koi",
-		"Toxic Chromatic Koi",
-		"Crimson Bream Sovereign",
-		"Silver Bream Sovereign",
-		"Golden Guardian Fish",
-		"Colossal Tigerfish",
-		"Mountain Fish",
-		"Tiger Mirefish",
-		"Octoparasitic Fish",
-		"Dark kingfish",
-		"Golden Shark",
-		"Darkness Shark",
-		"White Heaven Kunfish",
-		"Crimson Bonefiend",
-		"Dragonfish Devourer",
-		"Yangfish Sovereign",
-		"Yangfish Empress",
-		"Yinfish Sovereign",
-		"Demon Bladefish",
-		"Apollo Swordfish",
-		"Killer Sawshark",
-		"Thunder Fish",
-		"Wind Fish",
-		"Intuitive Fish King",
-		"Aquatic Fish",
-		"Flame Fish",
-		"Verdant Alligator Gar",
-		"Verdant Grouper",
-		"Verdant Bonefang",
-		"Scarlet Fish",
-		"Mountain Dragonwhale",
-		"Flying Fish Emperor",
-		"Crimson Bonefang",
-		"Elder ScarletFish",
-		"Colossal Bull Shark",
-		"Flying Fish Empress",
-		"Draconic Koi",
-		"Tigerfang Whale",
-		"Golden Dragonfish",
-		"Crimson Electric Eel",
-		"Reborn Puffer Beast",
-		"Heavenpiercer Turtle",
-		"Sanguine Fish",
-		"Frost Kingfish",
-		"Dark Lionfish",
-		"Rainbow Dragonfish",
-		"Mirage lanternfish",
-		"Nameless Octoparasite",
-		"Frost QueenFish",
-		"Thunder Bull Shark",
-		"Black Tortoise Bloodline",
-		"Vermilion Birdblood",
-	}
-
 	local function GetBossList()
 		local list = {}
-		for _, name in ipairs(BossList) do
-			table.insert(list, name)
+		local seen = {}
+		local invFolder = Info and Info:FindFirstChild("Inventory")
+		local rarityMod = Info and (Info:FindFirstChild("FishingAreaRarity") or Info:WaitForChild("FishingAreaRarity", 3))
+		if rarityMod and rarityMod:IsA("ModuleScript") then
+			local rarityData = GetModuleData(rarityMod)
+			if type(rarityData) == "table" then
+				for _, fishMap in pairs(rarityData) do
+					if type(fishMap) == "table" then
+						for fishName in pairs(fishMap) do
+							if not seen[fishName] then
+								local mod = invFolder and invFolder:FindFirstChild(fishName)
+								local data = mod and GetModuleData(mod)
+								if data and data.Boss == true then
+									seen[fishName] = true
+									table.insert(list, fishName)
+								end
+							end
+						end
+					end
+				end
+			end
 		end
+		if invFolder then
+			for _, child in ipairs(invFolder:GetChildren()) do
+				if not seen[child.Name] then
+					local data = GetModuleData(child)
+					if data and data.Boss == true then
+						seen[child.Name] = true
+						table.insert(list, child.Name)
+					end
+				end
+			end
+		end
+		if #list == 0 then
+			for _, name in ipairs(BossList) do
+				if not seen[name] then
+					seen[name] = true
+					table.insert(list, name)
+				end
+			end
+		end
+		table.sort(list)
 		return list
 	end
 
@@ -7063,30 +7170,6 @@ end);
 		})
 	end
 
-	local function GetFishNameFromItem(itemName)
-		if not itemName or itemName == "" then
-			return ""
-		end
-		local cleanStr = string.split(itemName, "| Favorite")[1]
-		cleanStr = string.gsub(cleanStr, "^%s*(.-)%s*$", "%1")
-		local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
-		local gs = clientMod and clientMod:FindFirstChild("GameService")
-		if gs then
-			local ok, res = pcall(function()
-				local gMod = require(gs)
-				return gMod and gMod.DestringFish and gMod.DestringFish(cleanStr)
-			end)
-			if ok and res and res.FishName then
-				return res.FishName
-			end
-		end
-		local parts = string.split(cleanStr, ",")
-		if #parts >= 1 and parts[1] ~= "" then
-			return parts[1]
-		end
-		return cleanStr
-	end
-
 	local function ScanAndFavoriteWraithOrca()
 		if not Config.AutoFavoriteWraithOrca then
 			return
@@ -7136,22 +7219,28 @@ end);
 				end
 			end
 		end
-		if #targets == 0 then
-			return
-		end
 
 		for _, child in ipairs(inv:GetChildren()) do
 			local itemName = child.Name
 			if not string.find(itemName, "| Favorite", 1, true) then
-				local fName = string.lower(GetFishNameFromItem(itemName))
-				for _, t in ipairs(targets) do
-					if fName == t or string.find(fName, t, 1, true) then
-						pcall(function()
-							favRemote:FireServer(itemName)
-						end)
-						task.wait(0.15)
-						break
+				local fName = GetFishNameFromItem(itemName)
+				local shouldFav = false
+				if #targets > 0 then
+					local fNameLower = string.lower(fName)
+					for _, t in ipairs(targets) do
+						if fNameLower == t or string.find(fNameLower, t, 1, true) then
+							shouldFav = true
+							break
+						end
 					end
+				else
+					shouldFav = IsBossFish(fName)
+				end
+				if shouldFav then
+					pcall(function()
+						favRemote:FireServer(itemName)
+					end)
+					task.wait(0.15)
 				end
 			end
 		end
@@ -7167,8 +7256,9 @@ end);
 				end
 				local itemName = child.Name
 				if not string.find(itemName, "| Favorite", 1, true) then
-					local fName = string.lower(GetFishNameFromItem(itemName))
-					if Config.AutoFavoriteWraithOrca and string.find(fName, "wraith orca", 1, true) then
+					local fName = GetFishNameFromItem(itemName)
+					local fNameLower = string.lower(fName)
+					if Config.AutoFavoriteWraithOrca and string.find(fNameLower, "wraith orca", 1, true) then
 						local favRemote = Events and Events:FindFirstChild("FavoriteItem")
 						if favRemote then
 							pcall(function()
@@ -7188,15 +7278,23 @@ end);
 								end
 							end
 						end
-						for _, t in ipairs(targets) do
-							if fName == t or string.find(fName, t, 1, true) then
-								local favRemote = Events and Events:FindFirstChild("FavoriteItem")
-								if favRemote then
-									pcall(function()
-										favRemote:FireServer(itemName)
-									end)
+						local shouldFav = false
+						if #targets > 0 then
+							for _, t in ipairs(targets) do
+								if fNameLower == t or string.find(fNameLower, t, 1, true) then
+									shouldFav = true
+									break
 								end
-								break
+							end
+						else
+							shouldFav = IsBossFish(fName)
+						end
+						if shouldFav then
+							local favRemote = Events and Events:FindFirstChild("FavoriteItem")
+							if favRemote then
+								pcall(function()
+									favRemote:FireServer(itemName)
+								end)
 							end
 						end
 					end
