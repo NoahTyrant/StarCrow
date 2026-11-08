@@ -1,4 +1,4 @@
-local Fluent = loadstring(game:HttpGet("https://files.catbox.moe/eaxk4e.lua"))()
+local Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/Fluent-Ui/refs/heads/main/main.lua"))()
 
 pcall(function()
     local networkPause = game:GetService("CoreGui").RobloxGui:FindFirstChild("CoreScripts/NetworkPause", true)
