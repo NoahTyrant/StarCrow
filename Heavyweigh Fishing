@@ -86,7 +86,7 @@ local Config = {
 	AutoFarmMaterialBait = false,
 	SelectedMaterialBait = "Rainbow Bait",
 	SkyFarm = false,
-	SkyFarmHeight = 609,
+	SkyFarmHeight = 1000,
 	SelectedBuyRod = "",
 	SelectedSecretRod = "",
 	UltraFPSBoost = false,
@@ -206,6 +206,7 @@ end
 if not Config.SelectedWeather or Config.SelectedWeather == "" then
 	Config.SelectedWeather = "Thunderstorm"
 end
+Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
 
 local function GetSavedCFrame()
 	if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
@@ -1256,7 +1257,7 @@ do
 			return
 		end
 
-		local h = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 609), 100, 1000)
+		local h = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
 		Config.SkyFarmHeight = h
 		local c = LocalPlayer.Character or cachedChar
 		local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
@@ -1282,7 +1283,7 @@ do
 				if not curHrp then
 					return
 				end
-				local curH = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 609), 100, 1000)
+				local curH = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
 				skyAnchorX = curHrp.Position.X
 				skyAnchorZ = curHrp.Position.Z
 				skyAnchorRot = curHrp.CFrame.Rotation
@@ -1298,7 +1299,7 @@ do
 	end
 
 	SetSkyFarmHeight = function(val)
-		local h = math.clamp(math.floor(tonumber(val) or 609), 100, 1000)
+		local h = math.clamp(math.floor(tonumber(val) or 1000), 1000, 2000)
 		Config.SkyFarmHeight = h
 		if Config.SkyFarm and not (IsCheckingSacredBeast or IsBuyingSecretRod or Config.AutoBoss or Config.AutoSecretBoss) then
 			SnapCharacterToSky(h, false)
@@ -6985,12 +6986,12 @@ end);
 
 	Tabs.Main:AddSlider("SkyFarmHeightSlider", {
 		Title = "Sky Height",
-		Default = Config.SkyFarmHeight or 609,
-		Min = 100,
-		Max = 1000,
+		Default = Config.SkyFarmHeight or 1000,
+		Min = 1000,
+		Max = 2000,
 		Rounding = 0,
 		Callback = function(Value)
-			Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Value) or 609), 100, 1000)
+			Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Value) or 1000), 1000, 2000)
 			SaveConfig()
 			SetSkyFarmHeight(Config.SkyFarmHeight)
 		end,
