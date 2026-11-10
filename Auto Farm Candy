@@ -23,6 +23,36 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/AutoFarmCandyConfig.json"
+
+local Config = {
+    TweenSpeed = 500
+}
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then
+            makefolder(SAVE_FOLDER)
+        end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            if decoded and tonumber(decoded.TweenSpeed) then
+                Config.TweenSpeed = math.clamp(math.floor(tonumber(decoded.TweenSpeed)), 100, 1000)
+            end
+        end
+    end)
+end
+
+LoadConfig()
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -268,6 +298,7 @@ local function equipCandyBucket()
 end
 
 local statusText = "Init"
+local activeTweenUpdate = nil
 
 local FloatGui = Instance.new("ScreenGui")
 FloatGui.Name = "AutoFarmCandyGui"
@@ -344,6 +375,62 @@ CounterLabel.Font = Enum.Font.GothamMedium
 CounterLabel.TextSize = 10
 CounterLabel.TextXAlignment = Enum.TextXAlignment.Left
 CounterLabel.Parent = MainFrame
+
+local SpeedFrame = Instance.new("Frame")
+SpeedFrame.LayoutOrder = 4
+SpeedFrame.Size = UDim2.new(1, 0, 0, 20)
+SpeedFrame.BackgroundTransparency = 1
+SpeedFrame.Parent = MainFrame
+
+local MinusBtn = Instance.new("TextButton")
+MinusBtn.Size = UDim2.new(0, 24, 0, 18)
+MinusBtn.Position = UDim2.new(0, 0, 0, 1)
+MinusBtn.BackgroundColor3 = Color3.fromRGB(35, 28, 55)
+MinusBtn.Text = "-"
+MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinusBtn.Font = Enum.Font.GothamBold
+MinusBtn.TextSize = 12
+MinusBtn.Parent = SpeedFrame
+Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 4)
+
+local SpeedLabel = Instance.new("TextLabel")
+SpeedLabel.Size = UDim2.new(1, -56, 0, 18)
+SpeedLabel.Position = UDim2.new(0, 28, 0, 1)
+SpeedLabel.BackgroundTransparency = 1
+SpeedLabel.Text = "Speed: " .. tostring(Config.TweenSpeed)
+SpeedLabel.TextColor3 = Color3.fromRGB(220, 200, 255)
+SpeedLabel.Font = Enum.Font.GothamMedium
+SpeedLabel.TextSize = 10
+SpeedLabel.Parent = SpeedFrame
+
+local PlusBtn = Instance.new("TextButton")
+PlusBtn.Size = UDim2.new(0, 24, 0, 18)
+PlusBtn.Position = UDim2.new(1, -24, 0, 1)
+PlusBtn.BackgroundColor3 = Color3.fromRGB(35, 28, 55)
+PlusBtn.Text = "+"
+PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlusBtn.Font = Enum.Font.GothamBold
+PlusBtn.TextSize = 12
+PlusBtn.Parent = SpeedFrame
+Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
+
+MinusBtn.MouseButton1Click:Connect(function()
+    Config.TweenSpeed = math.clamp(Config.TweenSpeed - 50, 100, 1000)
+    SpeedLabel.Text = "Speed: " .. tostring(Config.TweenSpeed)
+    SaveConfig()
+    if activeTweenUpdate then
+        pcall(activeTweenUpdate)
+    end
+end)
+
+PlusBtn.MouseButton1Click:Connect(function()
+    Config.TweenSpeed = math.clamp(Config.TweenSpeed + 50, 100, 1000)
+    SpeedLabel.Text = "Speed: " .. tostring(Config.TweenSpeed)
+    SaveConfig()
+    if activeTweenUpdate then
+        pcall(activeTweenUpdate)
+    end
+end)
 
 local collectedCandyCount = 0
 
@@ -434,7 +521,6 @@ task.spawn(function()
 end)
 
 local endCFrame = CFrame.new(10.57, 2.55, 46700.58, -0.74, 0.00, 0.67, 0.00, 1.00, 0.00, -0.67, 0.00, -0.74)
-local TWEEN_SPEED = 500
 local TWEEN_ALTITUDE = 120
 local SCAN_RADIUS = 1500
 
@@ -500,13 +586,37 @@ local function getNearestPendingDoor(hrpPos)
     return nearestPrompt, nearestPart
 end
 
+local function fastStreamAround(pos)
+    if not pos then return end
+    task.spawn(function()
+        pcall(function()
+            LocalPlayer:RequestStreamAroundAsync(pos, 1)
+        end)
+    end)
+end
+
+local function prestreamRoute(fromPos, toPos)
+    task.spawn(function()
+        local dist = (fromPos - toPos).Magnitude
+        local count = math.clamp(math.floor(dist / 2500), 1, 20)
+        for i = 1, count do
+            local p = fromPos:Lerp(toPos, i / count)
+            fastStreamAround(p)
+        end
+    end)
+end
+
 local function tweenStep(fromPos, toPos, speed)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
+    fastStreamAround(toPos)
+    prestreamRoute(fromPos, toPos)
+
+    local currentSpeed = speed or Config.TweenSpeed
     local dist = (fromPos - toPos).Magnitude
-    local dur = math.max(0.05, dist / speed)
+    local dur = math.max(0.05, dist / currentSpeed)
     local interrupted = false
 
     local bv = Instance.new("BodyVelocity")
@@ -525,20 +635,60 @@ local function tweenStep(fromPos, toPos, speed)
     end)
     tw:Play()
 
+    activeTweenUpdate = function()
+        if completed or not isPlayerAlive() then return end
+        local c = LocalPlayer.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        hrp = root
+        currentSpeed = Config.TweenSpeed
+        if tw then
+            pcall(function() tw:Cancel() end)
+        end
+        if conn then
+            conn:Disconnect()
+            conn = nil
+        end
+        local remDist = (root.Position - toPos).Magnitude
+        local remDur = math.max(0.05, remDist / currentSpeed)
+        tw = TweenService:Create(root, TweenInfo.new(remDur, Enum.EasingStyle.Linear), {
+            CFrame = CFrame.new(toPos) * endCFrame.Rotation
+        })
+        conn = tw.Completed:Connect(function()
+            completed = true
+        end)
+        tw:Play()
+    end
+
+    local lastLookAhead = 0
     while not completed do
         if not isPlayerAlive() then
-            tw:Cancel()
+            activeTweenUpdate = nil
+            if tw then pcall(function() tw:Cancel() end) end
             if conn then conn:Disconnect() end
             if bv then bv:Destroy() end
             return false
         end
 
+        if currentSpeed ~= Config.TweenSpeed then
+            pcall(activeTweenUpdate)
+        end
+
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
 
+        if tick() - lastLookAhead > 0.2 then
+            lastLookAhead = tick()
+            local dir = (toPos - hrp.Position)
+            if dir.Magnitude > 100 then
+                fastStreamAround(hrp.Position + dir.Unit * math.min(dir.Magnitude, 3000))
+            end
+        end
+
         local prompt, promptPart = getNearestPendingDoor(hrp.Position)
         if prompt and promptPart then
-            tw:Cancel()
+            activeTweenUpdate = nil
+            if tw then pcall(function() tw:Cancel() end) end
             if conn then conn:Disconnect() end
             if bv then bv:Destroy() end
             interrupted = true
@@ -546,9 +696,7 @@ local function tweenStep(fromPos, toPos, speed)
             statusText = "Farm Candy"
             interactedDoors[prompt] = true
             equipCandyBucket()
-            pcall(function()
-                LocalPlayer:RequestStreamAroundAsync(promptPart.Position, 5)
-            end)
+            fastStreamAround(promptPart.Position)
             hrp.CFrame = promptPart.CFrame * CFrame.new(0, 0, 3)
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
@@ -563,13 +711,15 @@ local function tweenStep(fromPos, toPos, speed)
             hrp.CFrame = CFrame.new(resumeHighPos) * endCFrame.Rotation
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
+            fastStreamAround(toPos)
             
-            return tweenStep(resumeHighPos, toPos, speed)
+            return tweenStep(resumeHighPos, toPos, Config.TweenSpeed)
         end
 
-        task.wait(0.08)
+        task.wait(0.05)
     end
 
+    activeTweenUpdate = nil
     if conn then conn:Disconnect() end
     if bv then bv:Destroy() end
     return true
@@ -584,15 +734,22 @@ task.spawn(function()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp then
-            statusText = "Ascending"
             local initialHighPos = Vector3.new(hrp.Position.X, TWEEN_ALTITUDE, hrp.Position.Z)
+            local targetHighPos = Vector3.new(endCFrame.Position.X, TWEEN_ALTITUDE, endCFrame.Position.Z)
+            
+            fastStreamAround(hrp.Position)
+            fastStreamAround(initialHighPos)
+            fastStreamAround(targetHighPos)
+            fastStreamAround(endCFrame.Position)
+            prestreamRoute(initialHighPos, targetHighPos)
+
+            statusText = "Ascending"
             hrp.CFrame = CFrame.new(initialHighPos) * endCFrame.Rotation
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
 
             statusText = "Tweening to End"
-            local targetHighPos = Vector3.new(endCFrame.Position.X, TWEEN_ALTITUDE, endCFrame.Position.Z)
-            local reached = tweenStep(initialHighPos, targetHighPos, TWEEN_SPEED)
+            local reached = tweenStep(initialHighPos, targetHighPos, Config.TweenSpeed)
             
             if reached and isPlayerAlive() then
                 hrp.CFrame = endCFrame
