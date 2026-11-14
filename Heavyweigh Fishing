@@ -102,12 +102,8 @@ local Config = {
 	AutoEquipBait = false,
 	SelectedEquipBait = "",
 	AutoGiveFish = false,
-	AutoGiveWraithOrca = false,
-	AutoGiveWraithOrcaFavorite = false,
-	AutoGiveWraithOrcaLock = false,
-	AutoFavoriteWraithOrca = false,
+	AutoGiveGoldenShark = false,
 	AutoFarmEvent = false,
-	SelectedFarmEventIsland = "Beginning Isle",
 	AutoFavoriteBoss = false,
 	AutoFavoriteBossTarget = {},
 	AutoHopWeather = false,
@@ -302,6 +298,8 @@ local function GetWeatherIcon(weatherName)
 end
 
 local IsCheckingSacredBeast = false
+local IsGivingGoldenShark = false
+local HasPendingGoldenShark
 
 local function SendDiscordWebhook(rawUrl, title, description, customColor, extraFields)
 	local url = tostring(rawUrl or ""):gsub("%s+", "")
@@ -653,15 +651,6 @@ local function IsSpecialWeather(wName)
 	return false
 end
 
-local StepAutoFarmEvent
-local function IsFoggyWeather()
-	local w = tostring(workspace:GetAttribute("Weather") or "")
-	if w == "" then
-		return false
-	end
-	return string.find(string.lower(w), "fog", 1, true) ~= nil
-end
-
 local lastNotifiedWeatherKey = ""
 local function CheckAndNotifyWeather(wName)
 	if not Config.WebhookWeather then
@@ -682,55 +671,15 @@ local function CheckAndNotifyWeather(wName)
 	end)
 end
 
-local wasFoggyWeather = nil
-
-local function HandleEventWeatherNotification(isFoggy)
-	if not Config.AutoFarmEvent then
-		wasFoggyWeather = isFoggy
-		return
-	end
-	if wasFoggyWeather == nil then
-		wasFoggyWeather = isFoggy
-		return
-	end
-	if isFoggy and not wasFoggyWeather then
-		wasFoggyWeather = true
-		pcall(function()
-			Fluent:Notify({
-				Title = "Auto Farm Event",
-				Content = "Foggy weather active! Filtering Wraith Orca...",
-				Duration = 4,
-			})
-		end)
-	elseif not isFoggy and wasFoggyWeather then
-		wasFoggyWeather = false
-		pcall(function()
-			Fluent:Notify({
-				Title = "Auto Farm Event",
-				Content = "Waiting for Foggy weather...",
-				Duration = 4,
-			})
-		end)
-	end
-end
-
 workspace:GetAttributeChangedSignal("Weather"):Connect(function()
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
-	HandleEventWeatherNotification(IsFoggyWeather())
-	if Config.AutoFarmEvent and StepAutoFarmEvent then
-		StepAutoFarmEvent(cachedChar)
-	end
 end)
 
 task.spawn(function()
 	task.wait(2)
 	local curW = tostring(workspace:GetAttribute("Weather") or "")
 	CheckAndNotifyWeather(curW)
-	wasFoggyWeather = IsFoggyWeather()
-	if Config.AutoFarmEvent and StepAutoFarmEvent then
-		StepAutoFarmEvent(cachedChar)
-	end
 end)
 
 local ModuleCache = {}
@@ -1345,14 +1294,14 @@ local function StepAutoFarmIsland(char)
 	end
 end
 
-function StepAutoFarmEvent(char)
-	if not Config.AutoFarmEvent or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+local function StepAutoFarmEvent(char)
+	if not Config.AutoFarmEvent or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
 		return
 	end
-	local targetCF = GetIslandFarmCFrame(Config.SelectedFarmEventIsland)
+	local targetCF = IslandFarmPositions["World Angler Isle"] or GetIslandFarmCFrame("World Angler Isle")
 	if not targetCF then
 		return
 	end
@@ -2575,7 +2524,7 @@ do
 	local fmEv = Events:FindFirstChild("FishingMinigame")
 	if fmEv and fmEv:IsA("RemoteEvent") then
 		fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
-			local eventFilterActive = Config.AutoFarmEvent and IsFoggyWeather()
+			local eventFilterActive = Config.AutoFarmEvent == true
 			local materialFilterActive = Config.AutoFarmMaterialBait and currentMaterialTargets and #currentMaterialTargets > 0
 			if (Config.FilterFishEnabled or eventFilterActive or materialFilterActive) and type(fishData) == "table" then
 				local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
@@ -2595,7 +2544,7 @@ do
 							end
 						end
 					elseif eventFilterActive then
-						table.insert(targets, "wraith orca")
+						table.insert(targets, "golden shark")
 					elseif Config.FilterFishEnabled then
 						if type(Config.FilterFishTarget) == "table" then
 							for k, v in pairs(Config.FilterFishTarget) do
@@ -2623,7 +2572,7 @@ do
 						local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
 						local matched = false
 						for _, t in ipairs(targets) do
-							if hookedLower == t or string.find(hookedLower, t, 1, true) or string.find(t, hookedLower, 1, true) then
+							if hookedLower == t or string.find(hookedLower, t, 1, true) or (not eventFilterActive and string.find(t, hookedLower, 1, true)) then
 								matched = true
 								break
 							end
@@ -2768,6 +2717,11 @@ task.spawn(function()
 			or isEventFarmActive
 			or isMaterialFarmActive
 		if Config.AutoFarmMaterialBait and not isMaterialFarmCastingAllowed then
+			activeCast = false
+		end
+		local needPauseForGive = IsGivingGoldenShark
+			or (Config.AutoGiveGoldenShark and HasPendingGoldenShark and HasPendingGoldenShark())
+		if needPauseForGive and not isMinigame then
 			activeCast = false
 		end
 		local activeSkill = Config.AutoSkill
@@ -5025,29 +4979,29 @@ local StepAutoGiveFish
 	end
 end)()
 
-local StepAutoGiveWraithOrca
+local StepAutoGiveGoldenShark
 (function()
-	local lastGiveWraithTick = 0
+	local giveGoldenSharkCooldownUntil = 0
 
-	local function GetRikuObject()
+	local function GetNoroDerasuObject()
 		local npc = workspace:FindFirstChild("NPC")
 		local fn = npc and npc:FindFirstChild("Function")
-		local riku = fn and fn:FindFirstChild("Riku")
-		if riku then
-			return riku
+		local noro = fn and fn:FindFirstChild("Noro Derasu")
+		if noro then
+			return noro
 		end
 		local ok, res = pcall(function()
-			return workspace.NPC.Function.Riku
+			return workspace.NPC.Function["Noro Derasu"]
 		end)
 		if ok and res and res.Parent then
 			return res
 		end
-		local direct = workspace:FindFirstChild("Riku", true)
+		local direct = workspace:FindFirstChild("Noro Derasu", true)
 		if direct then
 			return direct
 		end
 		local okWait, waitRes = pcall(function()
-			return workspace:WaitForChild("NPC", 2):WaitForChild("Function", 2):WaitForChild("Riku", 2)
+			return workspace:WaitForChild("NPC", 2):WaitForChild("Function", 2):WaitForChild("Noro Derasu", 2)
 		end)
 		if okWait and waitRes then
 			return waitRes
@@ -5055,25 +5009,18 @@ local StepAutoGiveWraithOrca
 		return nil
 	end
 
-	local function MatchesWraithOrca(itemName)
+	local function MatchesGoldenShark(itemName)
 		if not itemName or itemName == "" then
+			return false
+		end
+		if string.find(itemName, "Favorite", 1, true) or string.find(itemName, "Lock", 1, true) then
 			return false
 		end
 		local lower = string.lower(itemName)
 		if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
 			return false
 		end
-		if not string.find(lower, "wraith orca", 1, true) then
-			return false
-		end
-		local isFav = (string.find(itemName, "Favorite", 1, true) ~= nil) or (string.find(itemName, "Lock", 1, true) ~= nil)
-		local allowNormal = (Config.AutoGiveWraithOrca == true)
-		local allowFav = (Config.AutoGiveWraithOrcaFavorite == true or Config.AutoGiveWraithOrcaLock == true)
-		if isFav then
-			return allowFav
-		else
-			return allowNormal
-		end
+		return string.find(lower, "golden shark", 1, true) ~= nil
 	end
 
 	local function FindAvailableHotbarSlot()
@@ -5094,14 +5041,102 @@ local StepAutoGiveWraithOrca
 		return "4"
 	end
 
-	function StepAutoGiveWraithOrca()
-		local allowNormal = (Config.AutoGiveWraithOrca == true)
-		local allowFav = (Config.AutoGiveWraithOrcaFavorite == true or Config.AutoGiveWraithOrcaLock == true)
-		if not allowNormal and not allowFav then
+	local function IsSlotGoldenShark(hotbar, slotName)
+		local slot = hotbar and hotbar:FindFirstChild(tostring(slotName))
+		local valName = slot and slot:FindFirstChild("ValueName")
+		local qty = slot and slot:FindFirstChild("Quantity")
+		if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
+			return MatchesGoldenShark(valName.Value)
+		end
+		return false
+	end
+
+	local function FindGoldenSharkHotbarSlot(pData)
+		local hotbar = pData and pData:FindFirstChild("Hotbar")
+		if not hotbar then
+			return nil
+		end
+		for i = 2, 10 do
+			if IsSlotGoldenShark(hotbar, tostring(i)) then
+				return tostring(i)
+			end
+		end
+		return nil
+	end
+
+	local function FindGoldenSharkInventoryItem(pData)
+		local inv = pData and pData:FindFirstChild("Inventory")
+		if not inv then
+			return nil
+		end
+		for _, child in ipairs(inv:GetChildren()) do
+			if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
+				if MatchesGoldenShark(child.Name) then
+					return child
+				end
+			end
+		end
+		return nil
+	end
+
+	local function IsHoldingFish(char)
+		if not char then
+			return false
+		end
+		local heldType = tostring(char:GetAttribute("Type") or "")
+		if heldType ~= "" and heldType ~= "Fishing Rod" and heldType ~= "Bait" then
+			return true
+		end
+		local tool = char:FindFirstChildWhichIsA("Tool")
+		if tool and heldType ~= "Fishing Rod" and heldType ~= "Bait" and not string.find(string.lower(tool.Name), "rod", 1, true) then
+			return true
+		end
+		return false
+	end
+
+	local function IsHoldingGoldenShark(char)
+		if not char then
+			return false
+		end
+		local tool = char:FindFirstChildWhichIsA("Tool")
+		if tool and MatchesGoldenShark(tool.Name) then
+			return true
+		end
+		return false
+	end
+
+	function HasPendingGoldenShark()
+		if not Config.AutoGiveGoldenShark then
+			return false
+		end
+		if os.clock() < giveGoldenSharkCooldownUntil then
+			return false
+		end
+		local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
+		if not pData then
+			return false
+		end
+		if not GetNoroDerasuObject() then
+			return false
+		end
+		if FindGoldenSharkHotbarSlot(pData) then
+			return true
+		end
+		if FindGoldenSharkInventoryItem(pData) then
+			return true
+		end
+		return false
+	end
+
+	function StepAutoGiveGoldenShark()
+		if IsGivingGoldenShark or not Config.AutoGiveGoldenShark then
 			return
 		end
-		local now = os.clock()
-		if now - lastGiveWraithTick < 1.2 then
+		if os.clock() < giveGoldenSharkCooldownUntil then
+			return
+		end
+		RefreshGuiCache()
+		if FishingGui and FishingGui.Visible then
 			return
 		end
 
@@ -5110,84 +5145,152 @@ local StepAutoGiveWraithOrca
 			return
 		end
 
-		local riku = GetRikuObject()
-		if not riku then
+		local noro = GetNoroDerasuObject()
+		if not noro then
 			return
 		end
 
-		local targetSlot = nil
-		local hotbar = pData:FindFirstChild("Hotbar")
-		if hotbar then
-			for i = 2, 10 do
-				local slot = hotbar:FindFirstChild(tostring(i))
-				local valName = slot and slot:FindFirstChild("ValueName")
-				local qty = slot and slot:FindFirstChild("Quantity")
-				if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
-					if MatchesWraithOrca(valName.Value) then
-						targetSlot = tostring(i)
-						break
-					end
+		if not FindGoldenSharkHotbarSlot(pData) and not FindGoldenSharkInventoryItem(pData) then
+			return
+		end
+
+		local char = cachedChar or LocalPlayer.Character
+		if not char then
+			return
+		end
+		if char:GetAttribute("Fishing") then
+			if Config.AutoFarmEvent or Config.AutoCast or Config.AutoFarmIsland or Config.AutoFarmMaterialBait then
+				local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					pcall(function()
+						FishingEvent:FireServer(hrp.CFrame)
+					end)
 				end
+				local waitStart = os.clock()
+				while char:GetAttribute("Fishing") and os.clock() - waitStart < 1 do
+					if FishingGui and FishingGui.Visible then
+						return
+					end
+					task.wait(0.05)
+				end
+			end
+			if char:GetAttribute("Fishing") or (FishingGui and FishingGui.Visible) then
+				return
 			end
 		end
 
-		if not targetSlot then
-			local inv = pData:FindFirstChild("Inventory")
-			if inv then
-				local foundItem = nil
-				for _, child in ipairs(inv:GetChildren()) do
-					if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
-						if MatchesWraithOrca(child.Name) then
-							foundItem = child
-							break
+		IsGivingGoldenShark = true
+		pcall(function()
+			while Config.AutoGiveGoldenShark do
+				RefreshGuiCache()
+				if FishingGui and FishingGui.Visible then
+					break
+				end
+
+				local hotbar = pData:FindFirstChild("Hotbar")
+				local targetSlot = FindGoldenSharkHotbarSlot(pData)
+
+				if not targetSlot then
+					local foundItem = FindGoldenSharkInventoryItem(pData)
+					if foundItem then
+						local freeSlot = FindAvailableHotbarSlot()
+						local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
+						if moveEv then
+							pcall(function()
+								moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
+							end)
+							local moveWait = os.clock()
+							while os.clock() - moveWait < 0.8 do
+								if IsSlotGoldenShark(hotbar, freeSlot) then
+									break
+								end
+								task.wait(0.05)
+							end
+						end
+						if IsSlotGoldenShark(hotbar, freeSlot) then
+							targetSlot = freeSlot
 						end
 					end
 				end
-				if foundItem then
-					local freeSlot = FindAvailableHotbarSlot()
-					local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
-					if moveEv then
-						pcall(function()
-							moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
-						end)
-						task.wait(0.25)
-					end
-					targetSlot = freeSlot
-				end
-			end
-		end
 
-		if targetSlot then
-			lastGiveWraithTick = os.clock()
-			local slot = hotbar and hotbar:FindFirstChild(targetSlot)
-			local valName = slot and slot:FindFirstChild("ValueName")
-			local itemStr = tostring(valName and valName.Value or "")
-			if string.find(itemStr, "Favorite", 1, true) then
-				local favRemote = Events and Events:FindFirstChild("FavoriteItem")
-				if favRemote then
+				if not targetSlot then
+					break
+				end
+
+				char = cachedChar or LocalPlayer.Character
+				if not char then
+					break
+				end
+
+				if not IsHoldingGoldenShark(char) then
 					pcall(function()
-						favRemote:FireServer(itemStr)
+						ToggleHotbar:InvokeServer(targetSlot)
 					end)
-					task.wait(0.15)
+					local eqStart = os.clock()
+					while os.clock() - eqStart < 0.8 do
+						if IsHoldingFish(char) then
+							break
+						end
+						task.wait(0.05)
+					end
+					if not IsHoldingFish(char) then
+						pcall(function()
+							ToggleHotbar:InvokeServer(targetSlot)
+						end)
+						local eqRetry = os.clock()
+						while os.clock() - eqRetry < 0.8 do
+							if IsHoldingFish(char) then
+								break
+							end
+							task.wait(0.05)
+						end
+					end
+				end
+
+				if not IsHoldingFish(char) then
+					giveGoldenSharkCooldownUntil = os.clock() + 2
+					break
+				end
+
+				task.wait(0.15)
+				RefreshGuiCache()
+				if not Config.AutoGiveGoldenShark or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
+					break
+				end
+
+				local args = {
+					[1] = "Noro Derasu",
+					[2] = 1,
+					[3] = "GiveFish",
+					[4] = {
+						[1] = noro,
+					},
+				}
+				pcall(function()
+					local chooseEv = ChooseDialogueOption or (Events and Events:FindFirstChild("ChooseDialogueOption")) or game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("ChooseDialogueOption", 9e9)
+					chooseEv:FireServer(unpack(args))
+				end)
+
+				local consumed = false
+				local giveWait = os.clock()
+				while os.clock() - giveWait < 1.2 do
+					if not IsSlotGoldenShark(hotbar, targetSlot) then
+						consumed = true
+						break
+					end
+					task.wait(0.08)
+				end
+
+				if not consumed then
+					giveGoldenSharkCooldownUntil = os.clock() + 5
+					break
+				else
+					giveGoldenSharkCooldownUntil = 0
 				end
 			end
-			pcall(function()
-				ToggleHotbar:InvokeServer(targetSlot)
-			end)
-			task.wait(0.2)
-			local args = {
-				[1] = "Riku",
-				[2] = 1,
-				[3] = "GiveFish",
-				[4] = {
-					[1] = riku,
-				},
-			}
-			pcall(function()
-				local chooseEv = ChooseDialogueOption or (Events and Events:FindFirstChild("ChooseDialogueOption")) or game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("ChooseDialogueOption", 9e9)
-				chooseEv:FireServer(unpack(args))
-			end)
-		end
+		end)
+		task.wait(0.15)
+		IsGivingGoldenShark = false
 	end
 end)()
 
@@ -5869,15 +5972,19 @@ task.spawn(function()
 		if Config.AutoGiveFish then
 			StepAutoGiveFish()
 		end
-		if Config.AutoGiveWraithOrca or Config.AutoGiveWraithOrcaFavorite or Config.AutoGiveWraithOrcaLock then
-			StepAutoGiveWraithOrca()
-		end
 		if Config.AutoClaimDailyQuest then
 			StepAutoClaimDailyQuest()
 			StepAutoClaimDailyReward()
 		end
 		if Config.AutoUpgradeCharacter then
 			StepAutoUpgradeCharacter()
+		end
+	end
+end);
+task.spawn(function()
+	while task.wait(0.25) do
+		if Config.AutoGiveGoldenShark then
+			StepAutoGiveGoldenShark()
 		end
 	end
 end);
@@ -6875,7 +6982,7 @@ end);
 
 	local Tabs = {
 		Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-		Halloween = Window:AddTab({ Title = "Halloween", Icon = "ghost" }),
+		LimitedEvent = Window:AddTab({ Title = "Limited Event", Icon = "gift" }),
 		Boss = Window:AddTab({ Title = "Boss", Icon = "skull" }),
 		Quest = Window:AddTab({ Title = "Quest", Icon = "scroll" }),
 		Player = Window:AddTab({ Title = "Player", Icon = "user" }),
@@ -6951,7 +7058,7 @@ end);
 		})
 	end
 
-	local AutoFarmIslandToggleObj, AutoFarmMaterialBaitToggleObj
+	local AutoFarmIslandToggleObj, AutoFarmMaterialBaitToggleObj, AutoFarmEventToggleObj
 	AutoFarmIslandToggleObj = Tabs.Main:AddToggle("AutoFarmIslandToggle", {
 		Title = "Auto Farm",
 		Default = Config.AutoFarmIsland,
@@ -6962,6 +7069,14 @@ end);
 				if AutoFarmMaterialBaitToggleObj then
 					pcall(function()
 						AutoFarmMaterialBaitToggleObj:SetValue(false)
+					end)
+				end
+			end
+			if Value and Config.AutoFarmEvent then
+				Config.AutoFarmEvent = false
+				if AutoFarmEventToggleObj then
+					pcall(function()
+						AutoFarmEventToggleObj:SetValue(false)
 					end)
 				end
 			end
@@ -7171,32 +7286,6 @@ end);
 		})
 	end
 
-	local function ScanAndFavoriteWraithOrca()
-		if not Config.AutoFavoriteWraithOrca then
-			return
-		end
-		local inv = PlayerData and PlayerData:FindFirstChild("Inventory")
-		if not inv then
-			return
-		end
-		local favRemote = Events and Events:FindFirstChild("FavoriteItem")
-		if not favRemote then
-			return
-		end
-		for _, child in ipairs(inv:GetChildren()) do
-			local itemName = child.Name
-			if not string.find(itemName, "| Favorite", 1, true) then
-				local fName = string.lower(GetFishNameFromItem(itemName))
-				if string.find(fName, "wraith orca", 1, true) then
-					pcall(function()
-						favRemote:FireServer(itemName)
-					end)
-					task.wait(0.15)
-				end
-			end
-		end
-	end
-
 	local function ScanAndFavoriteBossFish()
 		if not Config.AutoFavoriteBoss then
 			return
@@ -7259,15 +7348,6 @@ end);
 				if not string.find(itemName, "| Favorite", 1, true) then
 					local fName = GetFishNameFromItem(itemName)
 					local fNameLower = string.lower(fName)
-					if Config.AutoFavoriteWraithOrca and string.find(fNameLower, "wraith orca", 1, true) then
-						local favRemote = Events and Events:FindFirstChild("FavoriteItem")
-						if favRemote then
-							pcall(function()
-								favRemote:FireServer(itemName)
-							end)
-						end
-						return
-					end
 					if Config.AutoFavoriteBoss then
 						local targets = {}
 						if type(Config.AutoFavoriteBossTarget) == "table" then
@@ -7333,6 +7413,14 @@ end);
 					end)
 				end
 			end
+			if Value and Config.AutoFarmEvent then
+				Config.AutoFarmEvent = false
+				if AutoFarmEventToggleObj then
+					pcall(function()
+						AutoFarmEventToggleObj:SetValue(false)
+					end)
+				end
+			end
 			SaveConfig()
 			if Value then
 				StepAutoFarmMaterialBait(LocalPlayer.Character)
@@ -7340,91 +7428,43 @@ end);
 		end,
 	})
 
-	Tabs.Halloween:AddSection("Auto Farm Event")
+	Tabs.LimitedEvent:AddSection("Auto Farm Event")
 
-	do
-		local eventIslandList = GetIslandList()
-		if
-			(Config.SelectedFarmEventIsland == "" or not table.find(eventIslandList, Config.SelectedFarmEventIsland))
-			and #eventIslandList > 0
-		then
-			Config.SelectedFarmEventIsland = eventIslandList[1]
-		end
-
-		Tabs.Halloween:AddDropdown("SelectFarmEventIslandDropdown", {
-			Title = "Select Island",
-			Values = eventIslandList,
-			Default = Config.SelectedFarmEventIsland ~= "" and Config.SelectedFarmEventIsland or eventIslandList[1],
-			Multi = false,
-			Callback = function(Value)
-				Config.SelectedFarmEventIsland = Value or ""
-				SaveConfig()
-				if Config.AutoFarmEvent and IsFoggyWeather() then
-					StepAutoFarmEvent(LocalPlayer.Character)
-				end
-			end,
-		})
-
-		Tabs.Halloween:AddToggle("AutoFarmEventToggle", {
-			Title = "Auto Farm Event",
-			Default = Config.AutoFarmEvent,
-			Callback = function(Value)
-				Config.AutoFarmEvent = Value
-				SaveConfig()
-				if Value then
-					wasFoggyWeather = IsFoggyWeather()
-					if wasFoggyWeather then
-						pcall(function()
-							Fluent:Notify({
-								Title = "Auto Farm Event",
-								Content = "Foggy weather active! Filtering Wraith Orca...",
-								Duration = 4,
-							})
-						end)
-					else
-						pcall(function()
-							Fluent:Notify({
-								Title = "Auto Farm Event",
-								Content = "Waiting for Foggy weather...",
-								Duration = 4,
-							})
-						end)
-					end
-					StepAutoFarmEvent(LocalPlayer.Character)
-				end
-			end,
-		})
-
-		Tabs.Halloween:AddToggle("AutoFavoriteWraithOrcaToggle", {
-			Title = "Auto Favorite Wraith Orca",
-			Default = Config.AutoFavoriteWraithOrca,
-			Callback = function(Value)
-				Config.AutoFavoriteWraithOrca = Value
-				SaveConfig()
-				if Value then
-					task.spawn(ScanAndFavoriteWraithOrca)
-				end
-			end,
-		})
-	end
-
-	Tabs.Halloween:AddSection("Auto Give Fish")
-
-	Tabs.Halloween:AddToggle("AutoGiveWraithOrcaToggle", {
-		Title = "Auto Give Wraith Orca",
-		Default = Config.AutoGiveWraithOrca,
+	AutoFarmEventToggleObj = Tabs.LimitedEvent:AddToggle("AutoFarmEventToggle", {
+		Title = "Auto Farm Event",
+		Default = Config.AutoFarmEvent,
 		Callback = function(Value)
-			Config.AutoGiveWraithOrca = Value
+			Config.AutoFarmEvent = Value
+			if Value and Config.AutoFarmIsland then
+				Config.AutoFarmIsland = false
+				if AutoFarmIslandToggleObj then
+					pcall(function()
+						AutoFarmIslandToggleObj:SetValue(false)
+					end)
+				end
+			end
+			if Value and Config.AutoFarmMaterialBait then
+				Config.AutoFarmMaterialBait = false
+				if AutoFarmMaterialBaitToggleObj then
+					pcall(function()
+						AutoFarmMaterialBaitToggleObj:SetValue(false)
+					end)
+				end
+			end
 			SaveConfig()
+			if Value then
+				StepAutoFarmEvent(LocalPlayer.Character)
+			end
 		end,
 	})
 
-	Tabs.Halloween:AddToggle("AutoGiveWraithOrcaFavoriteToggle", {
-		Title = "Auto Give Wraith Orca Favorite",
-		Default = Config.AutoGiveWraithOrcaFavorite or Config.AutoGiveWraithOrcaLock,
+	Tabs.LimitedEvent:AddSection("Auto Give Fish")
+
+	Tabs.LimitedEvent:AddToggle("AutoGiveGoldenSharkToggle", {
+		Title = "Auto Give Golden Shark",
+		Default = Config.AutoGiveGoldenShark,
 		Callback = function(Value)
-			Config.AutoGiveWraithOrcaFavorite = Value
-			Config.AutoGiveWraithOrcaLock = Value
+			Config.AutoGiveGoldenShark = Value
 			SaveConfig()
 		end,
 	})
