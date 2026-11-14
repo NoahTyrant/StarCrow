@@ -1,0 +1,1653 @@
+local Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/NoahTyrant/Fluent-Ui/refs/heads/main/main.lua"))()
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
+local Teams = game:GetService("Teams")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local Config = {
+    AutoArrest = false,
+    FastFire = false,
+    AutoFire = false,
+    NoSpread = false,
+    SilentAim = false,
+    FOVMode = "No FOV",
+    FOVRadius = 120,
+    AimPart = "Head",
+    TeamCheck = false,
+    FriendCheck = false,
+    WallCheck = false,
+    IgnoreTeams = {},
+    MeleeAura = false,
+    MeleeRange = 15,
+    LoopSpeedEnabled = false,
+    WalkSpeed = 30,
+    FlyEnabled = false,
+    FlySpeed = 5,
+    InfJumpEnabled = false,
+    NoclipEnabled = false,
+    ESPEnabled = false,
+    SelectedGun = "AK-47",
+    MinimizeKey = "LeftControl",
+}
+
+local SAVE_FOLDER = "StarCrowHub"
+local SAVE_FILE = SAVE_FOLDER .. "/PrisonLifeConfig.json"
+
+local function SaveConfig()
+    pcall(function()
+        if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
+        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+    end)
+end
+
+local function LoadConfig()
+    pcall(function()
+        if isfile(SAVE_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
+            for k, v in pairs(decoded) do
+                if Config[k] ~= nil then
+                    Config[k] = v
+                end
+            end
+        end
+    end)
+end
+
+LoadConfig()
+
+if type(Config.IgnoreTeams) ~= "table" then
+    Config.IgnoreTeams = {}
+end
+Config.WalkSpeed = math.clamp(tonumber(Config.WalkSpeed) or 30, 30, 100)
+Config.FlySpeed = math.clamp(tonumber(Config.FlySpeed) or 5, 1, 10)
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 2, false, game, 1)
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(300)
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end
+end)
+
+local friendCache = {}
+
+local function cacheFriend(player)
+    if player == LocalPlayer then return end
+    task.spawn(function()
+        local ok, isFriend = pcall(function()
+            return LocalPlayer:IsFriendsWith(player.UserId)
+        end)
+        if ok then
+            friendCache[player.UserId] = isFriend
+        end
+    end)
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+    cacheFriend(player)
+end
+
+Players.PlayerAdded:Connect(cacheFriend)
+Players.PlayerRemoving:Connect(function(player)
+    friendCache[player.UserId] = nil
+end)
+
+local origToolAttrs = setmetatable({}, { __mode = "k" })
+local origGunState = setmetatable({}, { __mode = "k" })
+local trackedGunTools = setmetatable({}, { __mode = "k" })
+
+local function isGunTool(tool)
+    return tool and tool:IsA("Tool") and tool:GetAttribute("ToolType") == "Gun"
+end
+
+local function saveOriginalToolAttrs(tool)
+    if not isGunTool(tool) then return nil end
+    trackedGunTools[tool] = true
+    if not origToolAttrs[tool] then
+        origToolAttrs[tool] = {
+            FireRate = tool:GetAttribute("FireRate"),
+            AutoFire = tool:GetAttribute("AutoFire"),
+            ChargeTime = tool:GetAttribute("ChargeTime"),
+            SpreadRadius = tool:GetAttribute("SpreadRadius"),
+        }
+    end
+    return origToolAttrs[tool]
+end
+
+local function applyModToTool(tool)
+    local orig = saveOriginalToolAttrs(tool)
+    if not orig then return end
+    if orig.FireRate ~= nil then
+        tool:SetAttribute("FireRate", Config.FastFire and 0 or orig.FireRate)
+    end
+    if orig.ChargeTime ~= nil then
+        tool:SetAttribute("ChargeTime", Config.FastFire and 0 or orig.ChargeTime)
+    end
+    if orig.AutoFire ~= nil then
+        tool:SetAttribute("AutoFire", (Config.AutoFire or Config.FastFire) and true or orig.AutoFire)
+    end
+    if orig.SpreadRadius ~= nil then
+        tool:SetAttribute("SpreadRadius", Config.NoSpread and 0 or orig.SpreadRadius)
+    end
+end
+
+local function getEquippedGunOriginals()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, child in ipairs(char:GetChildren()) do
+        if isGunTool(child) and origToolAttrs[child] then
+            return origToolAttrs[child]
+        end
+    end
+    return nil
+end
+
+local function patchLiveGunStateTable(obj, equippedOrig)
+    if type(obj) ~= "table" then return end
+    if not origGunState[obj] then
+        if equippedOrig then
+            origGunState[obj] = {
+                FireRate = equippedOrig.FireRate,
+                AutoFire = equippedOrig.AutoFire,
+                ChargeTime = equippedOrig.ChargeTime,
+                SpreadRadius = equippedOrig.SpreadRadius,
+            }
+        else
+            origGunState[obj] = {
+                FireRate = rawget(obj, "FireRate"),
+                AutoFire = rawget(obj, "AutoFire"),
+                ChargeTime = rawget(obj, "ChargeTime"),
+                SpreadRadius = rawget(obj, "SpreadRadius"),
+            }
+        end
+    end
+    local orig = origGunState[obj]
+    if orig.FireRate ~= nil then
+        obj.FireRate = Config.FastFire and 0 or orig.FireRate
+    end
+    if orig.ChargeTime ~= nil then
+        obj.ChargeTime = Config.FastFire and 0 or orig.ChargeTime
+    end
+    if orig.AutoFire ~= nil then
+        obj.AutoFire = (Config.AutoFire or Config.FastFire) and true or orig.AutoFire
+    end
+    if orig.SpreadRadius ~= nil then
+        obj.SpreadRadius = Config.NoSpread and 0 or orig.SpreadRadius
+    end
+end
+
+local function applyGunMods()
+    local char = LocalPlayer.Character
+    if char then
+        for _, child in ipairs(char:GetChildren()) do
+            if isGunTool(child) then
+                applyModToTool(child)
+            end
+        end
+    end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, child in ipairs(bp:GetChildren()) do
+            if isGunTool(child) then
+                applyModToTool(child)
+            end
+        end
+    end
+    for tool in pairs(trackedGunTools) do
+        if tool and tool.Parent then
+            applyModToTool(tool)
+        end
+    end
+    local equippedOrig = getEquippedGunOriginals()
+    local getupvals = (debug and debug.getupvalues) or getupvalues
+    if getconnections and getupvals then
+        pcall(function()
+            local seenFuncs = {}
+            local function scanFunc(fn, depth)
+                if type(fn) ~= "function" or seenFuncs[fn] or depth > 2 then return end
+                seenFuncs[fn] = true
+                for _, val in pairs(getupvals(fn)) do
+                    if type(val) == "table" and rawget(val, "ToolType") == "Gun" and type(rawget(val, "FireRate")) == "number" then
+                        patchLiveGunStateTable(val, equippedOrig)
+                    elseif type(val) == "function" then
+                        scanFunc(val, depth + 1)
+                    end
+                end
+            end
+            for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do
+                if conn.Function then
+                    scanFunc(conn.Function, 0)
+                end
+            end
+        end)
+    end
+    if getgc then
+        pcall(function()
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" and rawget(obj, "ToolType") == "Gun" and type(rawget(obj, "FireRate")) == "number" then
+                    patchLiveGunStateTable(obj, equippedOrig)
+                end
+            end
+        end)
+    end
+end
+
+local function watchToolContainer(container)
+    if not container then return end
+    for _, child in ipairs(container:GetChildren()) do
+        if isGunTool(child) then
+            saveOriginalToolAttrs(child)
+            if Config.FastFire or Config.AutoFire or Config.NoSpread then
+                applyModToTool(child)
+            end
+        end
+    end
+    container.ChildAdded:Connect(function(child)
+        if isGunTool(child) then
+            saveOriginalToolAttrs(child)
+            if Config.FastFire or Config.AutoFire or Config.NoSpread then
+                applyModToTool(child)
+                task.defer(applyGunMods)
+            end
+        elseif child:IsA("Tool") then
+            task.defer(function()
+                if child.Parent and isGunTool(child) then
+                    saveOriginalToolAttrs(child)
+                    if Config.FastFire or Config.AutoFire or Config.NoSpread then
+                        applyModToTool(child)
+                        applyGunMods()
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+local function onCharacterAddedForGuns(char)
+    watchToolContainer(char)
+end
+
+if LocalPlayer.Character then
+    onCharacterAddedForGuns(LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(onCharacterAddedForGuns)
+
+local existingBp = LocalPlayer:FindFirstChildOfClass("Backpack")
+if existingBp then
+    watchToolContainer(existingBp)
+end
+LocalPlayer.ChildAdded:Connect(function(child)
+    if child:IsA("Backpack") then
+        watchToolContainer(child)
+    end
+end)
+
+if Config.FastFire or Config.AutoFire or Config.NoSpread then
+    task.defer(applyGunMods)
+end
+
+local function isSameTeam(player)
+    if LocalPlayer.Team and player.Team then
+        return LocalPlayer.Team == player.Team
+    end
+    if LocalPlayer.TeamColor and player.TeamColor then
+        return LocalPlayer.TeamColor == player.TeamColor
+    end
+    return false
+end
+
+local insideInternalRaycast = false
+
+local function isTargetVisible(fromPos, targetPart, targetChar)
+    insideInternalRaycast = true
+    local ok, visible = pcall(function()
+        local ignoreList = { targetChar }
+        if LocalPlayer.Character then
+            table.insert(ignoreList, LocalPlayer.Character)
+        end
+        if workspace.CurrentCamera then
+            table.insert(ignoreList, workspace.CurrentCamera)
+        end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.CollisionGroup = "ClientBullet"
+        params.IgnoreWater = true
+        local currentOrigin = fromPos
+        local targetPos = targetPart.Position
+        for _ = 1, 5 do
+            params.FilterDescendantsInstances = ignoreList
+            local dir = targetPos - currentOrigin
+            if dir.Magnitude < 0.01 then
+                return true
+            end
+            local res = workspace:Raycast(currentOrigin, dir, params)
+            if not res then
+                return true
+            end
+            local hit = res.Instance
+            if hit.Transparency >= 0.9 or not hit.CanCollide then
+                table.insert(ignoreList, hit)
+                currentOrigin = res.Position + dir.Unit * 0.05
+            else
+                return false
+            end
+        end
+        return false
+    end)
+    insideInternalRaycast = false
+    if ok then
+        return visible
+    end
+    return false
+end
+
+local function getAimPartFromCharacter(char)
+    if Config.AimPart == "Body" then
+        return char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart")
+    end
+    return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getAimReferencePoint(cam)
+    return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+end
+
+local function isTeamIgnored(player)
+    local team = player.Team
+    if team and Config.IgnoreTeams[team.Name] then
+        return true
+    end
+    return false
+end
+
+local function getSilentAimTargetPart()
+    Camera = workspace.CurrentCamera
+    if not Camera then return nil end
+    local myChar = LocalPlayer.Character
+    local myHead = myChar and myChar:FindFirstChild("Head")
+    local rayOrigin = (myHead and myHead.Position) or Camera.CFrame.Position
+    local refPoint = getAimReferencePoint(Camera)
+    local useFOV = Config.FOVMode == "FOV"
+    local maxRadius = tonumber(Config.FOVRadius) or 120
+    local bestPart = nil
+    local bestDist = useFOV and maxRadius or math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local skip = false
+            if isTeamIgnored(player) then
+                skip = true
+            end
+            if not skip and Config.TeamCheck and isSameTeam(player) then
+                skip = true
+            end
+            if not skip and Config.FriendCheck and friendCache[player.UserId] then
+                skip = true
+            end
+            if not skip then
+                local char = player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local part = char and getAimPartFromCharacter(char)
+                if hum and hum.Health > 0 and part and not char:FindFirstChildOfClass("ForceField") then
+                    local screenPos = Camera:WorldToViewportPoint(part.Position)
+                    if screenPos.Z > 0 then
+                        local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - refPoint).Magnitude
+                        if dist2D < bestDist then
+                            if not Config.WallCheck or isTargetVisible(rayOrigin, part, char) then
+                                bestDist = dist2D
+                                bestPart = part
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return bestPart
+end
+
+local cachedSilentTarget = nil
+local fovCircle = nil
+local fovGui = nil
+local fovFrame = nil
+
+if Drawing and Drawing.new then
+    pcall(function()
+        local c = Drawing.new("Circle")
+        c.Color = Color3.fromRGB(170, 70, 255)
+        c.Thickness = 1.8
+        c.NumSides = 64
+        c.Filled = false
+        c.Transparency = 1
+        c.Visible = false
+        fovCircle = c
+    end)
+end
+
+if not fovCircle then
+    fovGui = Instance.new("ScreenGui")
+    fovGui.Name = "StarCrowFOVGui"
+    fovGui.IgnoreGuiInset = true
+    fovGui.ResetOnSpawn = false
+    fovGui.DisplayOrder = 9999
+    pcall(function() fovGui.Parent = game:GetService("CoreGui") end)
+    if not fovGui.Parent then fovGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    fovFrame = Instance.new("Frame")
+    fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    fovFrame.BackgroundTransparency = 1
+    fovFrame.BorderSizePixel = 0
+    fovFrame.Visible = false
+    fovFrame.Parent = fovGui
+    Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
+    local stroke = Instance.new("UIStroke", fovFrame)
+    stroke.Color = Color3.fromRGB(170, 70, 255)
+    stroke.Thickness = 1.8
+end
+
+local ShootEvent = nil
+task.spawn(function()
+    local gunRemotes = ReplicatedStorage:FindFirstChild("GunRemotes") or ReplicatedStorage:WaitForChild("GunRemotes", 15)
+    if gunRemotes then
+        ShootEvent = gunRemotes:FindFirstChild("ShootEvent") or gunRemotes:WaitForChild("ShootEvent", 15)
+    end
+end)
+
+local isExecutorCall = checkcaller or function()
+    return false
+end
+
+if hookmetamethod and getnamecallmethod and newcclosure then
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if Config.SilentAim and not isExecutorCall() and not insideInternalRaycast then
+                local target = cachedSilentTarget
+                if target and target.Parent then
+                    if method == "FireServer" and ShootEvent and self == ShootEvent then
+                        local args = table.pack(...)
+                        local bullets = args[1]
+                        if type(bullets) == "table" then
+                            for i = 1, #bullets do
+                                if type(bullets[i]) == "table" then
+                                    bullets[i][2] = target.Position
+                                    bullets[i][3] = target
+                                end
+                            end
+                        end
+                        return oldNamecall(self, table.unpack(args, 1, args.n))
+                    elseif method == "Raycast" and self == workspace then
+                        local origin, dir, params = ...
+                        if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and typeof(params) == "RaycastParams" and params.CollisionGroup == "ClientBullet" then
+                            local offset = target.Position - origin
+                            if offset.Magnitude > 0.01 then
+                                local newDir = offset.Unit * dir.Magnitude
+                                return oldNamecall(self, origin, newDir, params)
+                            end
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end))
+    end)
+end
+
+local function escapeRichText(str)
+    return tostring(str):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+end
+
+local function clearPlayerESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head then
+                local esp = head:FindFirstChild("StarCrowESP")
+                if esp then esp:Destroy() end
+            end
+            local chams = char:FindFirstChild("StarCrowChams")
+            if chams then chams:Destroy() end
+        end
+    end
+end
+
+local function updateESP()
+    if not Config.ESPEnabled then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local head = char:FindFirstChild("Head")
+                if hum and head then
+                    local esp = head:FindFirstChild("StarCrowESP")
+                    local chams = char:FindFirstChild("StarCrowChams")
+
+                    if hum.Health > 0 then
+                        if not esp then
+                            esp = Instance.new("BillboardGui")
+                            esp.Name = "StarCrowESP"
+                            esp.Adornee = head
+                            esp.Size = UDim2.new(0, 200, 0, 24)
+                            esp.StudsOffset = Vector3.new(0, 2.2, 0)
+                            esp.AlwaysOnTop = true
+                            esp.MaxDistance = math.huge
+                            local text = Instance.new("TextLabel")
+                            text.Name = "NameText"
+                            text.Parent = esp
+                            text.Size = UDim2.new(1, 0, 1, 0)
+                            text.BackgroundTransparency = 1
+                            text.TextScaled = false
+                            text.TextSize = 13
+                            text.Font = Enum.Font.GothamBold
+                            text.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            text.TextStrokeTransparency = 0
+                            text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            text.RichText = true
+                            text.TextXAlignment = Enum.TextXAlignment.Center
+                            esp.Parent = head
+                        end
+
+                        local teamColor = Color3.fromRGB(255, 255, 255)
+                        if player.Team and player.Team.TeamColor then
+                            teamColor = player.Team.TeamColor.Color
+                        elseif player.TeamColor then
+                            teamColor = player.TeamColor.Color
+                        end
+                        local teamHex = string.format("#%02x%02x%02x", math.floor(teamColor.R * 255), math.floor(teamColor.G * 255), math.floor(teamColor.B * 255))
+                        local fullText = string.format('<font color="%s">%s</font>', teamHex, escapeRichText(player.DisplayName))
+
+                        if esp.NameText.Text ~= fullText then
+                            esp.NameText.Text = fullText
+                        end
+
+                        if not chams then
+                            chams = Instance.new("Highlight")
+                            chams.Name = "StarCrowChams"
+                            chams.FillColor = teamColor
+                            chams.OutlineColor = teamColor
+                            chams.FillTransparency = 0.7
+                            chams.OutlineTransparency = 0
+                            chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            chams.Parent = char
+                        elseif chams.FillColor ~= teamColor then
+                            chams.FillColor = teamColor
+                            chams.OutlineColor = teamColor
+                        end
+                    else
+                        if esp then esp:Destroy() end
+                        if chams then chams:Destroy() end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local espThrottle = 0
+RunService.RenderStepped:Connect(function(dt)
+    Camera = workspace.CurrentCamera
+    if Config.SilentAim then
+        cachedSilentTarget = getSilentAimTargetPart()
+    else
+        cachedSilentTarget = nil
+    end
+
+    local showFOV = Config.SilentAim and Config.FOVMode == "FOV" and Camera ~= nil
+    local radius = tonumber(Config.FOVRadius) or 120
+    if showFOV then
+        local center = getAimReferencePoint(Camera)
+        if fovCircle then
+            fovCircle.Position = center
+            fovCircle.Radius = radius
+            fovCircle.Visible = true
+        elseif fovFrame then
+            fovFrame.Position = UDim2.fromOffset(center.X, center.Y)
+            fovFrame.Size = UDim2.fromOffset(radius * 2, radius * 2)
+            fovFrame.Visible = true
+        end
+    else
+        if fovCircle then
+            fovCircle.Visible = false
+        end
+        if fovFrame then
+            fovFrame.Visible = false
+        end
+    end
+
+    if not Config.ESPEnabled then return end
+    espThrottle = espThrottle + dt
+    if espThrottle < 0.1 then return end
+    espThrottle = 0
+    updateESP()
+end)
+
+local disabledHeadConns = {}
+
+local function disableHeadCollisionSignal(char)
+    if not char or not getconnections then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    pcall(function()
+        for _, conn in ipairs(getconnections(head:GetPropertyChangedSignal("CanCollide"))) do
+            if conn.Enabled ~= false then
+                conn:Disable()
+                table.insert(disabledHeadConns, conn)
+            end
+        end
+    end)
+end
+
+local function restoreHeadCollisionSignal()
+    for i = #disabledHeadConns, 1, -1 do
+        local conn = disabledHeadConns[i]
+        pcall(function()
+            if conn and conn.Enable then
+                conn:Enable()
+            end
+        end)
+        disabledHeadConns[i] = nil
+    end
+end
+
+local restorePartNames = {
+    Head = true,
+    Torso = true,
+    UpperTorso = true,
+    LowerTorso = true,
+    HumanoidRootPart = true,
+}
+
+local function setNoclipState(state)
+    local char = LocalPlayer.Character
+    if state then
+        if char then
+            disableHeadCollisionSignal(char)
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    else
+        restoreHeadCollisionSignal()
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and restorePartNames[part.Name] then
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+local flyConnection = nil
+local jumpStateConnection = nil
+
+local function stopFly()
+    if jumpStateConnection then
+        jumpStateConnection:Disconnect()
+        jumpStateConnection = nil
+    end
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = false
+    end
+    if hrp then
+        for _, v in ipairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") or v:IsA("BodyGyro") then
+                v:Destroy()
+            end
+        end
+    end
+end
+
+local function startFly()
+    stopFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not humanoid then return end
+
+    humanoid.PlatformStand = true
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 1e7
+    bg.D = 12000
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    jumpStateConnection = humanoid.StateChanged:Connect(function(_, new)
+        if new == Enum.HumanoidStateType.Jumping or new == Enum.HumanoidStateType.Freefall then
+            humanoid.PlatformStand = true
+        end
+    end)
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        if not Config.FlyEnabled or not char.Parent or not hrp.Parent or humanoid.Health <= 0 then
+            stopFly()
+            return
+        end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local move = Vector3.zero
+        local md = humanoid.MoveDirection
+        if md.Magnitude > 0 then
+            local flatLook = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+            local flatRight = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+            if flatLook.Magnitude > 0.01 and flatRight.Magnitude > 0.01 then
+                local fwdAmt = md:Dot(flatLook.Unit)
+                local rightAmt = md:Dot(flatRight.Unit)
+                move = move + cam.CFrame.LookVector * fwdAmt
+                move = move + cam.CFrame.RightVector * rightAmt
+            end
+        end
+        if move.Magnitude > 0 then
+            move = move.Unit
+        end
+        local speed = math.clamp(tonumber(Config.FlySpeed) or 5, 1, 10)
+        bv.Velocity = move * speed * 50
+        bg.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + cam.CFrame.LookVector, Vector3.new(0, 1, 0))
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    if Config.NoclipEnabled then
+        task.spawn(function()
+            local head = char:WaitForChild("Head", 5)
+            if head and Config.NoclipEnabled then
+                task.wait(0.2)
+                if Config.NoclipEnabled then
+                    disableHeadCollisionSignal(char)
+                end
+            end
+        end)
+    end
+    if Config.FlyEnabled then
+        task.spawn(function()
+            char:WaitForChild("HumanoidRootPart", 5)
+            char:WaitForChild("Humanoid", 5)
+            task.wait(0.25)
+            if Config.FlyEnabled and LocalPlayer.Character == char then
+                startFly()
+            end
+        end)
+    end
+end)
+
+if Config.FlyEnabled and LocalPlayer.Character then
+    task.defer(startFly)
+end
+
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+    if Config.NoclipEnabled then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and Config.LoopSpeedEnabled then
+        hum.WalkSpeed = math.clamp(tonumber(Config.WalkSpeed) or 30, 30, 100)
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfJumpEnabled then
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+local GiverPressedRemote = nil
+local InteractWithItemRemote = nil
+task.spawn(function()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 15)
+    if remotes then
+        GiverPressedRemote = remotes:FindFirstChild("GiverPressed") or remotes:WaitForChild("GiverPressed", 15)
+        InteractWithItemRemote = remotes:FindFirstChild("InteractWithItem") or remotes:WaitForChild("InteractWithItem", 15)
+    end
+end)
+
+local fallbackGunNames = {
+    "AK-47",
+    "FAL",
+    "M4A1",
+    "M700",
+    "MP5",
+    "Remington 870",
+    "Revolver",
+}
+
+local excludedGuns = {
+    ["M9"] = true,
+    ["Taser"] = true,
+}
+
+local function getGunList()
+    local seen = {}
+    local list = {}
+    local sharedMods = ReplicatedStorage:FindFirstChild("SharedModules")
+    local toolProps = sharedMods and sharedMods:FindFirstChild("ToolProperties")
+    if toolProps then
+        for _, mod in ipairs(toolProps:GetChildren()) do
+            if not excludedGuns[mod.Name] and not seen[mod.Name] then
+                seen[mod.Name] = true
+                table.insert(list, mod.Name)
+            end
+        end
+    end
+    for _, name in ipairs(fallbackGunNames) do
+        if not excludedGuns[name] and not seen[name] then
+            seen[name] = true
+            table.insert(list, name)
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+local function isGiverAllowedForTeam(giver)
+    if CollectionService:HasTag(giver, "Team_Any") or CollectionService:HasTag(giver, "Drop") then
+        return true
+    end
+    local teamName = LocalPlayer.Team and LocalPlayer.Team.Name
+    if teamName and CollectionService:HasTag(giver, "Team_" .. teamName) then
+        return true
+    end
+    return false
+end
+
+local function getGiverPart(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
+    return obj:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function findGunGiver(gunName)
+    local bestObj, bestPart = nil, nil
+    local fallbackObj, fallbackPart = nil, nil
+    for _, tagName in ipairs({"Giver", "TouchGiver"}) do
+        for _, obj in ipairs(CollectionService:GetTagged(tagName)) do
+            if obj:IsDescendantOf(workspace) then
+                local toolName = obj:GetAttribute("ToolName") or obj.Name
+                if toolName == gunName then
+                    local part = getGiverPart(obj)
+                    if part then
+                        if isGiverAllowedForTeam(obj) then
+                            return obj, part
+                        elseif not fallbackObj then
+                            fallbackObj, fallbackPart = obj, part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if fallbackObj and fallbackPart then
+        return fallbackObj, fallbackPart
+    end
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if (obj:IsA("Model") or obj:IsA("BasePart")) and ((obj:GetAttribute("ToolName") == gunName) or (obj.Name == gunName)) then
+            local pName = obj.Parent and obj.Parent.Name
+            if pName == "giver" or pName == "single" or obj:FindFirstChildWhichIsA("ClickDetector", true) or obj:FindFirstChildWhichIsA("ProximityPrompt", true) or obj:FindFirstChildWhichIsA("TouchTransmitter", true) then
+                local part = getGiverPart(obj)
+                if part then
+                    return obj, part
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function playerOwnsTool(gunName)
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild(gunName) then
+        return true
+    end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp and bp:FindFirstChild(gunName) then
+        return true
+    end
+    return false
+end
+
+local gettingGun = false
+
+local function getGunAndReturn(gunName)
+    if gettingGun then return end
+    gettingGun = true
+    local ok, err = pcall(function()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hum or hum.Health <= 0 or not hrp then return end
+
+        local giver, part = findGunGiver(gunName)
+        if not giver or not part then
+            Fluent:Notify({
+                Title = "Get Gun",
+                Content = "Gun not found: " .. tostring(gunName),
+                Duration = 3
+            })
+            return
+        end
+
+        local hadBefore = playerOwnsTool(gunName)
+        local savedCFrame = hrp.CFrame
+
+        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        task.wait(0.15)
+
+        for _ = 1, 2 do
+            if not hrp.Parent or hum.Health <= 0 then break end
+            hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
+            hrp.AssemblyLinearVelocity = Vector3.zero
+
+            if GiverPressedRemote and (CollectionService:HasTag(giver, "Giver") or CollectionService:HasTag(giver, "TouchGiver")) then
+                pcall(function()
+                    GiverPressedRemote:FireServer(giver)
+                end)
+            end
+
+            if firetouchinterest then
+                local hasTouch = CollectionService:HasTag(giver, "TouchGiver") or giver:FindFirstChildWhichIsA("TouchTransmitter", true) ~= nil
+                if hasTouch then
+                    if giver:IsA("BasePart") then
+                        pcall(function()
+                            firetouchinterest(hrp, giver, 0)
+                            task.wait(0.03)
+                            firetouchinterest(hrp, giver, 1)
+                        end)
+                    else
+                        for _, desc in ipairs(giver:GetDescendants()) do
+                            if desc:IsA("BasePart") then
+                                pcall(function()
+                                    firetouchinterest(hrp, desc, 0)
+                                    task.wait(0.02)
+                                    firetouchinterest(hrp, desc, 1)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+
+            local pName = giver.Parent and giver.Parent.Name
+            if InteractWithItemRemote and (pName == "giver" or pName == "single") then
+                task.spawn(function()
+                    pcall(function()
+                        InteractWithItemRemote:InvokeServer(part)
+                    end)
+                end)
+            end
+
+            if fireclickdetector then
+                local cd = giver:FindFirstChildWhichIsA("ClickDetector", true)
+                if cd then
+                    pcall(function()
+                        fireclickdetector(cd)
+                    end)
+                end
+            end
+
+            if fireproximityprompt then
+                local pp = giver:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if pp then
+                    pcall(function()
+                        fireproximityprompt(pp)
+                    end)
+                end
+            end
+
+            task.wait(0.18)
+            if not hadBefore and playerOwnsTool(gunName) then
+                break
+            end
+        end
+
+        if hrp and hrp.Parent then
+            hrp.CFrame = savedCFrame
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+
+        if Config.FastFire or Config.AutoFire or Config.NoSpread then
+            task.defer(applyGunMods)
+        end
+    end)
+    gettingGun = false
+    if not ok and err then
+        warn(err)
+    end
+end
+
+local ArrestPlayerRemote = nil
+task.spawn(function()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 15)
+    if remotes then
+        ArrestPlayerRemote = remotes:FindFirstChild("ArrestPlayer") or remotes:WaitForChild("ArrestPlayer", 15)
+    end
+end)
+
+local pendingArrest = {}
+local arrestCooldown = {}
+
+Players.PlayerRemoving:Connect(function(player)
+    pendingArrest[player] = nil
+    arrestCooldown[player] = nil
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.15)
+        if Config.AutoArrest and ArrestPlayerRemote then
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHum and myHum.Health > 0 and myHrp then
+                local now = os.clock()
+                local candidates = {}
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer and not isSameTeam(player) then
+                        if player.Team and player.Team.Name ~= "Neutral" then
+                            if not pendingArrest[player] and now - (arrestCooldown[player] or 0) >= 0.45 then
+                                local tChar = player.Character
+                                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+                                local tHrp = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+                                if tHum and tHum.Health > 0 and tHrp then
+                                    if not player:GetAttribute("Arrested") and not tChar:GetAttribute("Arrested") then
+                                        table.insert(candidates, {
+                                            player = player,
+                                            dist = (myHrp.Position - tHrp.Position).Magnitude
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                table.sort(candidates, function(a, b)
+                    return a.dist < b.dist
+                end)
+                local limit = math.min(#candidates, 3)
+                for i = 1, limit do
+                    local target = candidates[i].player
+                    pendingArrest[target] = true
+                    task.spawn(function()
+                        pcall(function()
+                            ArrestPlayerRemote:InvokeServer(target, 1)
+                        end)
+                        arrestCooldown[target] = os.clock()
+                        pendingArrest[target] = nil
+                    end)
+                end
+            end
+        end
+    end
+end)
+
+local MeleeEvent = nil
+task.spawn(function()
+    MeleeEvent = ReplicatedStorage:FindFirstChild("meleeEvent") or ReplicatedStorage:WaitForChild("meleeEvent", 15)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.12)
+        if Config.MeleeAura and MeleeEvent then
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myHum and myHum.Health > 0 and myHrp then
+                local maxRange = tonumber(Config.MeleeRange) or 15
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer and LocalPlayer.TeamColor ~= player.TeamColor and not isSameTeam(player) then
+                        if not player.Team or player.Team.Name ~= "Neutral" then
+                            if not (Config.FriendCheck and friendCache[player.UserId]) then
+                                local tChar = player.Character
+                                local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+                                local tHrp = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+                                if tHum and tHum.Health > 0 and tHrp then
+                                    if (myHrp.Position - tHrp.Position).Magnitude <= maxRange then
+                                        pcall(function()
+                                            MeleeEvent:FireServer(player, 1, 1)
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local LogoGui = Instance.new("ScreenGui")
+LogoGui.Name = "StarCrowLogoGui"
+LogoGui.ResetOnSpawn = false
+LogoGui.DisplayOrder = 10000
+pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local LogoFrame = Instance.new("Frame")
+LogoFrame.Size = UDim2.new(0, 46, 0, 46)
+LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.BorderSizePixel = 0
+LogoFrame.Parent = LogoGui
+Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+local logoStroke = Instance.new("UIStroke", LogoFrame)
+logoStroke.Thickness = 1.8
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local logoGrad = Instance.new("UIGradient", logoStroke)
+logoGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
+})
+task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+local LogoImg = Instance.new("ImageLabel")
+LogoImg.Size = UDim2.new(1, -6, 1, -6)
+LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.BackgroundTransparency = 1
+LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.ScaleType = Enum.ScaleType.Fit
+LogoImg.Parent = LogoFrame
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+LogoBtn.BackgroundTransparency = 1
+LogoBtn.Text = ""
+LogoBtn.ZIndex = 5
+LogoBtn.Parent = LogoFrame
+
+do
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            dragInput = nil
+        end
+    end)
+end
+
+local function getMinimizeKey()
+    local k = Config.MinimizeKey or "LeftControl"
+    if typeof(k) == "EnumItem" then return k end
+    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
+    return Enum.KeyCode[name] or Enum.KeyCode.LeftControl
+end
+
+local uiVisible = true
+local minimizeKey = getMinimizeKey()
+local lastToggleTime = 0
+local cachedMainHubFrame = nil
+
+local function findMainHubFrame(container)
+    if not container then return nil end
+    local ok, children = pcall(function() return container:GetChildren() end)
+    if not ok then return nil end
+    for _, gui in ipairs(children) do
+        if gui:IsA("ScreenGui") and gui ~= LogoGui and gui ~= fovGui then
+            for _, desc in ipairs(gui:GetDescendants()) do
+                if desc:IsA("TextLabel") and (desc.Text == "StarCrow Hub" or desc.Text:find("StarCrow")) then
+                    local p = desc.Parent
+                    while p and p.Parent ~= gui do p = p.Parent end
+                    if p and p:IsA("Frame") then
+                        return p
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.3 then return end
+    lastToggleTime = now
+    uiVisible = not uiVisible
+    if cachedMainHubFrame and cachedMainHubFrame.Parent then
+        cachedMainHubFrame.Visible = uiVisible
+        return
+    end
+    local containers = {}
+    if gethui then
+        pcall(function() table.insert(containers, gethui()) end)
+    end
+    pcall(function() table.insert(containers, game:GetService("CoreGui")) end)
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pGui then
+        table.insert(containers, pGui)
+    end
+    for _, container in ipairs(containers) do
+        local frame = findMainHubFrame(container)
+        if frame then
+            cachedMainHubFrame = frame
+            frame.Visible = uiVisible
+            return
+        end
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if UserInputService:GetFocusedTextBox() then return end
+    if not processed and input.KeyCode == minimizeKey then
+        uiVisible = not uiVisible
+    end
+end)
+
+local clickStartPos = Vector2.new()
+LogoBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+    end
+end)
+LogoBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+        if dist < 10 then
+            toggleUI()
+        end
+    end
+end)
+
+local Window = Fluent:CreateWindow({
+    Title = "StarCrow Hub",
+    SubTitle = " | Prison Life",
+    TabWidth = 130,
+    Size = UDim2.fromOffset(460, 400),
+    Acrylic = false,
+    Theme = "Amethyst",
+    MinimizeKey = minimizeKey
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Combat = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "user" }),
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+Tabs.Main:AddSection("Arrest")
+
+Tabs.Main:AddToggle("AutoArrestToggle", {
+    Title = "Auto Arrest",
+    Default = Config.AutoArrest,
+    Callback = function(Value)
+        Config.AutoArrest = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSection("Gun Mod")
+
+Tabs.Combat:AddToggle("FastFireToggle", {
+    Title = "Fast Fire",
+    Default = Config.FastFire,
+    Callback = function(Value)
+        Config.FastFire = Value
+        applyGunMods()
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("AutoFireToggle", {
+    Title = "Auto Fire",
+    Default = Config.AutoFire,
+    Callback = function(Value)
+        Config.AutoFire = Value
+        applyGunMods()
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("NoSpreadToggle", {
+    Title = "No Spread",
+    Default = Config.NoSpread,
+    Callback = function(Value)
+        Config.NoSpread = Value
+        applyGunMods()
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSection("Silent Aim")
+
+Tabs.Combat:AddToggle("SilentAimToggle", {
+    Title = "Silent Aim",
+    Default = Config.SilentAim,
+    Callback = function(Value)
+        Config.SilentAim = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddDropdown("FOVModeDropdown", {
+    Title = "FOV Mode",
+    Values = {"No FOV", "FOV"},
+    Default = Config.FOVMode or "No FOV",
+    Multi = false,
+    Callback = function(Value)
+        Config.FOVMode = Value or "No FOV"
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSlider("FOVSizeSlider", {
+    Title = "FOV Size",
+    Default = Config.FOVRadius or 120,
+    Min = 20,
+    Max = 500,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.FOVRadius = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddDropdown("TargetPartDropdown", {
+    Title = "Target Part",
+    Values = {"Head", "Body"},
+    Default = Config.AimPart or "Head",
+    Multi = false,
+    Callback = function(Value)
+        Config.AimPart = Value or "Head"
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("TeamCheckToggle", {
+    Title = "Team Check",
+    Default = Config.TeamCheck,
+    Callback = function(Value)
+        Config.TeamCheck = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("FriendCheckToggle", {
+    Title = "Friend Check",
+    Default = Config.FriendCheck,
+    Callback = function(Value)
+        Config.FriendCheck = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddToggle("WallCheckToggle", {
+    Title = "Wall Check",
+    Default = Config.WallCheck,
+    Callback = function(Value)
+        Config.WallCheck = Value
+        SaveConfig()
+    end
+})
+
+local teamValues = {}
+local seenTeams = {}
+for _, team in ipairs(Teams:GetTeams()) do
+    if not seenTeams[team.Name] then
+        seenTeams[team.Name] = true
+        table.insert(teamValues, team.Name)
+    end
+end
+for _, fallbackName in ipairs({"Guards", "Inmates", "Criminals", "Neutral"}) do
+    if not seenTeams[fallbackName] then
+        seenTeams[fallbackName] = true
+        table.insert(teamValues, fallbackName)
+    end
+end
+
+local defaultIgnoreTeams = {}
+for teamName, enabled in pairs(Config.IgnoreTeams) do
+    if enabled then
+        table.insert(defaultIgnoreTeams, teamName)
+    end
+end
+
+Tabs.Combat:AddDropdown("IgnoreTeamsDropdown", {
+    Title = "Ignore Teams",
+    Values = teamValues,
+    Default = defaultIgnoreTeams,
+    Multi = true,
+    ScrollingEnabled = true,
+    Callback = function(Value)
+        Config.IgnoreTeams = {}
+        for teamName, selected in pairs(Value) do
+            if selected then
+                Config.IgnoreTeams[teamName] = true
+            end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSection("Melee")
+
+Tabs.Combat:AddToggle("MeleeAuraToggle", {
+    Title = "Melee Aura",
+    Default = Config.MeleeAura,
+    Callback = function(Value)
+        Config.MeleeAura = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Combat:AddSlider("MeleeRangeSlider", {
+    Title = "Melee Range",
+    Default = Config.MeleeRange or 15,
+    Min = 5,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.MeleeRange = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSection("Movement")
+
+Tabs.Player:AddToggle("LoopSpeedToggle", {
+    Title = "Walk Speed",
+    Default = Config.LoopSpeedEnabled,
+    Callback = function(Value)
+        Config.LoopSpeedEnabled = Value
+        if not Value then
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = 16
+            end
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("WalkSpeedSlider", {
+    Title = "Speed",
+    Default = Config.WalkSpeed or 30,
+    Min = 30,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = math.clamp(Value, 30, 100)
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("InfJumpToggle", {
+    Title = "Infinite Jump",
+    Default = Config.InfJumpEnabled,
+    Callback = function(Value)
+        Config.InfJumpEnabled = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("FlyToggle", {
+    Title = "Fly",
+    Default = Config.FlyEnabled,
+    Callback = function(Value)
+        Config.FlyEnabled = Value
+        if Value then
+            startFly()
+        else
+            stopFly()
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddSlider("FlySpeedSlider", {
+    Title = "Fly Speed",
+    Default = Config.FlySpeed or 5,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        Config.FlySpeed = math.clamp(Value, 1, 10)
+        SaveConfig()
+    end
+})
+
+Tabs.Player:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Default = Config.NoclipEnabled,
+    Callback = function(Value)
+        Config.NoclipEnabled = Value
+        setNoclipState(Value)
+        SaveConfig()
+    end
+})
+
+Tabs.ESP:AddSection("ESP")
+
+Tabs.ESP:AddToggle("ESPPlayersToggle", {
+    Title = "ESP Players",
+    Default = Config.ESPEnabled,
+    Callback = function(Value)
+        Config.ESPEnabled = Value
+        SaveConfig()
+        if not Value then
+            clearPlayerESP()
+        end
+    end
+})
+
+Tabs.Misc:AddSection("Get Gun")
+
+local gunValues = getGunList()
+if not table.find(gunValues, Config.SelectedGun) and gunValues[1] then
+    Config.SelectedGun = gunValues[1]
+end
+
+Tabs.Misc:AddDropdown("SelectGunDropdown", {
+    Title = "Select Gun",
+    Values = gunValues,
+    Default = Config.SelectedGun or gunValues[1],
+    Multi = false,
+    ScrollingEnabled = true,
+    Callback = function(Value)
+        Config.SelectedGun = Value or gunValues[1]
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Get Gun",
+    Callback = function()
+        local selected = Config.SelectedGun or gunValues[1]
+        if selected then
+            task.spawn(function()
+                getGunAndReturn(selected)
+            end)
+        end
+    end
+})
+
+Tabs.Settings:AddSection("Keybinds")
+
+Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = Config.MinimizeKey or "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyName = typeof(NewKey) == "EnumItem" and NewKey.Name or tostring(NewKey):gsub("Enum%.KeyCode%.", "")
+        local keyCode = Enum.KeyCode[keyName] or Enum.KeyCode.LeftControl
+        minimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+        Config.MinimizeKey = keyCode.Name
+        SaveConfig()
+    end
+})
+
+Window:SelectTab(1)
