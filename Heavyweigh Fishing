@@ -2207,41 +2207,33 @@ local function StepRhythmMiniGame()
 	end
 end
 
-RunService.RenderStepped:Connect(function()
-	if not FishingGui or not FishingGui.Visible then
-		return
+do
+	local function StepFishingFrame(includeRhythm)
+		if not FishingGui or not FishingGui.Visible then
+			return
+		end
+		BindFishingBarLock()
+		LockFishingBar()
+		if Config.AutoMiniGame then
+			StepPhase2MiniGame()
+			if includeRhythm then
+				StepRhythmMiniGame()
+			end
+		end
 	end
-	BindFishingBarLock()
-	LockFishingBar()
-	if Config.AutoMiniGame or Config.SkyFarm then
-		StepPhase2MiniGame()
-	end
-end)
 
-RunService.Stepped:Connect(function()
-	if not FishingGui or not FishingGui.Visible then
-		return
-	end
-	BindFishingBarLock()
-	LockFishingBar()
-	if Config.AutoMiniGame or Config.SkyFarm then
-		StepPhase2MiniGame()
-	end
-end)
+	RunService.RenderStepped:Connect(function()
+		StepFishingFrame(false)
+	end)
 
-RunService.Heartbeat:Connect(function()
-	if not FishingGui or not FishingGui.Visible then
-		return
-	end
-	BindFishingBarLock()
-	LockFishingBar()
-	if Config.AutoMiniGame or Config.SkyFarm then
-		StepPhase2MiniGame()
-	end
-	if Config.AutoMiniGame or Config.SkyFarm then
-		StepRhythmMiniGame()
-	end
-end)
+	RunService.Stepped:Connect(function()
+		StepFishingFrame(false)
+	end)
+
+	RunService.Heartbeat:Connect(function()
+		StepFishingFrame(true)
+	end)
+end
 
 local function GetModelPart(obj)
 	if not obj then
@@ -2822,19 +2814,7 @@ task.spawn(function()
 end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
-	if
-		(
-			Config.AutoMiniGame
-			or Config.AutoReel
-			or Config.AutoBoss
-			or Config.AutoSecretBoss
-			or Config.AutoFarmIsland
-			or Config.SkyFarm
-			or Config.AutoFarmEvent
-			or Config.AutoFarmMaterialBait
-		)
-		and remote
-	then
+	if Config.AutoMiniGame and remote then
 		task.wait(0.05)
 		local handled = false
 		pcall(function()
@@ -2862,19 +2842,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
-	if
-		(
-			Config.AutoMiniGame
-			or Config.AutoReel
-			or Config.AutoBoss
-			or Config.AutoSecretBoss
-			or Config.AutoFarmIsland
-			or Config.SkyFarm
-			or Config.AutoFarmEvent
-			or Config.AutoFarmMaterialBait
-		)
-		and remote
-	then
+	if Config.AutoMiniGame and remote then
 		task.wait(1.05)
 		pcall(function()
 			local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
