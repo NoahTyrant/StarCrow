@@ -64,7 +64,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/PrisonLifeConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Prison Life.json"
 local hasSavedSwitchReloadGuns = false
 
 local function sanitizeStringBoolMap(tbl, excludedKey)
