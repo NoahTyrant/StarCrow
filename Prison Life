@@ -22,6 +22,7 @@ local NEVERLOSE_SOUND_ID = "rbxassetid://6607204501"
 
 local Config = {
     AutoArrest = false,
+    ArrestCooldown = true,
     FastFire = false,
     AutoSwitchReload = false,
     NoSpread = false,
@@ -49,14 +50,18 @@ local Config = {
     FlySpeed = 5,
     InfJumpEnabled = false,
     NoclipEnabled = false,
+    InvisibleEnabled = false,
     DisableKeybinds = false,
     FlyKey = "F",
     NoclipKey = "J",
     ESPEnabled = false,
+    ESPHPEnabled = true,
     PurpleTracers = false,
     CustomGunSound = false,
     HitSoundEnabled = false,
     AutoPickupItems = false,
+    AutoGetGun = false,
+    VehicleFlyEnabled = false,
     SelectedGuns = {
         ["AK-47"] = true,
     },
@@ -716,6 +721,250 @@ end
 
 local insideInternalRaycast = false
 
+local invisSavedCF = nil
+local invisSavedVel = nil
+local invisUndergroundCF = nil
+local invisPaused = false
+local invisSpawnReadyAt = 0
+
+local function isAtUndergroundCF(hrp)
+    if not hrp or not invisUndergroundCF then return false end
+    return (hrp.Position - invisUndergroundCF.Position).Magnitude < 1.5
+end
+
+local function restoreInvisRoot()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and invisSavedCF and isAtUndergroundCF(hrp) then
+        hrp.CFrame = invisSavedCF
+        if invisSavedVel then
+            hrp.AssemblyLinearVelocity = invisSavedVel
+        end
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+    invisUndergroundCF = nil
+end
+
+local function adjustInvisOrigin(origin)
+    if not Config.InvisibleEnabled or invisPaused or not invisSavedCF or not invisUndergroundCF then
+        return origin
+    end
+    if (origin - invisUndergroundCF.Position).Magnitude < (origin - invisSavedCF.Position).Magnitude then
+        return invisSavedCF:PointToWorldSpace(invisUndergroundCF:PointToObjectSpace(origin))
+    end
+    return origin
+end
+
+local ArrestPlayerRemote = nil
+task.spawn(function()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 15)
+    if remotes then
+        ArrestPlayerRemote = remotes:FindFirstChild("ArrestPlayer") or remotes:WaitForChild("ArrestPlayer", 15)
+    end
+end)
+
+local ARREST_COOLDOWN_SECONDS = 6
+local arrestCooldownUntil = 0
+local arrestCooldownDuration = ARREST_COOLDOWN_SECONDS
+local hookedArrestAttrTargets = setmetatable({}, { __mode = "k" })
+
+local function setArrestCooldownTimer(remaining, total)
+    if type(remaining) ~= "number" or remaining <= 0 then return end
+    local clamped = math.clamp(remaining, 0.05, 120)
+    arrestCooldownUntil = os.clock() + clamped
+    arrestCooldownDuration = math.max(tonumber(total) or clamped, clamped, 0.1)
+end
+
+local function findHandcuffsTool()
+    local containers = { LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }
+    for _, container in ipairs(containers) do
+        if container then
+            for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("Tool") and (child.Name == "Handcuffs" or child:GetAttribute("ToolType") == "Handcuffs" or child:GetAttribute("Behavior") == "Handcuffs") then
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function processArrestCooldownAttr(inst, attrName, val)
+    local lower = tostring(attrName):lower()
+    if not (lower:find("arrest") or lower:find("cuff")) then
+        return
+    end
+    if type(val) == "number" then
+        local now = os.clock()
+        local srvNow = nil
+        pcall(function()
+            srvNow = workspace:GetServerTimeNow()
+        end)
+        local tickNow = tick()
+        local unixNow = os.time()
+        if lower:find("last") then
+            local dur = ARREST_COOLDOWN_SECONDS
+            local elapsed = nil
+            if srvNow and math.abs(srvNow - val) < 120 then
+                elapsed = srvNow - val
+            elseif math.abs(tickNow - val) < 120 then
+                elapsed = tickNow - val
+            elseif math.abs(unixNow - val) < 120 then
+                elapsed = unixNow - val
+            elseif math.abs(now - val) < 120 then
+                elapsed = now - val
+            end
+            if elapsed and elapsed >= 0 and elapsed < dur then
+                setArrestCooldownTimer(dur - elapsed, dur)
+            end
+        elseif lower:find("end") or lower:find("until") or lower:find("next") or lower:find("expire") then
+            local rem = nil
+            if srvNow and val > srvNow and val - srvNow <= 120 then
+                rem = val - srvNow
+            elseif val > tickNow and val - tickNow <= 120 then
+                rem = val - tickNow
+            elseif val > unixNow and val - unixNow <= 120 then
+                rem = val - unixNow
+            elseif val > now and val - now <= 120 then
+                rem = val - now
+            end
+            if rem then
+                setArrestCooldownTimer(rem, math.max(rem, ARREST_COOLDOWN_SECONDS))
+            end
+        elseif lower:find("remain") or lower == "arrestcooldown" or lower == "handcuffcooldown" or lower == "cuffcooldown" then
+            if val > 0 and val <= 120 then
+                setArrestCooldownTimer(val, math.max(val, ARREST_COOLDOWN_SECONDS))
+            elseif val <= 0 then
+                arrestCooldownUntil = 0
+            end
+        end
+    end
+end
+
+local function syncArrestCooldownFromAttributes(inst)
+    if not inst then return end
+    for attrName, val in pairs(inst:GetAttributes()) do
+        processArrestCooldownAttr(inst, attrName, val)
+    end
+end
+
+local function hookArrestAttributeTarget(inst)
+    if not inst or hookedArrestAttrTargets[inst] then return end
+    hookedArrestAttrTargets[inst] = true
+    syncArrestCooldownFromAttributes(inst)
+    inst.AttributeChanged:Connect(function(attrName)
+        processArrestCooldownAttr(inst, attrName, inst:GetAttribute(attrName))
+    end)
+end
+
+hookArrestAttributeTarget(LocalPlayer)
+LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+    if not LocalPlayer.Team or LocalPlayer.Team.Name ~= "Guards" then
+        arrestCooldownUntil = 0
+    end
+end)
+
+local function onArrestInvokeResult(ok, r1, r2, target, wasArrestedBefore)
+    if not ok then return end
+    if r1 == true then
+        setArrestCooldownTimer(ARREST_COOLDOWN_SECONDS, ARREST_COOLDOWN_SECONDS)
+        return
+    end
+    syncArrestCooldownFromAttributes(LocalPlayer)
+    syncArrestCooldownFromAttributes(LocalPlayer.Character)
+    syncArrestCooldownFromAttributes(findHandcuffsTool())
+    if r1 == false then
+        return
+    end
+    if not wasArrestedBefore and typeof(target) == "Instance" and target:IsA("Player") then
+        task.delay(0.15, function()
+            syncArrestCooldownFromAttributes(LocalPlayer)
+            syncArrestCooldownFromAttributes(LocalPlayer.Character)
+            syncArrestCooldownFromAttributes(findHandcuffsTool())
+            local tChar = target.Character
+            if target:GetAttribute("Arrested") or (tChar and tChar:GetAttribute("Arrested")) then
+                if arrestCooldownUntil - os.clock() <= 0 then
+                    setArrestCooldownTimer(ARREST_COOLDOWN_SECONDS, ARREST_COOLDOWN_SECONDS)
+                end
+            end
+        end)
+    end
+end
+
+local ArrestGui = Instance.new("ScreenGui")
+ArrestGui.Name = "StarCrowArrestGui"
+ArrestGui.IgnoreGuiInset = true
+ArrestGui.ResetOnSpawn = false
+ArrestGui.DisplayOrder = 10000
+pcall(function() ArrestGui.Parent = game:GetService("CoreGui") end)
+if not ArrestGui.Parent then ArrestGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+local ArrestFrame = Instance.new("Frame")
+ArrestFrame.Name = "ArrestCooldownFrame"
+ArrestFrame.Size = UDim2.new(0, 148, 0, 28)
+ArrestFrame.Position = UDim2.new(0.5, -74, 0, 14)
+ArrestFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+ArrestFrame.BorderSizePixel = 0
+ArrestFrame.ClipsDescendants = true
+ArrestFrame.Visible = false
+ArrestFrame.Parent = ArrestGui
+Instance.new("UICorner", ArrestFrame).CornerRadius = UDim.new(0, 8)
+
+local arrestStroke = Instance.new("UIStroke", ArrestFrame)
+arrestStroke.Thickness = 1.4
+arrestStroke.Color = Color3.fromRGB(140, 60, 255)
+
+local ArrestFill = Instance.new("Frame")
+ArrestFill.Size = UDim2.new(1, 0, 1, 0)
+ArrestFill.BackgroundColor3 = Color3.fromRGB(130, 0, 255)
+ArrestFill.BackgroundTransparency = 0.65
+ArrestFill.BorderSizePixel = 0
+ArrestFill.ZIndex = 1
+ArrestFill.Parent = ArrestFrame
+
+local arrestFillGrad = Instance.new("UIGradient", ArrestFill)
+arrestFillGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 130, 255)),
+})
+
+local ArrestLabel = Instance.new("TextLabel")
+ArrestLabel.Size = UDim2.new(1, 0, 1, 0)
+ArrestLabel.BackgroundTransparency = 1
+ArrestLabel.Font = Enum.Font.GothamBold
+ArrestLabel.TextSize = 13
+ArrestLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ArrestLabel.TextStrokeTransparency = 0.35
+ArrestLabel.Text = "Arrest 0.0s"
+ArrestLabel.ZIndex = 2
+ArrestLabel.Parent = ArrestFrame
+
+do
+    local activeInput, dragStart, startPos = nil, nil, nil
+    ArrestFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            activeInput = input
+            dragStart = input.Position
+            startPos = ArrestFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not activeInput then return end
+        local isMatchingDrag = (input == activeInput) or (activeInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+        if isMatchingDrag then
+            local delta = input.Position - dragStart
+            ArrestFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if activeInput and input == activeInput then
+            activeInput = nil
+            dragStart = nil
+            startPos = nil
+        end
+    end)
+end
+
 local function isTargetVisible(fromPos, targetPart, targetChar)
     local prevInternal = insideInternalRaycast
     insideInternalRaycast = true
@@ -930,36 +1179,49 @@ if hookmetamethod and getnamecallmethod and newcclosure then
         oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
             local method = getnamecallmethod()
             if not isExecutorCall() and not insideInternalRaycast then
+                if method == "InvokeServer" and self and ((ArrestPlayerRemote and self == ArrestPlayerRemote) or (typeof(self) == "Instance" and self.Name == "ArrestPlayer" and self:IsA("RemoteFunction"))) then
+                    local args = table.pack(...)
+                    local target = args[1]
+                    local wasArrestedBefore = typeof(target) == "Instance" and target:IsA("Player") and ((target:GetAttribute("Arrested") == true) or (target.Character and target.Character:GetAttribute("Arrested") == true) or false)
+                    local results = table.pack(oldNamecall(self, table.unpack(args, 1, args.n)))
+                    task.defer(onArrestInvokeResult, true, results[1], results[2], target, wasArrestedBefore)
+                    return table.unpack(results, 1, results.n)
+                end
                 local isShootRemote = method == "FireServer" and ShootEvent and self == ShootEvent
+                if method == "Raycast" and self == workspace then
+                    local origin, dir, params = ...
+                    if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and typeof(params) == "RaycastParams" and params.CollisionGroup == "ClientBullet" then
+                        local adjustedOrigin = adjustInvisOrigin(origin)
+                        local target = Config.SilentAim and cachedSilentTarget or nil
+                        if target and target.Parent then
+                            local offset = target.Position - adjustedOrigin
+                            if offset.Magnitude > 0.01 then
+                                local newDir = offset.Unit * dir.Magnitude
+                                return oldNamecall(self, adjustedOrigin, newDir, params)
+                            end
+                        elseif adjustedOrigin ~= origin then
+                            return oldNamecall(self, adjustedOrigin, dir, params)
+                        end
+                    end
+                end
                 if Config.SilentAim then
                     local target = cachedSilentTarget
-                    if target and target.Parent then
-                        if isShootRemote then
-                            local args = table.pack(...)
-                            local bullets = args[1]
-                            if type(bullets) == "table" then
-                                for i = 1, #bullets do
-                                    if type(bullets[i]) == "table" then
-                                        bullets[i][2] = target.Position
-                                        bullets[i][3] = target
-                                    end
-                                end
-                            end
-                            local results = table.pack(oldNamecall(self, table.unpack(args, 1, args.n)))
-                            if Config.HitSoundEnabled and type(bullets) == "table" then
-                                task.defer(handleHitSoundFromBullets, bullets)
-                            end
-                            return table.unpack(results, 1, results.n)
-                        elseif method == "Raycast" and self == workspace then
-                            local origin, dir, params = ...
-                            if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and typeof(params) == "RaycastParams" and params.CollisionGroup == "ClientBullet" then
-                                local offset = target.Position - origin
-                                if offset.Magnitude > 0.01 then
-                                    local newDir = offset.Unit * dir.Magnitude
-                                    return oldNamecall(self, origin, newDir, params)
+                    if target and target.Parent and isShootRemote then
+                        local args = table.pack(...)
+                        local bullets = args[1]
+                        if type(bullets) == "table" then
+                            for i = 1, #bullets do
+                                if type(bullets[i]) == "table" then
+                                    bullets[i][2] = target.Position
+                                    bullets[i][3] = target
                                 end
                             end
                         end
+                        local results = table.pack(oldNamecall(self, table.unpack(args, 1, args.n)))
+                        if Config.HitSoundEnabled and type(bullets) == "table" then
+                            task.defer(handleHitSoundFromBullets, bullets)
+                        end
+                        return table.unpack(results, 1, results.n)
                     end
                 end
                 if isShootRemote and Config.HitSoundEnabled then
@@ -1042,7 +1304,20 @@ local function updateESP()
                         end
                         local teamHex = string.format("#%02x%02x%02x", math.floor(teamColor.R * 255), math.floor(teamColor.G * 255), math.floor(teamColor.B * 255))
                         local fullText = string.format('<font color="%s">%s</font>', teamHex, escapeRichText(player.DisplayName))
+                        local targetSize = UDim2.new(0, 200, 0, 24)
+                        if Config.ESPHPEnabled then
+                            local maxHp = hum.MaxHealth > 0 and hum.MaxHealth or 100
+                            local hpFrac = math.clamp(hum.Health / maxHp, 0, 1)
+                            local hpColor = Color3.fromHSV(hpFrac * 0.33, 0.9, 1)
+                            local hpHex = string.format("#%02x%02x%02x", math.floor(hpColor.R * 255), math.floor(hpColor.G * 255), math.floor(hpColor.B * 255))
+                            local hpVal = math.max(1, math.floor(hum.Health + 0.5))
+                            fullText = string.format('<font color="%s">%s</font>\n<font color="%s">%d HP</font>', teamHex, escapeRichText(player.DisplayName), hpHex, hpVal)
+                            targetSize = UDim2.new(0, 200, 0, 34)
+                        end
 
+                        if esp.Size ~= targetSize then
+                            esp.Size = targetSize
+                        end
                         if esp.NameText.Text ~= fullText then
                             esp.NameText.Text = fullText
                         end
@@ -1099,6 +1374,16 @@ RunService.RenderStepped:Connect(function(dt)
         if fovFrame then
             fovFrame.Visible = false
         end
+    end
+
+    local arrestRem = arrestCooldownUntil - os.clock()
+    if Config.ArrestCooldown and arrestRem > 0 then
+        local ratio = math.clamp(arrestRem / math.max(arrestCooldownDuration, 0.1), 0, 1)
+        ArrestFill.Size = UDim2.new(ratio, 0, 1, 0)
+        ArrestLabel.Text = string.format("Arrest %.1fs", arrestRem)
+        ArrestFrame.Visible = true
+    else
+        ArrestFrame.Visible = false
     end
 
     if not Config.ESPEnabled then return end
@@ -1251,7 +1536,280 @@ local function startFly()
     end)
 end
 
+local INVIS_BIND_NAME = "StarCrowInvisRestore"
+local invisHeartbeatConn = nil
+local invisBound = false
+
+local lastVehFlyModel = nil
+local lastVehFlyRoot = nil
+
+local VEH_BV_NAME = "StarCrowVehFlyBV"
+local VEH_BF_NAME = "StarCrowVehFlyBF"
+local VEH_BG_NAME = "StarCrowVehFlyBG"
+
+local autoGunCooldown = {}
+local autoGunSpawnWaitUntil = 0
+
+local function stopInvisible()
+    if invisBound then
+        pcall(function()
+            RunService:UnbindFromRenderStep(INVIS_BIND_NAME)
+        end)
+        invisBound = false
+    end
+    if invisHeartbeatConn then
+        invisHeartbeatConn:Disconnect()
+        invisHeartbeatConn = nil
+    end
+    restoreInvisRoot()
+    invisSavedCF = nil
+    invisSavedVel = nil
+end
+
+local function startInvisible()
+    stopInvisible()
+    RunService:BindToRenderStep(INVIS_BIND_NAME, Enum.RenderPriority.First.Value, function()
+        if not Config.InvisibleEnabled or invisPaused then
+            return
+        end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and invisSavedCF and isAtUndergroundCF(hrp) then
+            hrp.CFrame = invisSavedCF
+            if invisSavedVel then
+                hrp.AssemblyLinearVelocity = invisSavedVel
+            end
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        else
+            invisSavedCF = nil
+            invisSavedVel = nil
+        end
+        invisUndergroundCF = nil
+    end)
+    invisBound = true
+
+    invisHeartbeatConn = RunService.Heartbeat:Connect(function()
+        if not Config.InvisibleEnabled then
+            stopInvisible()
+            return
+        end
+        if invisPaused or os.clock() < invisSpawnReadyAt then
+            restoreInvisRoot()
+            invisSavedCF = nil
+            invisSavedVel = nil
+            return
+        end
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hum or hum.Health <= 0 or not hrp or hum.Sit or hum.SeatPart ~= nil then
+            restoreInvisRoot()
+            invisSavedCF = nil
+            invisSavedVel = nil
+            return
+        end
+        if isAtUndergroundCF(hrp) then
+            return
+        end
+        invisSavedCF = hrp.CFrame
+        invisSavedVel = hrp.AssemblyLinearVelocity
+        invisUndergroundCF = CFrame.new(invisSavedCF.Position + Vector3.new(0, -6, 0)) * invisSavedCF.Rotation * CFrame.Angles(math.rad(90), 0, 0)
+        hrp.CFrame = invisUndergroundCF
+    end)
+end
+
+local function removeVehicleFlyForces(container)
+    if not container then return end
+    for _, child in ipairs(container:GetChildren()) do
+        if (child:IsA("BodyVelocity") and child.Name == VEH_BV_NAME)
+            or (child:IsA("BodyForce") and child.Name == VEH_BF_NAME)
+            or (child:IsA("BodyGyro") and child.Name == VEH_BG_NAME) then
+            child:Destroy()
+        end
+    end
+end
+
+local function cleanupVehicleFly()
+    if lastVehFlyRoot then
+        removeVehicleFlyForces(lastVehFlyRoot)
+        lastVehFlyRoot = nil
+    end
+    if lastVehFlyModel then
+        pcall(function()
+            for _, p in ipairs(lastVehFlyModel:GetDescendants()) do
+                if (p:IsA("BodyVelocity") and p.Name == VEH_BV_NAME)
+                    or (p:IsA("BodyForce") and p.Name == VEH_BF_NAME)
+                    or (p:IsA("BodyGyro") and p.Name == VEH_BG_NAME) then
+                    p:Destroy()
+                elseif p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity = Vector3.zero
+                    p.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end)
+        lastVehFlyModel = nil
+    end
+end
+
+local function handleVehicleFly(seat, veh)
+    if not Config.VehicleFlyEnabled or not (seat and seat:IsA("VehicleSeat") and veh and veh ~= workspace) then
+        cleanupVehicleFly()
+        return
+    end
+
+    local root = seat.AssemblyRootPart or veh.PrimaryPart or seat
+    if lastVehFlyModel and (lastVehFlyModel ~= veh or lastVehFlyRoot ~= root) then
+        cleanupVehicleFly()
+    end
+
+    lastVehFlyModel = veh
+    lastVehFlyRoot = root
+
+    local cam = workspace.CurrentCamera
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+    local camCFrame = cam and cam.CFrame or root.CFrame
+    local camLook = camCFrame.LookVector
+    local fwdDir = camLook
+    local rightDir = camCFrame.RightVector
+
+    local speed = 300
+    local moveDir = Vector3.zero
+
+    local isMovingFwd = false
+    local isMovingBack = false
+    local isMovingLeft = false
+    local isMovingRight = false
+    local isMovingUp = false
+    local isMovingDown = false
+
+    if not UserInputService:GetFocusedTextBox() then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+            isMovingFwd = true
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+            isMovingBack = true
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+            isMovingLeft = true
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+            isMovingRight = true
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) or UserInputService:IsKeyDown(Enum.KeyCode.E) then
+            isMovingUp = true
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+            isMovingDown = true
+        end
+    end
+
+    if seat.ThrottleFloat > 0.2 then
+        isMovingFwd = true
+    elseif seat.ThrottleFloat < -0.2 then
+        isMovingBack = true
+    end
+    if seat.SteerFloat > 0.2 then
+        isMovingRight = true
+    elseif seat.SteerFloat < -0.2 then
+        isMovingLeft = true
+    end
+
+    if hum and hum.MoveDirection.Magnitude > 0.1 then
+        local md = hum.MoveDirection
+        local flatFwd = Vector3.new(fwdDir.X, 0, fwdDir.Z)
+        if flatFwd.Magnitude > 0.001 then flatFwd = flatFwd.Unit end
+        local flatRight = Vector3.new(rightDir.X, 0, rightDir.Z)
+        if flatRight.Magnitude > 0.001 then flatRight = flatRight.Unit end
+
+        local fwdDot = md:Dot(flatFwd)
+        local rightDot = md:Dot(flatRight)
+        if fwdDot > 0.2 then isMovingFwd = true end
+        if fwdDot < -0.2 then isMovingBack = true end
+        if rightDot > 0.2 then isMovingRight = true end
+        if rightDot < -0.2 then isMovingLeft = true end
+    end
+
+    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pgui then
+        local touchGui = pgui:FindFirstChild("TouchGui")
+        local tc = touchGui and touchGui:FindFirstChild("TouchControlFrame")
+        local jumpBtn = tc and tc:FindFirstChild("JumpButton")
+        if jumpBtn and jumpBtn.Visible and jumpBtn.ImageTransparency < 0.8 then
+            isMovingUp = true
+        end
+    end
+
+    if isMovingFwd then moveDir = moveDir + fwdDir end
+    if isMovingBack then moveDir = moveDir - fwdDir end
+    if isMovingRight then moveDir = moveDir + rightDir end
+    if isMovingLeft then moveDir = moveDir - rightDir end
+    if isMovingUp then moveDir = moveDir + Vector3.new(0, 1, 0) end
+    if isMovingDown then moveDir = moveDir - Vector3.new(0, 1, 0) end
+
+    local targetVel = Vector3.zero
+    if moveDir.Magnitude > 0.001 then
+        targetVel = moveDir.Unit * speed
+    end
+
+    local bf = root:FindFirstChild(VEH_BF_NAME)
+    if not bf or not bf:IsA("BodyForce") then
+        bf = Instance.new("BodyForce")
+        bf.Name = VEH_BF_NAME
+        bf.Parent = root
+    end
+    bf.Force = Vector3.new(0, root.AssemblyMass * workspace.Gravity, 0)
+
+    local bv = root:FindFirstChild(VEH_BV_NAME)
+    if not bv or not bv:IsA("BodyVelocity") then
+        bv = Instance.new("BodyVelocity")
+        bv.Name = VEH_BV_NAME
+        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        bv.P = 1e6
+        bv.Parent = root
+    end
+    bv.Velocity = targetVel
+
+    local bg = root:FindFirstChild(VEH_BG_NAME)
+    if not bg or not bg:IsA("BodyGyro") then
+        bg = Instance.new("BodyGyro")
+        bg.Name = VEH_BG_NAME
+        bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bg.P = 1e6
+        bg.D = 12000
+        bg.CFrame = root.CFrame
+        bg.Parent = root
+    end
+
+    local yawLook = Vector3.new(camLook.X, 0, camLook.Z)
+    if yawLook.Magnitude > 0.001 then
+        bg.CFrame = CFrame.lookAt(root.Position, root.Position + yawLook.Unit)
+    end
+
+    if moveDir.Magnitude <= 0.001 then
+        root.AssemblyLinearVelocity = Vector3.zero
+        for _, p in ipairs(veh:GetDescendants()) do
+            if p:IsA("BasePart") and p ~= root then
+                p.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+    end
+end
+
 LocalPlayer.CharacterAdded:Connect(function(char)
+    invisSavedCF = nil
+    invisSavedVel = nil
+    invisUndergroundCF = nil
+    invisSpawnReadyAt = os.clock() + 0.4
+    autoGunCooldown = {}
+    autoGunSpawnWaitUntil = os.clock() + 0.45
+    hookArrestAttributeTarget(char)
+    char.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and (child.Name == "Handcuffs" or child:GetAttribute("ToolType") == "Handcuffs" or child:GetAttribute("Behavior") == "Handcuffs") then
+            hookArrestAttributeTarget(child)
+        end
+    end)
     if Config.NoclipEnabled then
         task.spawn(function()
             local head = char:WaitForChild("Head", 5)
@@ -1279,9 +1837,16 @@ if Config.FlyEnabled and LocalPlayer.Character then
     task.defer(startFly)
 end
 
+if Config.InvisibleEnabled then
+    task.defer(startInvisible)
+end
+
 RunService.Stepped:Connect(function()
     local char = LocalPlayer.Character
-    if not char then return end
+    if not char then
+        cleanupVehicleFly()
+        return
+    end
     if Config.NoclipEnabled then
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") and part.CanCollide then
@@ -1293,15 +1858,36 @@ RunService.Stepped:Connect(function()
     if hum and Config.LoopSpeedEnabled then
         hum.WalkSpeed = math.clamp(tonumber(Config.WalkSpeed) or 30, 30, 100)
     end
+    if hum and hum.Health > 0 and hum.SeatPart then
+        local seat = hum.SeatPart
+        local veh = seat:FindFirstAncestorWhichIsA("Model")
+        if veh and veh ~= workspace then
+            handleVehicleFly(seat, veh)
+        else
+            cleanupVehicleFly()
+        end
+    else
+        cleanupVehicleFly()
+    end
 end)
 
 UserInputService.JumpRequest:Connect(function()
+    if Config.InvisibleEnabled and not invisPaused then
+        restoreInvisRoot()
+    end
     if Config.InfJumpEnabled then
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hum and hum.Health > 0 then
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
         end
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input)
+    if not Config.InvisibleEnabled or invisPaused then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        restoreInvisRoot()
     end
 end)
 
@@ -1644,7 +2230,7 @@ task.spawn(function()
     end
 end)
 
-local function getGunsAndReturn(gunSelection)
+local function getGunsAndReturn(gunSelection, silentMode)
     if gettingGun then return end
     local gunList = {}
     if type(gunSelection) == "string" then
@@ -1655,47 +2241,56 @@ local function getGunsAndReturn(gunSelection)
         end
     end
     if #gunList == 0 then
-        Fluent:Notify({
-            Title = "Get Gun",
-            Content = "No gun selected",
-            Duration = 2
-        })
+        if not silentMode then
+            Fluent:Notify({
+                Title = "Get Gun",
+                Content = "No gun selected",
+                Duration = 2
+            })
+        end
         return
     end
     gettingGun = true
+    local wasInvisPaused = invisPaused
+    invisPaused = true
     local ok, err = pcall(function()
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not char or not hum or hum.Health <= 0 or not hrp then return end
 
+        restoreInvisRoot()
         local savedCFrame = hrp.CFrame
 
         for _, gunName in ipairs(gunList) do
             if not hrp.Parent or hum.Health <= 0 then break end
-            local giver, part = findGunGiver(gunName)
-            if not giver or not part then
-                Fluent:Notify({
-                    Title = "Get Gun",
-                    Content = "Gun not found: " .. tostring(gunName),
-                    Duration = 2
-                })
-            else
-                local hadBefore = playerOwnsTool(gunName)
-                hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                task.wait(0.15)
-
-                for _ = 1, 2 do
-                    if not hrp.Parent or hum.Health <= 0 then break end
+            if not (silentMode and playerOwnsTool(gunName)) then
+                local giver, part = findGunGiver(gunName)
+                if not giver or not part then
+                    if not silentMode then
+                        Fluent:Notify({
+                            Title = "Get Gun",
+                            Content = "Gun not found: " .. tostring(gunName),
+                            Duration = 2
+                        })
+                    end
+                else
+                    local hadBefore = playerOwnsTool(gunName)
                     hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
                     hrp.AssemblyLinearVelocity = Vector3.zero
+                    task.wait(0.15)
 
-                    triggerItemInteraction(giver, part, hrp, false)
+                    for _ = 1, 2 do
+                        if not hrp.Parent or hum.Health <= 0 then break end
+                        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
+                        hrp.AssemblyLinearVelocity = Vector3.zero
 
-                    task.wait(0.18)
-                    if not hadBefore and playerOwnsTool(gunName) then
-                        break
+                        triggerItemInteraction(giver, part, hrp, false)
+
+                        task.wait(0.18)
+                        if not hadBefore and playerOwnsTool(gunName) then
+                            break
+                        end
                     end
                 end
             end
@@ -1710,22 +2305,42 @@ local function getGunsAndReturn(gunSelection)
             task.defer(applyGunMods)
         end
     end)
+    invisPaused = wasInvisPaused
     gettingGun = false
     if not ok and err then
         warn(err)
     end
 end
 
-local ArrestPlayerRemote = nil
-task.spawn(function()
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 15)
-    if remotes then
-        ArrestPlayerRemote = remotes:FindFirstChild("ArrestPlayer") or remotes:WaitForChild("ArrestPlayer", 15)
-    end
-end)
-
 local pendingArrest = {}
 local arrestCooldown = {}
+
+if LocalPlayer.Character then
+    hookArrestAttributeTarget(LocalPlayer.Character)
+end
+local initialCuffs = findHandcuffsTool()
+if initialCuffs then
+    hookArrestAttributeTarget(initialCuffs)
+end
+LocalPlayer.ChildAdded:Connect(function(child)
+    if child:IsA("Backpack") then
+        child.ChildAdded:Connect(function(tool)
+            if tool:IsA("Tool") and (tool.Name == "Handcuffs" or tool:GetAttribute("ToolType") == "Handcuffs" or tool:GetAttribute("Behavior") == "Handcuffs") then
+                hookArrestAttributeTarget(tool)
+            end
+        end)
+    end
+end)
+do
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        bp.ChildAdded:Connect(function(tool)
+            if tool:IsA("Tool") and (tool.Name == "Handcuffs" or tool:GetAttribute("ToolType") == "Handcuffs" or tool:GetAttribute("Behavior") == "Handcuffs") then
+                hookArrestAttributeTarget(tool)
+            end
+        end)
+    end
+end
 
 Players.PlayerRemoving:Connect(function(player)
     pendingArrest[player] = nil
@@ -1769,9 +2384,12 @@ task.spawn(function()
                     local target = candidates[i].player
                     pendingArrest[target] = true
                     task.spawn(function()
-                        pcall(function()
-                            ArrestPlayerRemote:InvokeServer(target, 1)
+                        local tCharBefore = target.Character
+                        local wasArrestedBefore = (target:GetAttribute("Arrested") == true) or (tCharBefore and tCharBefore:GetAttribute("Arrested") == true) or false
+                        local invokeOk, r1, r2 = pcall(function()
+                            return ArrestPlayerRemote:InvokeServer(target, 1)
                         end)
+                        onArrestInvokeResult(invokeOk, r1, r2, target, wasArrestedBefore)
                         arrestCooldown[target] = os.clock()
                         pendingArrest[target] = nil
                     end)
@@ -1903,6 +2521,24 @@ local function setNoclipEnabled(value)
     SaveConfig()
 end
 
+local function setInvisibleEnabled(value)
+    Config.InvisibleEnabled = value
+    if value then
+        startInvisible()
+    else
+        stopInvisible()
+    end
+    SaveConfig()
+end
+
+local function setVehicleFlyEnabled(value)
+    Config.VehicleFlyEnabled = value
+    if not value then
+        cleanupVehicleFly()
+    end
+    SaveConfig()
+end
+
 local function toggleFeatureWithToggle(toggleObj, getStateFn, applyFn)
     local nextState = not getStateFn()
     if toggleObj and toggleObj.SetValue then
@@ -2020,6 +2656,18 @@ Tabs.Main:AddToggle("AutoArrestToggle", {
     Default = Config.AutoArrest,
     Callback = function(Value)
         Config.AutoArrest = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:AddToggle("ArrestCooldownToggle", {
+    Title = "Arrest Cooldown",
+    Default = Config.ArrestCooldown,
+    Callback = function(Value)
+        Config.ArrestCooldown = Value
+        if not Value then
+            ArrestFrame.Visible = false
+        end
         SaveConfig()
     end
 })
@@ -2260,6 +2908,16 @@ NoclipToggle = Tabs.Player:AddToggle("NoclipToggle", {
     end
 })
 
+Tabs.Player:AddSection("Visibility")
+
+Tabs.Player:AddToggle("InvisibleToggle", {
+    Title = "Invisible",
+    Default = Config.InvisibleEnabled,
+    Callback = function(Value)
+        setInvisibleEnabled(Value)
+    end
+})
+
 Tabs.ESP:AddSection("ESP")
 
 Tabs.ESP:AddToggle("ESPPlayersToggle", {
@@ -2274,19 +2932,41 @@ Tabs.ESP:AddToggle("ESPPlayersToggle", {
     end
 })
 
+Tabs.ESP:AddToggle("ESPHPToggle", {
+    Title = "ESP HP",
+    Default = Config.ESPHPEnabled,
+    Callback = function(Value)
+        Config.ESPHPEnabled = Value
+        SaveConfig()
+        if Config.ESPEnabled then
+            updateESP()
+        end
+    end
+})
+
 local function teleportToLocation(targetCFrame)
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not char or not hum or hum.Health <= 0 or not hrp then return end
+    local wasInvisPaused = invisPaused
+    invisPaused = true
+    restoreInvisRoot()
+    invisSavedCF = nil
+    invisSavedVel = nil
+    invisUndergroundCF = nil
     if hum.Sit then
         hum.Sit = false
         task.wait(0.05)
     end
-    if not hrp.Parent or hum.Health <= 0 then return end
+    if not hrp.Parent or hum.Health <= 0 then
+        invisPaused = wasInvisPaused
+        return
+    end
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
     hrp.CFrame = targetCFrame
+    invisPaused = wasInvisPaused
 end
 
 local teleportLocations = {
@@ -2314,6 +2994,61 @@ Tabs.Misc:AddSection("Get Gun")
 local gunValues = getGunList()
 addSavedMultiDropdown(Tabs.Misc, "SelectGunDropdown", "Select Gun", gunValues, "SelectedGuns", nil)
 
+local prevAutoSelectedGuns = {}
+
+local function runAutoGetGunCheck()
+    if not Config.AutoGetGun or gettingGun then return end
+    if os.clock() < autoGunSpawnWaitUntil then return end
+    if isNeutralPlayer(LocalPlayer) then return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or hum.Health <= 0 or not hrp or hum.Sit then return end
+
+    local now = os.clock()
+    local missingList = {}
+    for _, gName in ipairs(gunValues) do
+        local isSelected = Config.SelectedGuns[gName] == true
+        if isSelected and not prevAutoSelectedGuns[gName] then
+            autoGunCooldown[gName] = nil
+        end
+        prevAutoSelectedGuns[gName] = isSelected or nil
+        if isSelected and not playerOwnsTool(gName) then
+            local cdUntil = autoGunCooldown[gName] or 0
+            if now >= cdUntil then
+                table.insert(missingList, gName)
+            end
+        end
+    end
+
+    if #missingList > 0 then
+        getGunsAndReturn(missingList, true)
+        local afterNow = os.clock()
+        for _, gName in ipairs(missingList) do
+            if not playerOwnsTool(gName) then
+                autoGunCooldown[gName] = afterNow + 8
+            else
+                autoGunCooldown[gName] = nil
+            end
+        end
+    end
+end
+
+LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+    autoGunCooldown = {}
+end)
+
+task.spawn(function()
+    while true do
+        if Config.AutoGetGun then
+            pcall(runAutoGetGunCheck)
+            task.wait(0.35)
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
 Tabs.Misc:AddButton({
     Title = "Get Gun",
     Callback = function()
@@ -2326,6 +3061,29 @@ Tabs.Misc:AddButton({
         task.spawn(function()
             getGunsAndReturn(selectedList)
         end)
+    end
+})
+
+Tabs.Misc:AddToggle("AutoGetGunToggle", {
+    Title = "Auto Get Gun",
+    Default = Config.AutoGetGun,
+    Callback = function(Value)
+        Config.AutoGetGun = Value
+        autoGunCooldown = {}
+        SaveConfig()
+        if Value then
+            task.spawn(runAutoGetGunCheck)
+        end
+    end
+})
+
+Tabs.Misc:AddSection("Vehicle")
+
+Tabs.Misc:AddToggle("VehicleFlyToggle", {
+    Title = "Vehicle Fly",
+    Default = Config.VehicleFlyEnabled,
+    Callback = function(Value)
+        setVehicleFlyEnabled(Value)
     end
 })
 
