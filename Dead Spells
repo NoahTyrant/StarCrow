@@ -94,7 +94,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/DeadspellsConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Dead Spells.json"
 
 local function SaveConfig()
     pcall(function()
