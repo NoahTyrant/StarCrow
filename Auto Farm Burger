@@ -122,7 +122,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/AutoFarmBurgerConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Auto Farm Burger.json"
 
 local function SaveConfig()
     pcall(function()
