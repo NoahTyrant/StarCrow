@@ -83,7 +83,7 @@ local Camera           = workspace.CurrentCamera
 local HttpService      = game:GetService("HttpService")
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE   = SAVE_FOLDER .. "/WestBoundConfig.json"
+local SAVE_FILE   = SAVE_FOLDER .. "/West Bound.json"
 
 local function EnsureFolder()
     if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
