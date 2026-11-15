@@ -102,8 +102,7 @@ local Config = {
 	AutoEquipBait = false,
 	SelectedEquipBait = "",
 	AutoGiveFish = false,
-	AutoGiveGoldenShark = false,
-	AutoFarmEvent = false,
+	AutoGiveScarletFish = false,
 	AutoFavoriteBoss = false,
 	AutoFavoriteBossTarget = {},
 	AutoHopWeather = false,
@@ -298,8 +297,8 @@ local function GetWeatherIcon(weatherName)
 end
 
 local IsCheckingSacredBeast = false
-local IsGivingGoldenShark = false
-local HasPendingGoldenShark
+local IsGivingScarletFish = false
+local HasPendingScarletFish
 
 local function SendDiscordWebhook(rawUrl, title, description, customColor, extraFields)
 	local url = tostring(rawUrl or ""):gsub("%s+", "")
@@ -1277,31 +1276,13 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or Config.AutoFarmEvent or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
 		return
 	end
 	local targetCF = GetIslandFarmCFrame()
-	if not targetCF then
-		return
-	end
-	local c = char or cachedChar or LocalPlayer.Character
-	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-	if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
-		hrp.CFrame = targetCF
-	end
-end
-
-local function StepAutoFarmEvent(char)
-	if not Config.AutoFarmEvent or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
-		return
-	end
-	if Config.AutoBoss or Config.AutoSecretBoss then
-		return
-	end
-	local targetCF = IslandFarmPositions["World Angler Isle"] or GetIslandFarmCFrame("World Angler Isle")
 	if not targetCF then
 		return
 	end
@@ -1640,7 +1621,6 @@ if cachedChar then
 	task.spawn(function()
 		StepAutoTPPos(cachedChar)
 		StepAutoFarmIsland(cachedChar)
-		StepAutoFarmEvent(cachedChar)
 		StepAutoFarmMaterialBait(cachedChar)
 		if Config.SkyFarm then
 			SetSkyFarm(true)
@@ -1657,7 +1637,6 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	task.wait(0.3)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
-	StepAutoFarmEvent(newChar)
 	StepAutoFarmMaterialBait(newChar)
 	if Config.SkyFarm then
 		SetSkyFarm(true)
@@ -2516,9 +2495,8 @@ do
 	local fmEv = Events:FindFirstChild("FishingMinigame")
 	if fmEv and fmEv:IsA("RemoteEvent") then
 		fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
-			local eventFilterActive = Config.AutoFarmEvent == true
 			local materialFilterActive = Config.AutoFarmMaterialBait and currentMaterialTargets and #currentMaterialTargets > 0
-			if (Config.FilterFishEnabled or eventFilterActive or materialFilterActive) and type(fishData) == "table" then
+			if (Config.FilterFishEnabled or materialFilterActive) and type(fishData) == "table" then
 				local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
 				if rawFishName == "" then
 					local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
@@ -2535,8 +2513,6 @@ do
 								table.insert(targets, t)
 							end
 						end
-					elseif eventFilterActive then
-						table.insert(targets, "golden shark")
 					elseif Config.FilterFishEnabled then
 						if type(Config.FilterFishTarget) == "table" then
 							for k, v in pairs(Config.FilterFishTarget) do
@@ -2564,7 +2540,7 @@ do
 						local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
 						local matched = false
 						for _, t in ipairs(targets) do
-							if hookedLower == t or string.find(hookedLower, t, 1, true) or (not eventFilterActive and string.find(t, hookedLower, 1, true)) then
+							if hookedLower == t or string.find(hookedLower, t, 1, true) or string.find(t, hookedLower, 1, true) then
 								matched = true
 								break
 							end
@@ -2693,7 +2669,6 @@ task.spawn(function()
 			lastMinigameEndTick = now
 		end
 		wasMinigameActive = isMinigame
-		local isEventFarmActive = Config.AutoFarmEvent == true
 		local isMaterialFarmActive = Config.AutoFarmMaterialBait and isMaterialFarmCastingAllowed
 		local activeReel = Config.AutoReel
 			or Config.AutoMiniGame
@@ -2701,18 +2676,16 @@ task.spawn(function()
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-			or isEventFarmActive
 			or isMaterialFarmActive
 		local activeCast = Config.AutoCast
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-			or isEventFarmActive
 			or isMaterialFarmActive
 		if Config.AutoFarmMaterialBait and not isMaterialFarmCastingAllowed then
 			activeCast = false
 		end
-		local needPauseForGive = IsGivingGoldenShark
-			or (Config.AutoGiveGoldenShark and HasPendingGoldenShark and HasPendingGoldenShark())
+		local needPauseForGive = IsGivingScarletFish
+			or (Config.AutoGiveScarletFish and HasPendingScarletFish and HasPendingScarletFish())
 		if needPauseForGive and not isMinigame then
 			activeCast = false
 		end
@@ -2721,7 +2694,6 @@ task.spawn(function()
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
 			or Config.SkyFarm
-			or isEventFarmActive
 			or isMaterialFarmActive
 
 		if not isMinigame then
@@ -2783,7 +2755,6 @@ task.spawn(function()
 			if not isMinigame then
 				StepAutoTPPos(cachedChar)
 				StepAutoFarmIsland(cachedChar)
-				StepAutoFarmEvent(cachedChar)
 				StepAutoFarmMaterialBait(cachedChar)
 			end
 			if activeCast and not isMinigame then
@@ -4947,9 +4918,9 @@ local StepAutoGiveFish
 	end
 end)()
 
-local StepAutoGiveGoldenShark
+local StepAutoGiveScarletFish
 (function()
-	local giveGoldenSharkCooldownUntil = 0
+	local giveScarletFishCooldownUntil = 0
 
 	local function GetNoroDerasuObject()
 		local npc = workspace:FindFirstChild("NPC")
@@ -4977,7 +4948,7 @@ local StepAutoGiveGoldenShark
 		return nil
 	end
 
-	local function MatchesGoldenShark(itemName)
+	local function MatchesScarletFish(itemName)
 		if not itemName or itemName == "" then
 			return false
 		end
@@ -4988,7 +4959,7 @@ local StepAutoGiveGoldenShark
 		if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
 			return false
 		end
-		return string.find(lower, "golden shark", 1, true) ~= nil
+		return string.find(lower, "scarlet fish", 1, true) ~= nil
 	end
 
 	local function FindAvailableHotbarSlot()
@@ -5009,37 +4980,37 @@ local StepAutoGiveGoldenShark
 		return "4"
 	end
 
-	local function IsSlotGoldenShark(hotbar, slotName)
+	local function IsSlotScarletFish(hotbar, slotName)
 		local slot = hotbar and hotbar:FindFirstChild(tostring(slotName))
 		local valName = slot and slot:FindFirstChild("ValueName")
 		local qty = slot and slot:FindFirstChild("Quantity")
 		if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
-			return MatchesGoldenShark(valName.Value)
+			return MatchesScarletFish(valName.Value)
 		end
 		return false
 	end
 
-	local function FindGoldenSharkHotbarSlot(pData)
+	local function FindScarletFishHotbarSlot(pData)
 		local hotbar = pData and pData:FindFirstChild("Hotbar")
 		if not hotbar then
 			return nil
 		end
 		for i = 2, 10 do
-			if IsSlotGoldenShark(hotbar, tostring(i)) then
+			if IsSlotScarletFish(hotbar, tostring(i)) then
 				return tostring(i)
 			end
 		end
 		return nil
 	end
 
-	local function FindGoldenSharkInventoryItem(pData)
+	local function FindScarletFishInventoryItem(pData)
 		local inv = pData and pData:FindFirstChild("Inventory")
 		if not inv then
 			return nil
 		end
 		for _, child in ipairs(inv:GetChildren()) do
 			if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
-				if MatchesGoldenShark(child.Name) then
+				if MatchesScarletFish(child.Name) then
 					return child
 				end
 			end
@@ -5062,22 +5033,22 @@ local StepAutoGiveGoldenShark
 		return false
 	end
 
-	local function IsHoldingGoldenShark(char)
+	local function IsHoldingScarletFish(char)
 		if not char then
 			return false
 		end
 		local tool = char:FindFirstChildWhichIsA("Tool")
-		if tool and MatchesGoldenShark(tool.Name) then
+		if tool and MatchesScarletFish(tool.Name) then
 			return true
 		end
 		return false
 	end
 
-	function HasPendingGoldenShark()
-		if not Config.AutoGiveGoldenShark then
+	function HasPendingScarletFish()
+		if not Config.AutoGiveScarletFish then
 			return false
 		end
-		if os.clock() < giveGoldenSharkCooldownUntil then
+		if os.clock() < giveScarletFishCooldownUntil then
 			return false
 		end
 		local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
@@ -5087,20 +5058,20 @@ local StepAutoGiveGoldenShark
 		if not GetNoroDerasuObject() then
 			return false
 		end
-		if FindGoldenSharkHotbarSlot(pData) then
+		if FindScarletFishHotbarSlot(pData) then
 			return true
 		end
-		if FindGoldenSharkInventoryItem(pData) then
+		if FindScarletFishInventoryItem(pData) then
 			return true
 		end
 		return false
 	end
 
-	function StepAutoGiveGoldenShark()
-		if IsGivingGoldenShark or not Config.AutoGiveGoldenShark then
+	function StepAutoGiveScarletFish()
+		if IsGivingScarletFish or not Config.AutoGiveScarletFish then
 			return
 		end
-		if os.clock() < giveGoldenSharkCooldownUntil then
+		if os.clock() < giveScarletFishCooldownUntil then
 			return
 		end
 		RefreshGuiCache()
@@ -5118,7 +5089,7 @@ local StepAutoGiveGoldenShark
 			return
 		end
 
-		if not FindGoldenSharkHotbarSlot(pData) and not FindGoldenSharkInventoryItem(pData) then
+		if not FindScarletFishHotbarSlot(pData) and not FindScarletFishInventoryItem(pData) then
 			return
 		end
 
@@ -5127,7 +5098,7 @@ local StepAutoGiveGoldenShark
 			return
 		end
 		if char:GetAttribute("Fishing") then
-			if Config.AutoFarmEvent or Config.AutoCast or Config.AutoFarmIsland or Config.AutoFarmMaterialBait then
+			if Config.AutoCast or Config.AutoFarmIsland or Config.AutoFarmMaterialBait then
 				local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
 				if hrp then
 					pcall(function()
@@ -5147,19 +5118,19 @@ local StepAutoGiveGoldenShark
 			end
 		end
 
-		IsGivingGoldenShark = true
+		IsGivingScarletFish = true
 		pcall(function()
-			while Config.AutoGiveGoldenShark do
+			while Config.AutoGiveScarletFish do
 				RefreshGuiCache()
 				if FishingGui and FishingGui.Visible then
 					break
 				end
 
 				local hotbar = pData:FindFirstChild("Hotbar")
-				local targetSlot = FindGoldenSharkHotbarSlot(pData)
+				local targetSlot = FindScarletFishHotbarSlot(pData)
 
 				if not targetSlot then
-					local foundItem = FindGoldenSharkInventoryItem(pData)
+					local foundItem = FindScarletFishInventoryItem(pData)
 					if foundItem then
 						local freeSlot = FindAvailableHotbarSlot()
 						local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
@@ -5169,13 +5140,13 @@ local StepAutoGiveGoldenShark
 							end)
 							local moveWait = os.clock()
 							while os.clock() - moveWait < 0.8 do
-								if IsSlotGoldenShark(hotbar, freeSlot) then
+								if IsSlotScarletFish(hotbar, freeSlot) then
 									break
 								end
 								task.wait(0.05)
 							end
 						end
-						if IsSlotGoldenShark(hotbar, freeSlot) then
+						if IsSlotScarletFish(hotbar, freeSlot) then
 							targetSlot = freeSlot
 						end
 					end
@@ -5190,7 +5161,7 @@ local StepAutoGiveGoldenShark
 					break
 				end
 
-				if not IsHoldingGoldenShark(char) then
+				if not IsHoldingScarletFish(char) then
 					pcall(function()
 						ToggleHotbar:InvokeServer(targetSlot)
 					end)
@@ -5216,13 +5187,13 @@ local StepAutoGiveGoldenShark
 				end
 
 				if not IsHoldingFish(char) then
-					giveGoldenSharkCooldownUntil = os.clock() + 2
+					giveScarletFishCooldownUntil = os.clock() + 2
 					break
 				end
 
 				task.wait(0.15)
 				RefreshGuiCache()
-				if not Config.AutoGiveGoldenShark or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
+				if not Config.AutoGiveScarletFish or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
 					break
 				end
 
@@ -5242,7 +5213,7 @@ local StepAutoGiveGoldenShark
 				local consumed = false
 				local giveWait = os.clock()
 				while os.clock() - giveWait < 1.2 do
-					if not IsSlotGoldenShark(hotbar, targetSlot) then
+					if not IsSlotScarletFish(hotbar, targetSlot) then
 						consumed = true
 						break
 					end
@@ -5250,15 +5221,15 @@ local StepAutoGiveGoldenShark
 				end
 
 				if not consumed then
-					giveGoldenSharkCooldownUntil = os.clock() + 5
+					giveScarletFishCooldownUntil = os.clock() + 5
 					break
 				else
-					giveGoldenSharkCooldownUntil = 0
+					giveScarletFishCooldownUntil = 0
 				end
 			end
 		end)
 		task.wait(0.15)
-		IsGivingGoldenShark = false
+		IsGivingScarletFish = false
 	end
 end)()
 
@@ -5951,8 +5922,8 @@ task.spawn(function()
 end);
 task.spawn(function()
 	while task.wait(0.25) do
-		if Config.AutoGiveGoldenShark then
-			StepAutoGiveGoldenShark()
+		if Config.AutoGiveScarletFish then
+			StepAutoGiveScarletFish()
 		end
 	end
 end);
@@ -7026,7 +6997,7 @@ end);
 		})
 	end
 
-	local AutoFarmIslandToggleObj, AutoFarmMaterialBaitToggleObj, AutoFarmEventToggleObj
+	local AutoFarmIslandToggleObj, AutoFarmMaterialBaitToggleObj
 	AutoFarmIslandToggleObj = Tabs.Main:AddToggle("AutoFarmIslandToggle", {
 		Title = "Auto Farm",
 		Default = Config.AutoFarmIsland,
@@ -7037,14 +7008,6 @@ end);
 				if AutoFarmMaterialBaitToggleObj then
 					pcall(function()
 						AutoFarmMaterialBaitToggleObj:SetValue(false)
-					end)
-				end
-			end
-			if Value and Config.AutoFarmEvent then
-				Config.AutoFarmEvent = false
-				if AutoFarmEventToggleObj then
-					pcall(function()
-						AutoFarmEventToggleObj:SetValue(false)
 					end)
 				end
 			end
@@ -7381,14 +7344,6 @@ end);
 					end)
 				end
 			end
-			if Value and Config.AutoFarmEvent then
-				Config.AutoFarmEvent = false
-				if AutoFarmEventToggleObj then
-					pcall(function()
-						AutoFarmEventToggleObj:SetValue(false)
-					end)
-				end
-			end
 			SaveConfig()
 			if Value then
 				StepAutoFarmMaterialBait(LocalPlayer.Character)
@@ -7396,43 +7351,13 @@ end);
 		end,
 	})
 
-	Tabs.LimitedEvent:AddSection("Auto Farm Event")
-
-	AutoFarmEventToggleObj = Tabs.LimitedEvent:AddToggle("AutoFarmEventToggle", {
-		Title = "Auto Farm Event",
-		Default = Config.AutoFarmEvent,
-		Callback = function(Value)
-			Config.AutoFarmEvent = Value
-			if Value and Config.AutoFarmIsland then
-				Config.AutoFarmIsland = false
-				if AutoFarmIslandToggleObj then
-					pcall(function()
-						AutoFarmIslandToggleObj:SetValue(false)
-					end)
-				end
-			end
-			if Value and Config.AutoFarmMaterialBait then
-				Config.AutoFarmMaterialBait = false
-				if AutoFarmMaterialBaitToggleObj then
-					pcall(function()
-						AutoFarmMaterialBaitToggleObj:SetValue(false)
-					end)
-				end
-			end
-			SaveConfig()
-			if Value then
-				StepAutoFarmEvent(LocalPlayer.Character)
-			end
-		end,
-	})
-
 	Tabs.LimitedEvent:AddSection("Auto Give Fish")
 
-	Tabs.LimitedEvent:AddToggle("AutoGiveGoldenSharkToggle", {
-		Title = "Auto Give Golden Shark",
-		Default = Config.AutoGiveGoldenShark,
+	Tabs.LimitedEvent:AddToggle("AutoGiveScarletFishToggle", {
+		Title = "Auto Give Scarlet Fish",
+		Default = Config.AutoGiveScarletFish,
 		Callback = function(Value)
-			Config.AutoGiveGoldenShark = Value
+			Config.AutoGiveScarletFish = Value
 			SaveConfig()
 		end,
 	})
