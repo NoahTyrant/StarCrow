@@ -102,7 +102,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/SlayerTycoonConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Slayer Tycoon.json"
 
 local function SaveConfig()
     pcall(function()
