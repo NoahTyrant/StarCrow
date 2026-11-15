@@ -44,6 +44,10 @@ local games = {
     {
         places = {98502499119821},
         url = "https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Heavyweigh%20Fishing"
+    },
+    {
+        places = {155615604},
+        url = "https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Prison%20Life"
     }
 }
 
