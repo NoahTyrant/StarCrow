@@ -1859,27 +1859,6 @@ LogoBtn.Text = ""
 LogoBtn.ZIndex = 5
 LogoBtn.Parent = LogoFrame
 
-do
-    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-    LogoBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - dragStart
-            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            dragInput = nil
-        end
-    end)
-end
-
 local function resolveKeyCode(value, fallback)
     if typeof(value) == "EnumItem" and value.EnumType == Enum.KeyCode then
         if value ~= Enum.KeyCode.Unknown then
@@ -1895,13 +1874,12 @@ local function resolveKeyCode(value, fallback)
     return fallback
 end
 
-local uiVisible = true
 local minimizeKey = resolveKeyCode(Config.MinimizeKey, Enum.KeyCode.LeftControl)
 local flyKey = resolveKeyCode(Config.FlyKey, Enum.KeyCode.F)
 local noclipKey = resolveKeyCode(Config.NoclipKey, Enum.KeyCode.J)
 local lastKeybindEditTime = 0
 local lastToggleTime = 0
-local cachedMainHubFrame = nil
+local Window = nil
 
 local FlyToggle = nil
 local NoclipToggle = nil
@@ -1937,52 +1915,60 @@ local function toggleFeatureWithToggle(toggleObj, getStateFn, applyFn)
     end
 end
 
-local function findMainHubFrame(container)
-    if not container then return nil end
-    local ok, children = pcall(function() return container:GetChildren() end)
-    if not ok then return nil end
-    for _, gui in ipairs(children) do
-        if gui:IsA("ScreenGui") and gui ~= LogoGui and gui ~= fovGui then
-            for _, desc in ipairs(gui:GetDescendants()) do
-                if desc:IsA("TextLabel") and (desc.Text == "StarCrow Hub" or desc.Text:find("StarCrow")) then
-                    local p = desc.Parent
-                    while p and p.Parent ~= gui do p = p.Parent end
-                    if p and p:IsA("Frame") then
-                        return p
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
 local function toggleUI()
     local now = tick()
-    if now - lastToggleTime < 0.3 then return end
+    if now - lastToggleTime < 0.25 then return end
     lastToggleTime = now
-    uiVisible = not uiVisible
-    if cachedMainHubFrame and cachedMainHubFrame.Parent then
-        cachedMainHubFrame.Visible = uiVisible
-        return
+    if not Window then return end
+    if Window.Minimize then
+        pcall(function()
+            Window:Minimize()
+        end)
+    elseif Window.Root then
+        Window.Minimized = not Window.Minimized
+        Window.Root.Visible = not Window.Minimized
     end
-    local containers = {}
-    if gethui then
-        pcall(function() table.insert(containers, gethui()) end)
-    end
-    pcall(function() table.insert(containers, game:GetService("CoreGui")) end)
-    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pGui then
-        table.insert(containers, pGui)
-    end
-    for _, container in ipairs(containers) do
-        local frame = findMainHubFrame(container)
-        if frame then
-            cachedMainHubFrame = frame
-            frame.Visible = uiVisible
-            return
+end
+
+do
+    local activeInput, dragStart, startPos, clickStartPos, didDrag = nil, nil, nil, nil, false
+    LogoBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            activeInput = input
+            dragStart = input.Position
+            startPos = LogoFrame.Position
+            clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            didDrag = false
         end
-    end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not activeInput then return end
+        local isMatchingDrag = (input == activeInput) or (activeInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+        if isMatchingDrag then
+            local delta = input.Position - dragStart
+            if not didDrag and Vector2.new(delta.X, delta.Y).Magnitude >= 8 then
+                didDrag = true
+            end
+            if didDrag then
+                LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if activeInput and input == activeInput then
+            local pos = Vector2.new(input.Position.X, input.Position.Y)
+            local dist = clickStartPos and (pos - clickStartPos).Magnitude or 999
+            local wasDragged = didDrag
+            activeInput = nil
+            dragStart = nil
+            startPos = nil
+            clickStartPos = nil
+            didDrag = false
+            if not wasDragged and dist < 16 then
+                toggleUI()
+            end
+        end
+    end)
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)
@@ -1992,7 +1978,6 @@ UserInputService.InputBegan:Connect(function(input, processed)
         return
     end
     if not processed and input.KeyCode == minimizeKey then
-        uiVisible = not uiVisible
         return
     end
     if processed or Config.DisableKeybinds then return end
@@ -2008,22 +1993,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
-local clickStartPos = Vector2.new()
-LogoBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
-    end
-end)
-LogoBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
-        if dist < 10 then
-            toggleUI()
-        end
-    end
-end)
-
-local Window = Fluent:CreateWindow({
+Window = Fluent:CreateWindow({
     Title = "StarCrow Hub",
     SubTitle = " | Prison Life",
     TabWidth = 130,
@@ -2412,6 +2382,7 @@ ToggleUIKeybind = Tabs.Settings:AddKeybind("ToggleUIKeybind", {
         local keyCode = resolveKeyCode(NewKey, Enum.KeyCode.LeftControl)
         lastKeybindEditTime = os.clock()
         minimizeKey = keyCode
+        Fluent.MinimizeKey = keyCode
         Window.MinimizeKey = keyCode
         Config.MinimizeKey = keyCode.Name
         SaveConfig()
