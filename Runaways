@@ -55,7 +55,7 @@ else
 end
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/RunawaysConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Runaways.json"
 
 local Config = {
     KillAura = false,
