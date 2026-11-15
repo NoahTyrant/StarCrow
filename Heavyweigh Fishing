@@ -102,7 +102,8 @@ local Config = {
 	AutoEquipBait = false,
 	SelectedEquipBait = "",
 	AutoGiveFish = false,
-	AutoGiveScarletFish = false,
+	AutoGiveEventFish = false,
+	AutoGiveEventFishTarget = {},
 	AutoFavoriteBoss = false,
 	AutoFavoriteBossTarget = {},
 	AutoHopWeather = false,
@@ -133,7 +134,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Heavyweigh Fishing.json"
 
 local function SaveConfig()
 	pcall(function()
@@ -197,6 +198,15 @@ elseif type(Config.FilterFishTarget) ~= "table" then
 end
 if type(Config.AutoFavoriteBossTarget) ~= "table" then
 	Config.AutoFavoriteBossTarget = {}
+end
+if type(Config.AutoGiveEventFishTarget) == "string" then
+	if Config.AutoGiveEventFishTarget ~= "" then
+		Config.AutoGiveEventFishTarget = { Config.AutoGiveEventFishTarget }
+	else
+		Config.AutoGiveEventFishTarget = {}
+	end
+elseif type(Config.AutoGiveEventFishTarget) ~= "table" then
+	Config.AutoGiveEventFishTarget = {}
 end
 if not Config.SelectedWeather or Config.SelectedWeather == "" then
 	Config.SelectedWeather = "Thunderstorm"
@@ -297,8 +307,8 @@ local function GetWeatherIcon(weatherName)
 end
 
 local IsCheckingSacredBeast = false
-local IsGivingScarletFish = false
-local HasPendingScarletFish
+local IsGivingEventFish = false
+local HasPendingEventFish
 
 local function SendDiscordWebhook(rawUrl, title, description, customColor, extraFields)
 	local url = tostring(rawUrl or ""):gsub("%s+", "")
@@ -2684,8 +2694,8 @@ task.spawn(function()
 		if Config.AutoFarmMaterialBait and not isMaterialFarmCastingAllowed then
 			activeCast = false
 		end
-		local needPauseForGive = IsGivingScarletFish
-			or (Config.AutoGiveScarletFish and HasPendingScarletFish and HasPendingScarletFish())
+		local needPauseForGive = IsGivingEventFish
+			or (Config.AutoGiveEventFish and HasPendingEventFish and HasPendingEventFish())
 		if needPauseForGive and not isMinigame then
 			activeCast = false
 		end
@@ -4918,9 +4928,9 @@ local StepAutoGiveFish
 	end
 end)()
 
-local StepAutoGiveScarletFish
+local StepAutoGiveEventFish
 (function()
-	local giveScarletFishCooldownUntil = 0
+	local giveEventFishCooldownUntil = 0
 
 	local function GetNoroDerasuObject()
 		local npc = workspace:FindFirstChild("NPC")
@@ -4948,7 +4958,36 @@ local StepAutoGiveScarletFish
 		return nil
 	end
 
-	local function MatchesScarletFish(itemName)
+	local function GetEventGiveTargetSet()
+		local set = {}
+		local hasAny = false
+		if type(Config.AutoGiveEventFishTarget) == "table" then
+			for k, v in pairs(Config.AutoGiveEventFishTarget) do
+				local name = nil
+				if type(k) == "string" and v == true then
+					name = k
+				elseif type(v) == "string" and v ~= "" then
+					name = v
+				end
+				if name then
+					local clean = string.lower(string.gsub(name, "^%s*(.-)%s*$", "%1"))
+					if clean ~= "" then
+						set[clean] = true
+						hasAny = true
+					end
+				end
+			end
+		elseif type(Config.AutoGiveEventFishTarget) == "string" and Config.AutoGiveEventFishTarget ~= "" then
+			local clean = string.lower(string.gsub(Config.AutoGiveEventFishTarget, "^%s*(.-)%s*$", "%1"))
+			if clean ~= "" then
+				set[clean] = true
+				hasAny = true
+			end
+		end
+		return set, hasAny
+	end
+
+	local function MatchesEventFish(itemName, targetSet)
 		if not itemName or itemName == "" then
 			return false
 		end
@@ -4959,7 +4998,22 @@ local StepAutoGiveScarletFish
 		if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
 			return false
 		end
-		return string.find(lower, "scarlet fish", 1, true) ~= nil
+		local targets = targetSet
+		local hasAny = targets ~= nil and next(targets) ~= nil
+		if not targets then
+			targets, hasAny = GetEventGiveTargetSet()
+		end
+		if not hasAny then
+			return false
+		end
+		local cleanName = GetFishNameFromItem(itemName)
+		local cleanLower = string.lower(string.gsub(tostring(cleanName or ""), "^%s*(.-)%s*$", "%1"))
+		if cleanLower ~= "" and targets[cleanLower] then
+			return true
+		end
+		local strippedLower = string.gsub(cleanLower, "%s*[%(%[].-$", "")
+		strippedLower = string.gsub(strippedLower, "^%s*(.-)%s*$", "%1")
+		return strippedLower ~= "" and targets[strippedLower] == true
 	end
 
 	local function FindAvailableHotbarSlot()
@@ -4980,37 +5034,37 @@ local StepAutoGiveScarletFish
 		return "4"
 	end
 
-	local function IsSlotScarletFish(hotbar, slotName)
+	local function IsSlotEventFish(hotbar, slotName, targetSet)
 		local slot = hotbar and hotbar:FindFirstChild(tostring(slotName))
 		local valName = slot and slot:FindFirstChild("ValueName")
 		local qty = slot and slot:FindFirstChild("Quantity")
 		if valName and valName.Value ~= "" and (not qty or qty.Value > 0) then
-			return MatchesScarletFish(valName.Value)
+			return MatchesEventFish(valName.Value, targetSet)
 		end
 		return false
 	end
 
-	local function FindScarletFishHotbarSlot(pData)
+	local function FindEventFishHotbarSlot(pData, targetSet)
 		local hotbar = pData and pData:FindFirstChild("Hotbar")
 		if not hotbar then
 			return nil
 		end
 		for i = 2, 10 do
-			if IsSlotScarletFish(hotbar, tostring(i)) then
+			if IsSlotEventFish(hotbar, tostring(i), targetSet) then
 				return tostring(i)
 			end
 		end
 		return nil
 	end
 
-	local function FindScarletFishInventoryItem(pData)
+	local function FindEventFishInventoryItem(pData, targetSet)
 		local inv = pData and pData:FindFirstChild("Inventory")
 		if not inv then
 			return nil
 		end
 		for _, child in ipairs(inv:GetChildren()) do
 			if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0) then
-				if MatchesScarletFish(child.Name) then
+				if MatchesEventFish(child.Name, targetSet) then
 					return child
 				end
 			end
@@ -5033,22 +5087,32 @@ local StepAutoGiveScarletFish
 		return false
 	end
 
-	local function IsHoldingScarletFish(char)
+	local function IsHoldingEventFish(char, targetSet)
 		if not char then
 			return false
 		end
 		local tool = char:FindFirstChildWhichIsA("Tool")
-		if tool and MatchesScarletFish(tool.Name) then
-			return true
+		if tool then
+			local attrName = tool:GetAttribute("FishName")
+			if attrName and MatchesEventFish(tostring(attrName), targetSet) then
+				return true
+			end
+			if MatchesEventFish(tool.Name, targetSet) then
+				return true
+			end
 		end
 		return false
 	end
 
-	function HasPendingScarletFish()
-		if not Config.AutoGiveScarletFish then
+	function HasPendingEventFish()
+		if not Config.AutoGiveEventFish then
 			return false
 		end
-		if os.clock() < giveScarletFishCooldownUntil then
+		if os.clock() < giveEventFishCooldownUntil then
+			return false
+		end
+		local targetSet, hasTargets = GetEventGiveTargetSet()
+		if not hasTargets then
 			return false
 		end
 		local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
@@ -5058,20 +5122,24 @@ local StepAutoGiveScarletFish
 		if not GetNoroDerasuObject() then
 			return false
 		end
-		if FindScarletFishHotbarSlot(pData) then
+		if FindEventFishHotbarSlot(pData, targetSet) then
 			return true
 		end
-		if FindScarletFishInventoryItem(pData) then
+		if FindEventFishInventoryItem(pData, targetSet) then
 			return true
 		end
 		return false
 	end
 
-	function StepAutoGiveScarletFish()
-		if IsGivingScarletFish or not Config.AutoGiveScarletFish then
+	function StepAutoGiveEventFish()
+		if IsGivingEventFish or not Config.AutoGiveEventFish then
 			return
 		end
-		if os.clock() < giveScarletFishCooldownUntil then
+		if os.clock() < giveEventFishCooldownUntil then
+			return
+		end
+		local initialTargets, hasInitialTargets = GetEventGiveTargetSet()
+		if not hasInitialTargets then
 			return
 		end
 		RefreshGuiCache()
@@ -5089,7 +5157,7 @@ local StepAutoGiveScarletFish
 			return
 		end
 
-		if not FindScarletFishHotbarSlot(pData) and not FindScarletFishInventoryItem(pData) then
+		if not FindEventFishHotbarSlot(pData, initialTargets) and not FindEventFishInventoryItem(pData, initialTargets) then
 			return
 		end
 
@@ -5118,19 +5186,24 @@ local StepAutoGiveScarletFish
 			end
 		end
 
-		IsGivingScarletFish = true
+		IsGivingEventFish = true
 		pcall(function()
-			while Config.AutoGiveScarletFish do
+			while Config.AutoGiveEventFish do
+				local targetSet, hasTargets = GetEventGiveTargetSet()
+				if not hasTargets then
+					break
+				end
+
 				RefreshGuiCache()
 				if FishingGui and FishingGui.Visible then
 					break
 				end
 
 				local hotbar = pData:FindFirstChild("Hotbar")
-				local targetSlot = FindScarletFishHotbarSlot(pData)
+				local targetSlot = FindEventFishHotbarSlot(pData, targetSet)
 
 				if not targetSlot then
-					local foundItem = FindScarletFishInventoryItem(pData)
+					local foundItem = FindEventFishInventoryItem(pData, targetSet)
 					if foundItem then
 						local freeSlot = FindAvailableHotbarSlot()
 						local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
@@ -5140,13 +5213,13 @@ local StepAutoGiveScarletFish
 							end)
 							local moveWait = os.clock()
 							while os.clock() - moveWait < 0.8 do
-								if IsSlotScarletFish(hotbar, freeSlot) then
+								if IsSlotEventFish(hotbar, freeSlot, targetSet) then
 									break
 								end
 								task.wait(0.05)
 							end
 						end
-						if IsSlotScarletFish(hotbar, freeSlot) then
+						if IsSlotEventFish(hotbar, freeSlot, targetSet) then
 							targetSlot = freeSlot
 						end
 					end
@@ -5161,7 +5234,7 @@ local StepAutoGiveScarletFish
 					break
 				end
 
-				if not IsHoldingScarletFish(char) then
+				if not IsHoldingEventFish(char, targetSet) then
 					pcall(function()
 						ToggleHotbar:InvokeServer(targetSlot)
 					end)
@@ -5187,13 +5260,13 @@ local StepAutoGiveScarletFish
 				end
 
 				if not IsHoldingFish(char) then
-					giveScarletFishCooldownUntil = os.clock() + 2
+					giveEventFishCooldownUntil = os.clock() + 2
 					break
 				end
 
 				task.wait(0.15)
 				RefreshGuiCache()
-				if not Config.AutoGiveScarletFish or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
+				if not Config.AutoGiveEventFish or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
 					break
 				end
 
@@ -5213,7 +5286,7 @@ local StepAutoGiveScarletFish
 				local consumed = false
 				local giveWait = os.clock()
 				while os.clock() - giveWait < 1.2 do
-					if not IsSlotScarletFish(hotbar, targetSlot) then
+					if not IsSlotEventFish(hotbar, targetSlot, targetSet) then
 						consumed = true
 						break
 					end
@@ -5221,15 +5294,15 @@ local StepAutoGiveScarletFish
 				end
 
 				if not consumed then
-					giveScarletFishCooldownUntil = os.clock() + 5
+					giveEventFishCooldownUntil = os.clock() + 5
 					break
 				else
-					giveScarletFishCooldownUntil = 0
+					giveEventFishCooldownUntil = 0
 				end
 			end
 		end)
 		task.wait(0.15)
-		IsGivingScarletFish = false
+		IsGivingEventFish = false
 	end
 end)()
 
@@ -5922,8 +5995,8 @@ task.spawn(function()
 end);
 task.spawn(function()
 	while task.wait(0.25) do
-		if Config.AutoGiveScarletFish then
-			StepAutoGiveScarletFish()
+		if Config.AutoGiveEventFish then
+			StepAutoGiveEventFish()
 		end
 	end
 end);
@@ -7351,29 +7424,27 @@ end);
 		end,
 	})
 
-	Tabs.LimitedEvent:AddSection("Auto Give Fish")
-
-	Tabs.LimitedEvent:AddToggle("AutoGiveScarletFishToggle", {
-		Title = "Auto Give Scarlet Fish",
-		Default = Config.AutoGiveScarletFish,
-		Callback = function(Value)
-			Config.AutoGiveScarletFish = Value
-			SaveConfig()
-		end,
-	})
-
-	Tabs.Boss:AddSection("Filter Boss")
-
-	Tabs.Boss:AddToggle("FilterBossToggle", {
-		Title = "Filter Boss",
-		Default = Config.FilterFishEnabled,
-		Callback = function(Value)
-			Config.FilterFishEnabled = Value
-			SaveConfig()
-		end,
-	})
-
 	local bossListItems = GetBossList()
+
+	local function ExtractSelectedBosses(raw)
+		local selected = {}
+		if type(raw) == "table" then
+			for k, v in pairs(raw) do
+				local name = nil
+				if type(k) == "string" and v == true then
+					name = k
+				elseif type(v) == "string" and v ~= "" then
+					name = v
+				end
+				if name and table.find(bossListItems, name) and not table.find(selected, name) then
+					table.insert(selected, name)
+				end
+			end
+		elseif type(raw) == "string" and table.find(bossListItems, raw) then
+			table.insert(selected, raw)
+		end
+		return selected
+	end
 
 	local function AttachDropdownSearch(dropdownObj)
 		task.spawn(function()
@@ -7467,22 +7538,45 @@ end);
 		end)
 	end
 
-	local defaultBossTargets = {}
-	if type(Config.FilterFishTarget) == "table" then
-		for k, v in pairs(Config.FilterFishTarget) do
-			local name = nil
-			if type(k) == "string" and v == true then
-				name = k
-			elseif type(v) == "string" and v ~= "" then
-				name = v
-			end
-			if name and table.find(bossListItems, name) and not table.find(defaultBossTargets, name) then
-				table.insert(defaultBossTargets, name)
-			end
-		end
-	elseif type(Config.FilterFishTarget) == "string" and table.find(bossListItems, Config.FilterFishTarget) then
-		table.insert(defaultBossTargets, Config.FilterFishTarget)
-	end
+	Tabs.LimitedEvent:AddSection("Auto Give Fish")
+
+	Tabs.LimitedEvent:AddToggle("AutoGiveEventFishToggle", {
+		Title = "Auto Give Fish",
+		Default = Config.AutoGiveEventFish,
+		Callback = function(Value)
+			Config.AutoGiveEventFish = Value
+			SaveConfig()
+		end,
+	})
+
+	local defaultEventGiveTargets = ExtractSelectedBosses(Config.AutoGiveEventFishTarget)
+	Config.AutoGiveEventFishTarget = defaultEventGiveTargets
+
+	local EventGiveFishDropdownObj = Tabs.LimitedEvent:AddDropdown("AutoGiveEventFishDropdown", {
+		Title = "Select Boss Fish",
+		Values = bossListItems,
+		Default = defaultEventGiveTargets,
+		Multi = true,
+		Callback = function(Value)
+			Config.AutoGiveEventFishTarget = ExtractSelectedBosses(Value)
+			SaveConfig()
+		end,
+	})
+
+	AttachDropdownSearch(EventGiveFishDropdownObj)
+
+	Tabs.Boss:AddSection("Filter Boss")
+
+	Tabs.Boss:AddToggle("FilterBossToggle", {
+		Title = "Filter Boss",
+		Default = Config.FilterFishEnabled,
+		Callback = function(Value)
+			Config.FilterFishEnabled = Value
+			SaveConfig()
+		end,
+	})
+
+	local defaultBossTargets = ExtractSelectedBosses(Config.FilterFishTarget)
 	Config.FilterFishTarget = defaultBossTargets
 
 	local FilterBossDropdownObj = Tabs.Boss:AddDropdown("FilterBossDropdown", {
@@ -7491,15 +7585,7 @@ end);
 		Default = defaultBossTargets,
 		Multi = true,
 		Callback = function(Value)
-			local selected = {}
-			if type(Value) == "table" then
-				for bossName, isSelected in pairs(Value) do
-					if isSelected and table.find(bossListItems, bossName) and not table.find(selected, bossName) then
-						table.insert(selected, bossName)
-					end
-				end
-			end
-			Config.FilterFishTarget = selected
+			Config.FilterFishTarget = ExtractSelectedBosses(Value)
 			SaveConfig()
 		end,
 	})
@@ -7520,20 +7606,7 @@ end);
 		end,
 	})
 
-	local defaultFavTargets = {}
-	if type(Config.AutoFavoriteBossTarget) == "table" then
-		for k, v in pairs(Config.AutoFavoriteBossTarget) do
-			local name = nil
-			if type(k) == "string" and v == true then
-				name = k
-			elseif type(v) == "string" and v ~= "" then
-				name = v
-			end
-			if name and table.find(bossListItems, name) and not table.find(defaultFavTargets, name) then
-				table.insert(defaultFavTargets, name)
-			end
-		end
-	end
+	local defaultFavTargets = ExtractSelectedBosses(Config.AutoFavoriteBossTarget)
 
 	local FavBossDropdownObj = Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
 		Title = "Select Boss Fish",
@@ -7541,15 +7614,7 @@ end);
 		Default = defaultFavTargets,
 		Multi = true,
 		Callback = function(Value)
-			local selected = {}
-			if type(Value) == "table" then
-				for bName, isSelected in pairs(Value) do
-					if isSelected and table.find(bossListItems, bName) and not table.find(selected, bName) then
-						table.insert(selected, bName)
-					end
-				end
-			end
-			Config.AutoFavoriteBossTarget = selected
+			Config.AutoFavoriteBossTarget = ExtractSelectedBosses(Value)
 			SaveConfig()
 			if Config.AutoFavoriteBoss then
 				task.spawn(ScanAndFavoriteBossFish)
