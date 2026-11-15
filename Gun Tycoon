@@ -59,7 +59,7 @@ local Config = {
 }
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/GunTycoonConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Gun Tycoon.json"
 
 local function SaveConfig()
     pcall(function()
