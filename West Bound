@@ -50,22 +50,16 @@ local S = {
         NoJumpCooldownEnabled = false,
         JumpPower        = 55,
         HorseHackEnabled = false,
-        HorseSprintSpeed = 100,
+        HorseSprintSpeed = 90,
         HorseTurnSens    = 0.5,
         DynamiteTargetEnabled = false,
         DynamiteTeamCheck = false,
         DynamiteFriendCheck = false,
         InstantInteract  = false,
         UITheme = "Amethyst",
-        AutoBankEnabled  = false,
-        FarmMethod       = "Slow",
-        SpawnDelay       = 5,
-        AutoBuyAmmo      = false,
-        SelectedAmmo     = "PistolAmmo",
         AutoHealEnabled  = false,
         AutoHealHealth   = 50,
-        AutoBuyHeal      = false,
-        BuyDelay         = 1
+        MinimizeKey      = "LeftControl"
     }
 }
 
@@ -111,6 +105,7 @@ local function LoadConfig()
 end
 
 LoadConfig()
+S.Config.HorseSprintSpeed = math.clamp(tonumber(S.Config.HorseSprintSpeed) or 90, 40, 90)
 
 local Teams = game:GetService("Teams")
 local Civilians = Teams:FindFirstChild("Civilians")
@@ -186,8 +181,6 @@ if LocalPlayer.Character then
         end
     end
 end
-
-getgenv().StarCrowSpawnDelay = S.Config.SpawnDelay
 
 LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
@@ -487,108 +480,82 @@ LogoBtn.Text = ""
 LogoBtn.ZIndex = 5
 LogoBtn.Parent = LogoFrame
 
+local function resolveKeyCode(value, fallback)
+    if typeof(value) == "EnumItem" and value.EnumType == Enum.KeyCode then
+        if value ~= Enum.KeyCode.Unknown then
+            return value
+        end
+        return fallback
+    end
+    local name = tostring(value or ""):gsub("Enum%.KeyCode%.", "")
+    local resolved = Enum.KeyCode[name]
+    if resolved and resolved ~= Enum.KeyCode.Unknown then
+        return resolved
+    end
+    return fallback
+end
+
+local minimizeKey = resolveKeyCode(S.Config.MinimizeKey, Enum.KeyCode.LeftControl)
+S.Config.MinimizeKey = minimizeKey.Name
+local lastToggleTime = 0
+local Window = nil
+local ToggleUIKeybind = nil
+
+local function toggleUI()
+    local now = tick()
+    if now - lastToggleTime < 0.25 then return end
+    lastToggleTime = now
+    if not Window then return end
+    if Window.Minimize then
+        pcall(function()
+            Window:Minimize()
+        end)
+    elseif Window.Root then
+        Window.Minimized = not Window.Minimized
+        Window.Root.Visible = not Window.Minimized
+    end
+end
 
 do
-    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    local activeInput, dragStart, startPos, clickStartPos, didDrag = nil, nil, nil, nil, false
     LogoBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+            activeInput = input
+            dragStart = input.Position
+            startPos = LogoFrame.Position
+            clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            didDrag = false
         end
     end)
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        if not activeInput then return end
+        local isMatchingDrag = (input == activeInput) or (activeInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+        if isMatchingDrag then
             local delta = input.Position - dragStart
-            LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            if not didDrag and Vector2.new(delta.X, delta.Y).Magnitude >= 8 then
+                didDrag = true
+            end
+            if didDrag then
+                LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            dragInput = nil
+        if activeInput and input == activeInput then
+            local pos = Vector2.new(input.Position.X, input.Position.Y)
+            local dist = clickStartPos and (pos - clickStartPos).Magnitude or 999
+            local wasDragged = didDrag
+            activeInput = nil
+            dragStart = nil
+            startPos = nil
+            clickStartPos = nil
+            didDrag = false
+            if not wasDragged and dist < 16 then
+                toggleUI()
+            end
         end
     end)
 end
-
-local uiVisible = true
-local minimizeKey = Enum.KeyCode.LeftControl
-local lastToggleTime = 0
-local cachedMainFrame = nil
-
-local function ToggleFluentUI(visible)
-    local now = tick()
-    if now - lastToggleTime < 0.3 then return end
-    lastToggleTime = now
-    if visible == nil then
-        uiVisible = not uiVisible
-    else
-        uiVisible = visible
-    end
-    if Window and Window.Root then
-        Window.Root.Visible = uiVisible
-        return
-    end
-    if cachedMainFrame and cachedMainFrame.Parent then
-        cachedMainFrame.Visible = uiVisible
-        return
-    end
-    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
-        if gui:IsA("ScreenGui") then
-            for _, desc in ipairs(gui:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
-                    local p = desc.Parent
-                    while p and p.Parent ~= gui do p = p.Parent end
-                    if p and p:IsA("Frame") then
-                        cachedMainFrame = p
-                        cachedMainFrame.Visible = uiVisible
-                        return
-                    end
-                end
-            end
-        end
-    end
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, gui in ipairs(playerGui:GetChildren()) do
-            if gui:IsA("ScreenGui") then
-                for _, desc in ipairs(gui:GetDescendants()) do
-                    if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
-                        local p = desc.Parent
-                        while p and p.Parent ~= gui do p = p.Parent end
-                        if p and p:IsA("Frame") then
-                            cachedMainFrame = p
-                            cachedMainFrame.Visible = uiVisible
-                            return
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-local toggleUI = ToggleFluentUI
-
-UserInputService.InputBegan:Connect(function(input, processed)
-    if not processed and (input.KeyCode == minimizeKey or input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl) then
-        LogoFrame.Visible = false
-        uiVisible = not uiVisible
-    end
-end)
-
-local clickStartPos = Vector2.new()
-LogoBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
-    end
-end)
-LogoBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
-        if dist < 10 then
-            ToggleFluentUI()
-        end
-    end
-end)
 
 local processedChars = {}
 
@@ -968,7 +935,7 @@ _G.VelocityConnection = RunService.Heartbeat:Connect(function(dt)
             if horseHum and horseHrp then
                 local moveDir = horseHum.MoveDirection
                 if moveDir.Magnitude > 0 then
-                    horseHum.WalkSpeed = S.Config.HorseSprintSpeed
+                    horseHum.WalkSpeed = math.clamp(tonumber(S.Config.HorseSprintSpeed) or 90, 40, 90)
                     local targetCFrame = CFrame.new(horseHrp.Position, horseHrp.Position + moveDir)
                     horseHrp.CFrame = horseHrp.CFrame:Lerp(targetCFrame, S.Config.HorseTurnSens)
                 end
@@ -1148,682 +1115,16 @@ task.spawn(function()
     end
 end)
 
-local function IsBagFull()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, desc in ipairs(playerGui:GetDescendants()) do
-            if desc:IsA("TextLabel") and desc.Visible and string.find(desc.Text, "Bag:") then
-                local current, max = string.match(desc.Text, "%$?(%d+)%s*/%s*%$?(%d+)")
-                if current and max then
-                    return tonumber(current) >= tonumber(max)
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function GetBankSafes(centerPos)
-    local safes = {}
-    if not centerPos then
-        local char = LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        centerPos = root and root.Position or Vector3.new(872.05, 24.67, 198.21)
-    end
-    local cs = game:GetService("CollectionService")
-    local tagged = cs:GetTagged("Safe")
-    for _, item in ipairs(tagged) do
-        local model = item:IsA("Model") and item or item.Parent
-        if model and model:IsA("Model") and model:FindFirstChild("OpenSafe") and model:FindFirstChild("Amount") then
-            local part = model:FindFirstChild("SafePart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-            if part and (part.Position - centerPos).Magnitude <= 150 then
-                local exists = false
-                for _, s in ipairs(safes) do
-                    if s.model == model then exists = true break end
-                end
-                if not exists then
-                    table.insert(safes, {
-                        model = model,
-                        part = part,
-                        amount = model:FindFirstChild("Amount"),
-                        open = model:FindFirstChild("Open"),
-                        openSafe = model:FindFirstChild("OpenSafe")
-                    })
-                end
-            end
-        end
-    end
-    if #safes == 0 then
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj.Name == "Safe" and obj:IsA("Model") and obj:FindFirstChild("OpenSafe") and obj:FindFirstChild("Amount") then
-                local part = obj:FindFirstChild("SafePart") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                if part and (part.Position - centerPos).Magnitude <= 150 then
-                    local exists = false
-                    for _, s in ipairs(safes) do
-                        if s.model == obj then exists = true break end
-                    end
-                    if not exists then
-                        table.insert(safes, {
-                            model = obj,
-                            part = part,
-                            amount = obj:FindFirstChild("Amount"),
-                            open = obj:FindFirstChild("Open"),
-                            openSafe = obj:FindFirstChild("OpenSafe")
-                        })
-                    end
-                end
-            end
-        end
-    end
-    table.sort(safes, function(a, b)
-        return (a.part.Position - centerPos).Magnitude < (b.part.Position - centerPos).Magnitude
-    end)
-    return safes
-end
-
-local function RobBankSafes(centerPos)
-    if not getgenv().StarCrowAutoBank then return end
-    if IsBagFull() then return end
-
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChild("Humanoid")
-    if not root or not hum then return end
-
-    local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
-    local safes = GetBankSafes(centerPos)
-
-    local currentTargetCF = nil
-    local noclipConn = RunService.Stepped:Connect(function()
-        if not char or not char.Parent then return end
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then
-                p.CanCollide = false
-            end
-        end
-        if root and currentTargetCF then
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            char:PivotTo(currentTargetCF)
-        end
-    end)
-
-    for _, safeData in ipairs(safes) do
-        if not getgenv().StarCrowAutoBank then break end
-        if IsBagFull() then break end
-
-        local amountObj = safeData.amount
-        if amountObj and amountObj.Value > 0 then
-            local part = safeData.part
-            if part and part.Parent then
-                pcall(function()
-                    part.CanCollide = false
-                    for _, ch in ipairs(safeData.model:GetChildren()) do
-                        if ch:IsA("BasePart") then
-                            ch.CanCollide = false
-                        end
-                    end
-                end)
-
-                currentTargetCF = part.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(-90), 0, 0)
-                hum.PlatformStand = true
-                hum.AutoRotate = false
-
-                task.wait(0.2)
-
-                if safeData.open and safeData.open.Value == false and safeData.openSafe then
-                    safeData.openSafe:FireServer("Complete")
-                    task.wait(0.25)
-                end
-
-                while getgenv().StarCrowAutoBank and not IsBagFull() and amountObj.Value > 0 do
-                    robRemote:FireServer("Safe", safeData.model)
-                    task.wait(0.25)
-                end
-            end
-        end
-    end
-
-    if root then
-        pcall(function() root.Anchored = true end)
-    end
-    if noclipConn then
-        noclipConn:Disconnect()
-    end
-end
-
-local function SpawnAt(spawnName, arg2, tpPos)
-    if not getgenv().StarCrowAutoBank then return end
-
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChild("Humanoid")
-    local oldRoot = char and char:FindFirstChild("HumanoidRootPart")
-    if oldRoot then
-        pcall(function() oldRoot.Anchored = true end)
-    end
-
-    if hum and hum.Health <= 0 then
-        task.wait(math.max(0, getgenv().StarCrowSpawnDelay or 3))
-    end
-
-    local oldChar = LocalPlayer.Character
-    local spawnArgs = {
-        [1] = spawnName,
-        [2] = arg2,
-        [3] = false
-    }
-
-    ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Spawn", 9e9):InvokeServer(unpack(spawnArgs))
-
-    if oldChar then
-        local waited = 0
-        repeat
-            task.wait(0.05)
-            waited = waited + 0.05
-        until (LocalPlayer.Character ~= oldChar and LocalPlayer.Character ~= nil) or waited >= 4 or not getgenv().StarCrowAutoBank
-    end
-
-    if not getgenv().StarCrowAutoBank then return end
-
-    char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart", 9e9)
-    hum = char:WaitForChild("Humanoid", 9e9)
-
-    if root and hum and tpPos then
-        task.wait(1.5)
-        if not getgenv().StarCrowAutoBank then return end
-        char:PivotTo(CFrame.new(tpPos))
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.5)
-    else
-        task.wait(1.5)
-    end
-    return char, root, hum
-end
-
-local function TriggerRob()
-    local robRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Rob", 9e9)
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    for i = 1, 10 do
-        if not getgenv().StarCrowAutoBank then break end
-        if IsBagFull() then break end
-        local myPos = root.Position
-        local targets = GetRobTargets()
-        for _, target in ipairs(targets) do
-            if target.part and target.part.Parent and (myPos - target.part.Position).Magnitude <= 30 then
-                pcall(function()
-                    if target.isSafe then
-                        local r = target.obj:FindFirstChild("OpenSafe")
-                        if r and r:IsA("RemoteEvent") then r:FireServer("Complete") end
-                        robRemote:FireServer("Safe", target.obj)
-                    else
-                        robRemote:FireServer("Register", target.obj)
-                    end
-                end)
-            end
-        end
-        task.wait(0.1)
-    end
-end
-
-local function SpawnAndTP(spawnName, arg2, prePos, tpPos1, tpPos2)
-    if not getgenv().StarCrowAutoBank then return end
-
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChild("Humanoid")
-    if hum and hum.Health <= 0 then
-        task.wait(math.max(0, getgenv().StarCrowSpawnDelay or 3))
-    end
-
-    local oldChar = LocalPlayer.Character
-    local spawnArgs = {
-        [1] = spawnName,
-        [2] = arg2,
-        [3] = false
-    }
-
-    ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("Spawn", 9e9):InvokeServer(unpack(spawnArgs))
-
-    if oldChar then
-        repeat task.wait(0.05)
-        until (LocalPlayer.Character ~= oldChar and LocalPlayer.Character ~= nil) or not getgenv().StarCrowAutoBank
-    end
-
-    if not getgenv().StarCrowAutoBank then return end
-
-    char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart", 9e9)
-    hum = char:WaitForChild("Humanoid", 9e9)
-
-    if root and hum then
-        if not prePos and not tpPos1 and not tpPos2 then return end
-
-        task.wait(1.5)
-
-        if prePos then
-            if not getgenv().StarCrowAutoBank then return end
-            char:PivotTo(CFrame.new(prePos))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.5)
-        end
-
-        if tpPos1 then
-            if not getgenv().StarCrowAutoBank then return end
-            char:PivotTo(CFrame.new(tpPos1))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            TriggerRob()
-        end
-
-        if tpPos2 then
-            if not getgenv().StarCrowAutoBank then return end
-            if IsBagFull() then return end
-            char:PivotTo(CFrame.new(tpPos2))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            TriggerRob()
-        end
-    end
-end
-
-local Window = Fluent:CreateWindow({ Title = "StarCrowHub", SubTitle = "West Bound", TabWidth = 130, Size = UDim2.fromOffset(460, 400), Acrylic = false, Theme = S.Config.UITheme or "Amethyst", MinimizeKey = Enum.KeyCode.LeftControl })
+Window = Fluent:CreateWindow({ Title = "StarCrowHub", SubTitle = "West Bound", TabWidth = 130, Size = UDim2.fromOffset(460, 400), Acrylic = false, Theme = S.Config.UITheme or "Amethyst", MinimizeKey = minimizeKey })
 
 local Tabs = {
-    AutoFarm  = Window:AddTab({ Title = "Auto Farm", Icon = "gem" }),
-    Teleport  = Window:AddTab({ Title = "Teleport",  Icon = "map" }),
     Aim       = Window:AddTab({ Title = "Combat",    Icon = "crosshair" }),
-    ESP       = Window:AddTab({ Title = "ESP",       Icon = "eye" }),
     Player    = Window:AddTab({ Title = "Player",    Icon = "user" }),
+    ESP       = Window:AddTab({ Title = "ESP",       Icon = "eye" }),
     Horse     = Window:AddTab({ Title = "Horse",     Icon = "wind" }),
     Westbound = Window:AddTab({ Title = "Misc",      Icon = "shield" }),
     Settings  = Window:AddTab({ Title = "Settings",  Icon = "settings" })
 }
-
-local function spawnTP(name, isOutlaw)
-    task.spawn(function()
-        pcall(function()
-            local args = { [1] = name, [2] = isOutlaw, [3] = false }
-            game:GetService("ReplicatedStorage"):WaitForChild("GeneralEvents", 9e9):WaitForChild("Spawn", 9e9):InvokeServer(unpack(args))
-        end)
-    end)
-end
-
-Tabs.Teleport:AddSection("Cowboys")
-Tabs.Teleport:AddButton({ Title = "Tumbleweed", Callback = function() spawnTP("Tumbleweed", false) end })
-Tabs.Teleport:AddButton({ Title = "StoneCreek", Callback = function() spawnTP("StoneCreek", false) end })
-Tabs.Teleport:AddButton({ Title = "Quarry", Callback = function() spawnTP("Quarry", false) end })
-Tabs.Teleport:AddButton({ Title = "Grayridge", Callback = function() spawnTP("Grayridge", false) end })
-Tabs.Teleport:AddButton({ Title = "Plainview", Callback = function() spawnTP("Plainview", false) end })
-Tabs.Teleport:AddButton({ Title = "Silverton", Callback = function() spawnTP("Silverton", false) end })
-
-Tabs.Teleport:AddSection("Outlaws")
-Tabs.Teleport:AddButton({ Title = "RedRocks", Callback = function() spawnTP("RedRocks", true) end })
-Tabs.Teleport:AddButton({ Title = "FortCassidy", Callback = function() spawnTP("FortCassidy", true) end })
-Tabs.Teleport:AddButton({ Title = "FortArthur", Callback = function() spawnTP("FortArthur", true) end })
-Tabs.Teleport:AddButton({ Title = "CoyotesRest", Callback = function() spawnTP("CoyotesRest", true) end })
-
-Tabs.AutoFarm:AddButton({
-    Title = "FPS Boost",
-    Description = "Optimizes map graphics for maximum performance.",
-    Callback = function()
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-        end)
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-        Lighting.Brightness = 1
-        for _, v in ipairs(Lighting:GetDescendants()) do
-            if v:IsA("Atmosphere") or v:IsA("Clouds") or v:IsA("Sky") then
-                v:Destroy()
-            elseif v:IsA("PostEffect") or v:IsA("BloomEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("BlurEffect") then
-                v.Enabled = false
-            end
-        end
-        local terrain = workspace:FindFirstChildOfClass("Terrain")
-        if terrain then
-            pcall(function()
-                sethiddenproperty(terrain, "Decoration", false)
-            end)
-            terrain.WaterWaveSize = 0
-            terrain.WaterWaveSpeed = 0
-            terrain.WaterReflectance = 0
-            terrain.WaterTransparency = 0
-        end
-        local function Optimize(v)
-            if v:IsA("BasePart") and not v.Parent:FindFirstChild("Humanoid") then
-                v.Material = Enum.Material.SmoothPlastic
-                v.Reflectance = 0
-                v.CastShadow = false
-            elseif v:IsA("Decal") or v:IsA("Texture") then
-                v.Transparency = 1
-            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("Beam") or v:IsA("Highlight") then
-                v.Enabled = false
-            elseif v:IsA("PointLight") or v:IsA("SurfaceLight") or v:IsA("SpotLight") then
-                v.Enabled = false
-            end
-        end
-        for _, v in ipairs(workspace:GetDescendants()) do Optimize(v) end
-        workspace.DescendantAdded:Connect(Optimize)
-        if Fluent then Fluent:Notify({ Title = "Success", Content = "Ultra FPS Boost Applied!", Duration = 3 }) end
-    end
-})
-
-local totalFarmedTime = 0
-local sessionStartTime = nil
-local totalCollectedMoney = 0
-local lastLeaderboardMoney = nil
-local cachedMoneyObj = nil
-
-local function getLeaderboardMoney()
-    local success, result = pcall(function()
-        if cachedMoneyObj and cachedMoneyObj.Parent then
-            local v = cachedMoneyObj.Value
-            if type(v) == "number" then return v end
-            local n = tonumber(v)
-            if n then return n end
-            return tonumber((tostring(v):gsub("%D", ""))) or 0
-        end
-        local ls = LocalPlayer:FindFirstChild("leaderstats") or LocalPlayer:FindFirstChild("Stats") or LocalPlayer:FindFirstChild("Data")
-        if ls then
-            for _, name in ipairs({"$$", "Cash", "Money", "Dollars", "Wallet"}) do
-                local v = ls:FindFirstChild(name)
-                if v and v:IsA("ValueBase") and v.Value ~= nil then
-                    cachedMoneyObj = v
-                    local num = tonumber(v.Value) or tonumber((tostring(v.Value):gsub("%D", "")))
-                    if num then return num end
-                end
-            end
-            for _, v in ipairs(ls:GetChildren()) do
-                if v:IsA("ValueBase") and v.Value ~= nil then
-                    local num = tonumber(v.Value) or tonumber((tostring(v.Value):gsub("%D", "")))
-                    if num then
-                        cachedMoneyObj = v
-                        return num
-                    end
-                end
-            end
-        end
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if pg then
-            for _, d in ipairs(pg:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible and (d.Text:find("%$") or d.Name:lower():find("cash") or d.Name:lower():find("money")) and not d.Text:find("Bag:") then
-                    local num = tonumber((d.Text:gsub("%D", "")))
-                    if num and num > 0 then return num end
-                end
-            end
-        end
-        return 0
-    end)
-    if success and result then return result end
-    return 0
-end
-
-local function formatMoney(amount)
-    local val = math.floor(math.max(0, amount or 0))
-    local str = tostring(val)
-    local k
-    repeat
-        str, k = str:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-    until k == 0
-    return str
-end
-
-local function formatTime(s)
-    s = math.floor(math.max(0, s or 0))
-    local hours = math.floor(s / 3600)
-    local mins = math.floor((s % 3600) / 60)
-    local secs = s % 60
-    if hours > 0 then
-        return string.format("%02d:%02d:%02d", hours, mins, secs)
-    else
-        return string.format("%02d:%02d", mins, secs)
-    end
-end
-
-local FarmGui = Instance.new("ScreenGui")
-FarmGui.Name = "StarCrowFarmGui"
-FarmGui.ResetOnSpawn = false
-FarmGui.DisplayOrder = 10001
-pcall(function()
-    local old = game:GetService("CoreGui"):FindFirstChild("StarCrowFarmGui")
-    if old then old:Destroy() end
-    FarmGui.Parent = game:GetService("CoreGui")
-end)
-if not FarmGui.Parent then FarmGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-
-local FarmFrame = Instance.new("Frame")
-FarmFrame.Size = UDim2.new(0, 190, 0, 85)
-FarmFrame.Position = UDim2.new(0.5, -95, 0.08, 0)
-FarmFrame.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
-FarmFrame.BorderSizePixel = 0
-FarmFrame.Active = true
-FarmFrame.Draggable = true
-FarmFrame.Visible = false
-FarmFrame.Parent = FarmGui
-Instance.new("UICorner", FarmFrame).CornerRadius = UDim.new(0, 8)
-
-local FarmStroke = Instance.new("UIStroke", FarmFrame)
-FarmStroke.Thickness = 1.5
-FarmStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-FarmStroke.Color = Color3.fromRGB(160, 50, 255)
-
-local FarmStrokeGrad = Instance.new("UIGradient", FarmStroke)
-FarmStrokeGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 50, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 0, 230)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 80, 255)),
-})
-FarmStrokeGrad.Rotation = 45
-
-local FarmPadding = Instance.new("UIPadding", FarmFrame)
-FarmPadding.PaddingTop = UDim.new(0, 6)
-FarmPadding.PaddingBottom = UDim.new(0, 6)
-FarmPadding.PaddingLeft = UDim.new(0, 10)
-FarmPadding.PaddingRight = UDim.new(0, 10)
-
-local FarmUIList = Instance.new("UIListLayout", FarmFrame)
-FarmUIList.SortOrder = Enum.SortOrder.LayoutOrder
-FarmUIList.Padding = UDim.new(0, 4)
-
-local FarmTitle = Instance.new("TextLabel")
-FarmTitle.LayoutOrder = 1
-FarmTitle.Size = UDim2.new(1, 0, 0, 16)
-FarmTitle.BackgroundTransparency = 1
-FarmTitle.Text = "Auto Farm"
-FarmTitle.TextColor3 = Color3.fromRGB(225, 135, 255)
-FarmTitle.Font = Enum.Font.GothamBold
-FarmTitle.TextSize = 12
-FarmTitle.Parent = FarmFrame
-
-local FarmTimeLabel = Instance.new("TextLabel")
-FarmTimeLabel.LayoutOrder = 2
-FarmTimeLabel.Size = UDim2.new(1, 0, 0, 15)
-FarmTimeLabel.BackgroundTransparency = 1
-FarmTimeLabel.Text = "Time: 00:00"
-FarmTimeLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
-FarmTimeLabel.Font = Enum.Font.Gotham
-FarmTimeLabel.TextSize = 10
-FarmTimeLabel.TextXAlignment = Enum.TextXAlignment.Left
-FarmTimeLabel.Parent = FarmFrame
-
-local FarmCollectedLabel = Instance.new("TextLabel")
-FarmCollectedLabel.LayoutOrder = 3
-FarmCollectedLabel.Size = UDim2.new(1, 0, 0, 15)
-FarmCollectedLabel.BackgroundTransparency = 1
-FarmCollectedLabel.Text = "Earned: $0"
-FarmCollectedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-FarmCollectedLabel.Font = Enum.Font.GothamMedium
-FarmCollectedLabel.TextSize = 10
-FarmCollectedLabel.TextXAlignment = Enum.TextXAlignment.Left
-FarmCollectedLabel.Parent = FarmFrame
-
-local FarmTotalLabel = Instance.new("TextLabel")
-FarmTotalLabel.LayoutOrder = 4
-FarmTotalLabel.Size = UDim2.new(1, 0, 0, 15)
-FarmTotalLabel.BackgroundTransparency = 1
-FarmTotalLabel.Text = "Total: $0"
-FarmTotalLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-FarmTotalLabel.Font = Enum.Font.GothamMedium
-FarmTotalLabel.TextSize = 10
-FarmTotalLabel.TextXAlignment = Enum.TextXAlignment.Left
-FarmTotalLabel.Parent = FarmFrame
-
-Tabs.AutoFarm:AddToggle("AutoBankToggle", {
-    Title   = "Auto Farm Banks",
-    Default = S.Config.AutoBankEnabled,
-    Callback = function(v)
-        getgenv().StarCrowAutoBank = v
-        S.Config.AutoBankEnabled = v
-        SaveConfig()
-        if v then
-            totalFarmedTime = 0
-            totalCollectedMoney = 0
-            sessionStartTime = tick()
-            local initTotal = getLeaderboardMoney()
-            lastLeaderboardMoney = initTotal > 0 and initTotal or nil
-            FarmFrame.Visible = true
-            FarmTimeLabel.Text = "Time: 00:00"
-            FarmCollectedLabel.Text = "Earned: $0"
-            FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or 0)
-
-            task.spawn(function()
-                while getgenv().StarCrowAutoBank do
-                    local curTotal = getLeaderboardMoney()
-                    if curTotal > 0 then
-                        if lastLeaderboardMoney and lastLeaderboardMoney > 0 and curTotal > lastLeaderboardMoney then
-                            totalCollectedMoney = totalCollectedMoney + (curTotal - lastLeaderboardMoney)
-                        end
-                        lastLeaderboardMoney = curTotal
-                    end
-                    local curElapsed = sessionStartTime and (tick() - sessionStartTime) or 0
-                    FarmTimeLabel.Text = "Time: " .. formatTime(curElapsed)
-                    FarmCollectedLabel.Text = "Earned: $" .. formatMoney(totalCollectedMoney)
-                    FarmTotalLabel.Text = "Total: $" .. formatMoney(lastLeaderboardMoney or curTotal)
-                    task.wait(1)
-                end
-            end)
-
-            task.spawn(function()
-                local SlowBanks = {
-                    {Name = "Tumbleweed", arg2 = false, p1 = Vector3.new(-339.12, 12.35, -85.14), safePos = Vector3.new(-260.32, 13.35, -172.18)},
-                    {Name = "Grayridge",  arg2 = false, p1 = Vector3.new(1539.44, 120.35, 1619.48), safePos = Vector3.new(1576.47, 121.35, 1674.85)},
-                    {Name = "Plainview",  arg2 = false, p1 = Vector3.new(52.75, 51.20, 2929.41),  safePos = Vector3.new(-0.88, 51.79, 3024.17)},
-                    {Name = "Silverton",  arg2 = false, p1 = Vector3.new(1997.52, 165.03, 3458.83), safePos = Vector3.new(1907.59, 170.08, 3459.57)},
-                    {Name = "StoneCreek", arg2 = false, p1 = nil, safePos = Vector3.new(872.05, 24.67, 198.21)}
-                }
-
-                local FastBanks = {
-                    {Name = "Tumbleweed", arg2 = false, prePos = Vector3.new(-350.05, 12.35, -76.77), p1 = Vector3.new(-260.32, 13.35, -172.18), p2 = Vector3.new(-273.54, 13.35, -172.99)},
-                    {Name = "Grayridge",  arg2 = false, prePos = Vector3.new(1546.87, 120.09, 1603.42), p1 = Vector3.new(1576.47, 121.35, 1674.85), p2 = nil},
-                    {Name = "Plainview",  arg2 = false, prePos = Vector3.new(60.15, 51.20, 2931.69), p1 = Vector3.new(-0.88, 51.79, 3024.17), p2 = Vector3.new(5.79, 51.79, 3024.01)},
-                    {Name = "Silverton",  arg2 = false, prePos = Vector3.new(2022.95, 160.92, 3410.41), p1 = Vector3.new(1907.59, 170.08, 3459.57), p2 = nil},
-                    {Name = "StoneCreek", arg2 = false, prePos = nil, p1 = Vector3.new(872.05, 24.67, 198.21), p2 = nil}
-                }
-
-                local slowIndex = 1
-                local fastIndex = 1
-                while getgenv().StarCrowAutoBank do
-                    if S.Config.FarmMethod == "Fast" then
-                        local bank = FastBanks[fastIndex]
-
-                        SpawnAndTP(bank.Name, bank.arg2, bank.prePos, bank.p1, bank.p2)
-
-                        if IsBagFull() then
-                            SpawnAndTP("FortCassidy", true, nil, nil, nil)
-
-                            local timeout = 0
-                            repeat
-                                task.wait(0.5)
-                                timeout = timeout + 0.5
-                            until not IsBagFull() or timeout >= 5 or not getgenv().StarCrowAutoBank
-                        end
-
-                        fastIndex = fastIndex + 1
-                        if fastIndex > #FastBanks then fastIndex = 1 end
-
-                        task.wait(0.5)
-                    else
-                        local bank = SlowBanks[slowIndex]
-
-                        while getgenv().StarCrowAutoBank and S.Config.FarmMethod ~= "Fast" do
-                            SpawnAt(bank.Name, bank.arg2, bank.p1)
-                            if not getgenv().StarCrowAutoBank or S.Config.FarmMethod == "Fast" then break end
-
-                            RobBankSafes(bank.safePos or bank.p1)
-
-                            local stillHasMoney = false
-                            local safes = GetBankSafes(bank.safePos or bank.p1)
-                            for _, s in ipairs(safes) do
-                                if s.amount and s.amount.Value > 0 then
-                                    stillHasMoney = true
-                                    break
-                                end
-                            end
-
-                            SpawnAt("FortCassidy", true, nil)
-                            local timeout = 0
-                            repeat
-                                task.wait(0.5)
-                                timeout = timeout + 0.5
-                            until not IsBagFull() or timeout >= 3 or not getgenv().StarCrowAutoBank
-
-                            if not stillHasMoney then
-                                break
-                            end
-
-                            task.wait(0.5)
-                        end
-
-                        slowIndex = slowIndex + 1
-                        if slowIndex > #SlowBanks then slowIndex = 1 end
-
-                        task.wait(0.5)
-                    end
-                end
-            end)
-        else
-            totalFarmedTime = 0
-            sessionStartTime = nil
-            totalCollectedMoney = 0
-            lastLeaderboardMoney = nil
-            FarmTimeLabel.Text = "Time: 00:00"
-            FarmCollectedLabel.Text = "Earned: $0"
-            FarmFrame.Visible = false
-        end
-    end
-})
-
-Tabs.AutoFarm:AddDropdown("FarmMethod", {
-    Title = "Method",
-    Values = {"Slow", "Fast"},
-    Default = S.Config.FarmMethod or "Slow",
-    Callback = function(v)
-        S.Config.FarmMethod = v
-        SaveConfig()
-    end
-})
-
-Tabs.AutoFarm:AddInput("SpawnDelay", {
-    Title = "Delay Spawn",
-    Default = tostring(S.Config.SpawnDelay),
-    Numeric = true,
-    Finished = false,
-    Placeholder = "Seconds...",
-    Callback = function(Value)
-        local parsedValue = tonumber(Value)
-        if parsedValue then
-            getgenv().StarCrowSpawnDelay = parsedValue
-            S.Config.SpawnDelay = parsedValue
-            SaveConfig()
-        end
-    end
-})
-
-
 
 Tabs.Aim:AddSection("Silent Aim")
 Tabs.Aim:AddToggle("AimPlayer", { Title = "Silent Aim Player", Default = S.Config.AimPlayer, Callback = function(v) S.Config.AimPlayer = v if v then InitSilentAimHook() end SaveConfig() end })
@@ -2462,7 +1763,7 @@ Tabs.Player:AddToggle("AntiFallDame", { Title = "Anti Fall Dame", Default = S.Co
 
 Tabs.Horse:AddSection("Horse Config")
 Tabs.Horse:AddToggle("HorseHackToggle", { Title = "Horse Speed", Default = S.Config.HorseHackEnabled, Callback = function(v) S.Config.HorseHackEnabled = v SaveConfig() end })
-Tabs.Horse:AddSlider("HorseSprintSpeed", { Title = "Speed Horse", Default = S.Config.HorseSprintSpeed, Min = 40, Max = 100, Rounding = 0, Callback = function(v) S.Config.HorseSprintSpeed = v SaveConfig() end })
+Tabs.Horse:AddSlider("HorseSprintSpeed", { Title = "Speed Horse", Default = math.clamp(tonumber(S.Config.HorseSprintSpeed) or 90, 40, 90), Min = 40, Max = 90, Rounding = 0, Callback = function(v) S.Config.HorseSprintSpeed = math.clamp(v, 40, 90) SaveConfig() end })
 Tabs.Horse:AddSlider("HorseTurnSens", { Title = "Turn Sensitivity", Default = S.Config.HorseTurnSens, Min = 0.01, Max = 1.00, Rounding = 2, Callback = function(v) S.Config.HorseTurnSens = v SaveConfig() end })
 
 Tabs.Westbound:AddSection("Rob & Interactions")
@@ -2769,81 +2070,6 @@ Tabs.Westbound:AddToggle("AutoCollect", {
     end
 })
 
-local function buyItemAsync(name)
-    task.spawn(function()
-        pcall(function()
-            local buyRemote = ReplicatedStorage:WaitForChild("GeneralEvents", 9e9):WaitForChild("BuyItem", 9e9)
-            buyRemote:InvokeServer(unpack({name, true}))
-        end)
-    end)
-end
-
-local function getHealthPotionCount()
-    local count = 0
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t.Name == "Health Potion" and t:IsA("Tool") then
-                count = count + 1
-            end
-        end
-    end
-    local char = LocalPlayer.Character
-    if char then
-        for _, t in ipairs(char:GetChildren()) do
-            if t.Name == "Health Potion" and t:IsA("Tool") then
-                count = count + 1
-            end
-        end
-    end
-    return count
-end
-
-local AutoBuyHealEnabled = S.Config.AutoBuyHeal
-local function runAutoBuyHeal()
-    task.spawn(function()
-        while AutoBuyHealEnabled do
-            if getHealthPotionCount() < 3 then
-                buyItemAsync("Health Potion")
-            end
-            task.wait(S.Config.BuyDelay or 1)
-        end
-    end)
-end
-
-if AutoBuyHealEnabled then runAutoBuyHeal() end
-
-local AutoBuyAmmoEnabled = S.Config.AutoBuyAmmo
-local ammoList = {"PistolAmmo", "RifleAmmo", "ShotgunAmmo", "SniperAmmo", "Arrows"}
-
-local function buySelectedAmmo()
-    local sel = S.Config.SelectedAmmo or "PistolAmmo"
-    if sel == "All" then
-        for _, a in ipairs(ammoList) do
-            buyItemAsync(a)
-        end
-    elseif type(sel) == "table" then
-        for a, state in pairs(sel) do
-            if state then
-                buyItemAsync(a)
-            end
-        end
-    else
-        buyItemAsync(sel)
-    end
-end
-
-local function runAutoBuyAmmo()
-    task.spawn(function()
-        while AutoBuyAmmoEnabled do
-            buySelectedAmmo()
-            task.wait(S.Config.BuyDelay or 1)
-        end
-    end)
-end
-
-if AutoBuyAmmoEnabled then runAutoBuyAmmo() end
-
 local AutoHealEnabled = S.Config.AutoHealEnabled
 local function runAutoHeal()
     task.spawn(function()
@@ -2869,15 +2095,6 @@ local function runAutoHeal()
                             hum:EquipTool(bpPotion)
                             task.wait(0.15)
                             potion = char:FindFirstChild("Health Potion")
-                        elseif AutoBuyHealEnabled or S.Config.AutoBuyHeal then
-                            buyItemAsync("Health Potion")
-                            task.wait(0.3)
-                            local newBpPotion = bp and bp:FindFirstChild("Health Potion")
-                            if newBpPotion then
-                                hum:EquipTool(newBpPotion)
-                                task.wait(0.15)
-                                potion = char:FindFirstChild("Health Potion")
-                            end
                         end
                     end
                     if potion then
@@ -2936,54 +2153,21 @@ Tabs.Westbound:AddSlider("AutoHealHealth", {
     end
 })
 
-Tabs.Westbound:AddSection("Auto Buy")
+Tabs.Settings:AddSection("Keybinds")
 
-Tabs.Westbound:AddToggle("AutoBuyAmmo", {
-    Title = "Auto Buy Ammo",
-    Default = S.Config.AutoBuyAmmo,
-    Callback = function(v)
-        AutoBuyAmmoEnabled = v
-        S.Config.AutoBuyAmmo = v
-        SaveConfig()
-        if v then runAutoBuyAmmo() end
-    end
-})
-
-Tabs.Westbound:AddDropdown("SelectAmmo", {
-    Title = "Select Ammo",
-    Values = {"All", "PistolAmmo", "RifleAmmo", "ShotgunAmmo", "SniperAmmo", "Arrows"},
-    Default = S.Config.SelectedAmmo or "PistolAmmo",
-    Callback = function(v)
-        S.Config.SelectedAmmo = v
+ToggleUIKeybind = Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+    Title = "Minimize UI Keybind",
+    Mode = "Toggle",
+    Default = S.Config.MinimizeKey or "LeftControl",
+    ChangedCallback = function(NewKey)
+        local keyCode = resolveKeyCode(NewKey, Enum.KeyCode.LeftControl)
+        minimizeKey = keyCode
+        Fluent.MinimizeKey = keyCode
+        Window.MinimizeKey = keyCode
+        S.Config.MinimizeKey = keyCode.Name
         SaveConfig()
     end
 })
-
-Tabs.Westbound:AddToggle("AutoBuyHeal", {
-    Title = "Auto Buy Heal",
-    Default = S.Config.AutoBuyHeal,
-    Callback = function(v)
-        AutoBuyHealEnabled = v
-        S.Config.AutoBuyHeal = v
-        SaveConfig()
-        if v then runAutoBuyHeal() end
-    end
-})
-
-Tabs.Westbound:AddSlider("DelayBuy", {
-    Title = "Delay Buy",
-    Suffix = "s",
-    Default = S.Config.BuyDelay or 1,
-    Min = 1,
-    Max = 3,
-    Rounding = 1,
-    Callback = function(v)
-        S.Config.BuyDelay = v
-        SaveConfig()
-    end
-})
-
-Tabs.Settings:AddKeybind("ToggleUIKeybind", { Title = "Minimize UI Keybind", Mode = "Toggle", Default = "LeftControl", ChangedCallback = function(NewKey) Window.MinimizeKey = NewKey minimizeKey = typeof(NewKey) == "EnumItem" and NewKey or (Enum.KeyCode[NewKey] or NewKey) end })
 
 local _saveDebounce = nil
 local function SaveConfigDebounced()
@@ -3027,6 +2211,62 @@ Tabs.Settings:AddSlider("FloatButtonSize", {
         if AuraBtn then AuraBtn.Size = UDim2.new(0, Value, 0, Value) end
         if AimNPCBtn then AimNPCBtn.Size = UDim2.new(0, Value, 0, Value) end
         SaveConfigDebounced()
+    end
+})
+
+local fpsBoostConn = nil
+Tabs.Settings:AddSection("Performance")
+Tabs.Settings:AddButton({
+    Title = "FPS Boost",
+    Callback = function()
+        pcall(function()
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 1
+        for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("Atmosphere") or v:IsA("Clouds") or v:IsA("Sky") then
+                v:Destroy()
+            elseif v:IsA("PostEffect") or v:IsA("BloomEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("BlurEffect") then
+                v.Enabled = false
+            end
+        end
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            pcall(function()
+                sethiddenproperty(terrain, "Decoration", false)
+            end)
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
+        end
+        local function Optimize(v)
+            local p = v.Parent
+            local pp = p and p.Parent
+            if v:IsA("BasePart") and (not p or not p:FindFirstChild("Humanoid")) and (not pp or not pp:FindFirstChild("Humanoid")) then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+                v.CastShadow = false
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v.Transparency = 1
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") or v:IsA("Beam") or v:IsA("Highlight") then
+                v.Enabled = false
+            elseif v:IsA("PointLight") or v:IsA("SurfaceLight") or v:IsA("SpotLight") then
+                v.Enabled = false
+            end
+        end
+        for _, v in ipairs(workspace:GetDescendants()) do
+            Optimize(v)
+        end
+        if fpsBoostConn then
+            fpsBoostConn:Disconnect()
+        end
+        fpsBoostConn = workspace.DescendantAdded:Connect(Optimize)
+        if Fluent then
+            Fluent:Notify({ Title = "Success", Content = "Ultra FPS Boost Applied!", Duration = 3 })
+        end
     end
 })
 
