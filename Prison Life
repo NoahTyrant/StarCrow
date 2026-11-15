@@ -8,40 +8,77 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local CollectionService = game:GetService("CollectionService")
 local Teams = game:GetService("Teams")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local ContentProvider = game:GetService("ContentProvider")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+local HYPERLASER_SOUND_ID = "rbxassetid://130113322"
+local NEVERLOSE_SOUND_ID = "rbxassetid://6607204501"
+
 local Config = {
     AutoArrest = false,
     FastFire = false,
-    AutoFire = false,
+    AutoSwitchReload = false,
     NoSpread = false,
     SilentAim = false,
     FOVMode = "No FOV",
     FOVRadius = 120,
     AimPart = "Head",
-    TeamCheck = false,
     FriendCheck = false,
     WallCheck = false,
     IgnoreTeams = {},
+    SwitchReloadGuns = {
+        ["AK-47"] = true,
+        ["FAL"] = true,
+        ["M4A1"] = true,
+        ["M700"] = true,
+        ["MP5"] = true,
+        ["M9"] = true,
+        ["Remington 870"] = true,
+        ["Revolver"] = true,
+    },
     MeleeAura = false,
-    MeleeRange = 15,
     LoopSpeedEnabled = false,
     WalkSpeed = 30,
     FlyEnabled = false,
     FlySpeed = 5,
     InfJumpEnabled = false,
     NoclipEnabled = false,
+    DisableKeybinds = false,
+    FlyKey = "F",
+    NoclipKey = "J",
     ESPEnabled = false,
-    SelectedGun = "AK-47",
+    PurpleTracers = false,
+    CustomGunSound = false,
+    HitSoundEnabled = false,
+    AutoPickupItems = false,
+    SelectedGuns = {
+        ["AK-47"] = true,
+    },
     MinimizeKey = "LeftControl",
 }
 
 local SAVE_FOLDER = "StarCrowHub"
 local SAVE_FILE = SAVE_FOLDER .. "/PrisonLifeConfig.json"
+local hasSavedSwitchReloadGuns = false
+
+local function sanitizeStringBoolMap(tbl, excludedKey)
+    local clean = {}
+    if type(tbl) ~= "table" then return clean end
+    for k, v in pairs(tbl) do
+        if type(k) == "string" and v == true and k ~= excludedKey then
+            clean[k] = true
+        elseif type(k) == "number" and type(v) == "string" and v ~= excludedKey then
+            clean[v] = true
+        end
+    end
+    return clean
+end
 
 local function SaveConfig()
     pcall(function()
@@ -54,9 +91,18 @@ local function LoadConfig()
     pcall(function()
         if isfile(SAVE_FILE) then
             local decoded = HttpService:JSONDecode(readfile(SAVE_FILE))
-            for k, v in pairs(decoded) do
-                if Config[k] ~= nil then
-                    Config[k] = v
+            if type(decoded) == "table" then
+                if decoded.SwitchReloadGuns == nil and type(decoded.SwitchGuns) == "table" then
+                    decoded.SwitchReloadGuns = decoded.SwitchGuns
+                end
+                hasSavedSwitchReloadGuns = type(decoded.SwitchReloadGuns) == "table"
+                if decoded.SelectedGuns == nil and type(decoded.SelectedGun) == "string" and decoded.SelectedGun ~= "" then
+                    decoded.SelectedGuns = { [decoded.SelectedGun] = true }
+                end
+                for k, v in pairs(decoded) do
+                    if Config[k] ~= nil then
+                        Config[k] = v
+                    end
                 end
             end
         end
@@ -65,11 +111,17 @@ end
 
 LoadConfig()
 
-if type(Config.IgnoreTeams) ~= "table" then
-    Config.IgnoreTeams = {}
-end
+Config.IgnoreTeams = sanitizeStringBoolMap(Config.IgnoreTeams, "Neutral")
+Config.SwitchReloadGuns = sanitizeStringBoolMap(Config.SwitchReloadGuns, nil)
+Config.SelectedGuns = sanitizeStringBoolMap(Config.SelectedGuns, nil)
 Config.WalkSpeed = math.clamp(tonumber(Config.WalkSpeed) or 30, 30, 100)
 Config.FlySpeed = math.clamp(tonumber(Config.FlySpeed) or 5, 1, 10)
+
+task.spawn(function()
+    pcall(function()
+        ContentProvider:PreloadAsync({ HYPERLASER_SOUND_ID, NEVERLOSE_SOUND_ID })
+    end)
+end)
 
 LocalPlayer.Idled:Connect(function()
     pcall(function()
@@ -120,8 +172,96 @@ local origToolAttrs = setmetatable({}, { __mode = "k" })
 local origGunState = setmetatable({}, { __mode = "k" })
 local trackedGunTools = setmetatable({}, { __mode = "k" })
 
+local GunRemotesFolder = nil
+local ShootEvent = nil
+local FuncReloadRemote = nil
+
+local function ensureGunRemotes()
+    if ShootEvent and FuncReloadRemote then return end
+    if not GunRemotesFolder then
+        GunRemotesFolder = ReplicatedStorage:FindFirstChild("GunRemotes")
+    end
+    if GunRemotesFolder then
+        if not ShootEvent then
+            ShootEvent = GunRemotesFolder:FindFirstChild("ShootEvent")
+        end
+        if not FuncReloadRemote then
+            FuncReloadRemote = GunRemotesFolder:FindFirstChild("FuncReload")
+        end
+    end
+end
+
+task.spawn(function()
+    local folder = ReplicatedStorage:FindFirstChild("GunRemotes") or ReplicatedStorage:WaitForChild("GunRemotes", 15)
+    if folder then
+        GunRemotesFolder = folder
+        ShootEvent = folder:FindFirstChild("ShootEvent") or folder:WaitForChild("ShootEvent", 15)
+        FuncReloadRemote = folder:FindFirstChild("FuncReload") or folder:WaitForChild("FuncReload", 15)
+    end
+end)
+
+local function playLocalEffectSound(soundId, volume)
+    if not soundId or soundId == "" then return end
+    pcall(function()
+        local s = Instance.new("Sound")
+        s.SoundId = soundId
+        s.Volume = volume or 0.85
+        s.PlayOnRemove = false
+        s.Parent = SoundService
+        s:Play()
+        Debris:AddItem(s, 3)
+    end)
+end
+
+local PURPLE_TRACER_COLOR = Color3.fromRGB(170, 70, 255)
+local hookedCameras = setmetatable({}, { __mode = "k" })
+
+local function hookCameraTracers(cam)
+    if not cam or hookedCameras[cam] then return end
+    hookedCameras[cam] = true
+    cam.ChildAdded:Connect(function(child)
+        if not Config.PurpleTracers then return end
+        if not child:IsA("BasePart") or child.Name ~= "RayPart" then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local originRef = nil
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") and item:GetAttribute("ToolType") == "Gun" then
+                local muzzle = item:FindFirstChild("Muzzle")
+                if muzzle and muzzle:IsA("BasePart") then
+                    originRef = muzzle.Position
+                    break
+                end
+            end
+        end
+        if not originRef then
+            local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            originRef = head and head.Position
+        end
+        if not originRef then return end
+        local startPos = child.Position - child.CFrame.LookVector * (child.Size.Z * 0.5)
+        if (startPos - originRef).Magnitude <= 18 then
+            child.Color = PURPLE_TRACER_COLOR
+            for _, desc in ipairs(child:GetDescendants()) do
+                if desc:IsA("Light") then
+                    desc.Color = PURPLE_TRACER_COLOR
+                end
+            end
+        end
+    end)
+end
+
+hookCameraTracers(workspace.CurrentCamera)
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    hookCameraTracers(workspace.CurrentCamera)
+end)
+
 local function isGunTool(tool)
     return tool and tool:IsA("Tool") and tool:GetAttribute("ToolType") == "Gun"
+end
+
+local function isTaserTool(tool)
+    return tool and (tool.Name == "Taser" or tool:GetAttribute("Behavior") == "Taser")
 end
 
 local function saveOriginalToolAttrs(tool)
@@ -148,7 +288,7 @@ local function applyModToTool(tool)
         tool:SetAttribute("ChargeTime", Config.FastFire and 0 or orig.ChargeTime)
     end
     if orig.AutoFire ~= nil then
-        tool:SetAttribute("AutoFire", (Config.AutoFire or Config.FastFire) and true or orig.AutoFire)
+        tool:SetAttribute("AutoFire", Config.FastFire and true or orig.AutoFire)
     end
     if orig.SpreadRadius ~= nil then
         tool:SetAttribute("SpreadRadius", Config.NoSpread and 0 or orig.SpreadRadius)
@@ -193,7 +333,7 @@ local function patchLiveGunStateTable(obj, equippedOrig)
         obj.ChargeTime = Config.FastFire and 0 or orig.ChargeTime
     end
     if orig.AutoFire ~= nil then
-        obj.AutoFire = (Config.AutoFire or Config.FastFire) and true or orig.AutoFire
+        obj.AutoFire = Config.FastFire and true or orig.AutoFire
     end
     if orig.SpreadRadius ~= nil then
         obj.SpreadRadius = Config.NoSpread and 0 or orig.SpreadRadius
@@ -256,12 +396,264 @@ local function applyGunMods()
     end
 end
 
+local reloadingGunTools = setmetatable({}, { __mode = "k" })
+local hookedReloadTools = setmetatable({}, { __mode = "k" })
+local hookedSoundHandles = setmetatable({}, { __mode = "k" })
+local switchingReloadLock = false
+
+local function isGunSelected(map, tool)
+    return type(map) == "table" and tool ~= nil and map[tool.Name] == true
+end
+
+local function isGunReadyToSwitch(tool, excludedTool)
+    if not tool or tool == excludedTool then return false end
+    if not isGunTool(tool) then return false end
+    if not isGunSelected(Config.SwitchReloadGuns, tool) then return false end
+    if (tool:GetAttribute("Local_ReloadSession") or 0) > 0 or reloadingGunTools[tool] then
+        return false
+    end
+    if tool:GetAttribute("Behavior") == "Sniper" and (tool:GetAttribute("CurrentAmmo") or 0) <= 0 and (tool:GetAttribute("StoredAmmo") or 0) <= 0 then
+        return false
+    end
+    local curAmmo = tool:GetAttribute("CurrentAmmo")
+    local localAmmo = tool:GetAttribute("Local_CurrentAmmo")
+    if curAmmo ~= nil and curAmmo <= 0 then
+        return false
+    end
+    if localAmmo ~= nil and localAmmo <= 0 and not (curAmmo ~= nil and curAmmo > 0) then
+        return false
+    end
+    return true
+end
+
+local function findNextLoadedSwitchGun(excludedTool)
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if not bp then return nil end
+    for _, child in ipairs(bp:GetChildren()) do
+        if isGunReadyToSwitch(child, excludedTool) then
+            return child
+        end
+    end
+    return nil
+end
+
+local cachedGunReloadFunc = nil
+local lastReloadScanTime = 0
+
+local function findGunReloadFunc()
+    if cachedGunReloadFunc then return cachedGunReloadFunc end
+    local now = os.clock()
+    if now - lastReloadScanTime < 0.5 then return nil end
+    lastReloadScanTime = now
+    ensureGunRemotes()
+    if not FuncReloadRemote or not getconnections then return nil end
+    local getupvals = (debug and debug.getupvalues) or getupvalues
+    if not getupvals then return nil end
+    local ok, found = pcall(function()
+        local seen = {}
+        local function scan(fn, depth)
+            if type(fn) ~= "function" or seen[fn] or depth > 3 then return nil end
+            seen[fn] = true
+            local upvals = getupvals(fn)
+            for _, val in pairs(upvals) do
+                if val == FuncReloadRemote then
+                    return fn
+                end
+            end
+            for _, val in pairs(upvals) do
+                if type(val) == "function" then
+                    local res = scan(val, depth + 1)
+                    if res then return res end
+                end
+            end
+            return nil
+        end
+        for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do
+            if conn.Function then
+                local res = scan(conn.Function, 0)
+                if res then return res end
+            end
+        end
+        return nil
+    end)
+    if ok and found then
+        cachedGunReloadFunc = found
+    end
+    return cachedGunReloadFunc
+end
+
+local function startBackgroundReloadSync(tool)
+    if not tool then return false end
+    if tool:GetAttribute("Behavior") == "Sniper" and (tool:GetAttribute("StoredAmmo") or 0) <= 0 then
+        return false
+    end
+    if reloadingGunTools[tool] then
+        return true
+    end
+    ensureGunRemotes()
+    reloadingGunTools[tool] = true
+    local reloadTime = tonumber(tool:GetAttribute("ReloadTime")) or 2
+    local existingSession = tool:GetAttribute("Local_ReloadSession") or 0
+    local mySession = existingSession
+    if existingSession <= 0 then
+        mySession = tick()
+        tool:SetAttribute("Local_ReloadSession", mySession)
+    end
+
+    local finished = false
+    local ammoConn = nil
+    local lastObservedAmmo = tool:GetAttribute("CurrentAmmo") or 0
+
+    local function finishReloadSync(syncAmmo)
+        if finished then return end
+        finished = true
+        if ammoConn then
+            ammoConn:Disconnect()
+            ammoConn = nil
+        end
+        if tool.Parent then
+            local updatedAmmo = tool:GetAttribute("CurrentAmmo")
+            if syncAmmo and updatedAmmo and updatedAmmo > 0 then
+                tool:SetAttribute("Local_CurrentAmmo", updatedAmmo)
+            end
+            if tool:GetAttribute("Local_ReloadSession") == mySession then
+                tool:SetAttribute("Local_ReloadSession", 0)
+            end
+        end
+        reloadingGunTools[tool] = nil
+    end
+
+    ammoConn = tool:GetAttributeChangedSignal("CurrentAmmo"):Connect(function()
+        local cur = tool:GetAttribute("CurrentAmmo")
+        if cur and cur > lastObservedAmmo and cur > 0 then
+            finishReloadSync(true)
+        elseif cur then
+            lastObservedAmmo = cur
+        end
+    end)
+
+    if existingSession <= 0 and FuncReloadRemote then
+        task.spawn(function()
+            pcall(function()
+                FuncReloadRemote:InvokeServer()
+            end)
+            if finished then return end
+            local maxAmmo = tool:GetAttribute("MaxAmmo") or 1
+            local curNow = tool:GetAttribute("CurrentAmmo") or 0
+            if curNow > 0 and (curNow > lastObservedAmmo or curNow >= maxAmmo) then
+                finishReloadSync(true)
+                return
+            end
+            task.wait(0.08)
+            if finished then return end
+            local curAfter = tool:GetAttribute("CurrentAmmo") or 0
+            finishReloadSync(curAfter > 0 and (curAfter > lastObservedAmmo or curAfter >= maxAmmo))
+        end)
+    end
+
+    task.delay(reloadTime + 1.5, function()
+        if not finished then
+            local maxAmmo = tool:GetAttribute("MaxAmmo") or 1
+            local cur = tool:GetAttribute("CurrentAmmo") or 0
+            finishReloadSync(cur > 0 and (cur > lastObservedAmmo or cur >= maxAmmo))
+        end
+    end)
+
+    return true
+end
+
+local function onGunEmptyCheck(tool)
+    if not Config.AutoSwitchReload then return end
+    if switchingReloadLock then return end
+    if not isGunTool(tool) then return end
+    local char = LocalPlayer.Character
+    if not char or tool.Parent ~= char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    local localAmmo = tool:GetAttribute("Local_CurrentAmmo")
+    if not localAmmo or localAmmo > 0 then return end
+    if tool:GetAttribute("Behavior") == "Sniper" and (tool:GetAttribute("StoredAmmo") or 0) <= 0 then return end
+
+    if not isGunSelected(Config.SwitchReloadGuns, tool) then return end
+
+    switchingReloadLock = true
+    local ok, err = pcall(function()
+        local nextGun = findNextLoadedSwitchGun(tool)
+        if not nextGun then
+            if (tool:GetAttribute("Local_ReloadSession") or 0) <= 0 then
+                local reloadFn = findGunReloadFunc()
+                if reloadFn then
+                    task.spawn(reloadFn)
+                else
+                    startBackgroundReloadSync(tool)
+                end
+            end
+            return
+        end
+        startBackgroundReloadSync(tool)
+        task.wait(0.02)
+        if not Config.AutoSwitchReload then return end
+        local curChar = LocalPlayer.Character
+        local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not curChar or not curHum or curHum.Health <= 0 or tool.Parent ~= curChar or not bp then
+            return
+        end
+        local switchTarget = (nextGun.Parent == bp and isGunReadyToSwitch(nextGun, tool)) and nextGun or findNextLoadedSwitchGun(tool)
+        if switchTarget and switchTarget.Parent == bp then
+            curHum:EquipTool(switchTarget)
+        end
+    end)
+    switchingReloadLock = false
+    if not ok and err then
+        warn(err)
+    end
+end
+
+local function hookToolSoundHandle(tool, handle)
+    if not handle or hookedSoundHandles[handle] then return end
+    hookedSoundHandles[handle] = true
+    handle.ChildAdded:Connect(function(added)
+        if not Config.CustomGunSound then return end
+        if tool.Parent ~= LocalPlayer.Character then return end
+        if added:IsA("Sound") and added.Name == "ShootSound" then
+            pcall(function()
+                added.Volume = 0
+            end)
+            playLocalEffectSound(HYPERLASER_SOUND_ID, 0.8)
+        end
+    end)
+end
+
+local function hookToolEffectsAndReload(tool)
+    if not isGunTool(tool) then return end
+    local handle = tool:FindFirstChild("Handle")
+    if handle then
+        hookToolSoundHandle(tool, handle)
+    end
+    if not hookedReloadTools[tool] then
+        hookedReloadTools[tool] = true
+        tool.ChildAdded:Connect(function(child)
+            if child.Name == "Handle" then
+                hookToolSoundHandle(tool, child)
+            end
+        end)
+        tool:GetAttributeChangedSignal("Local_CurrentAmmo"):Connect(function()
+            local ammo = tool:GetAttribute("Local_CurrentAmmo")
+            if Config.AutoSwitchReload and ammo ~= nil and ammo <= 0 and tool.Parent == LocalPlayer.Character then
+                task.spawn(onGunEmptyCheck, tool)
+            end
+        end)
+    end
+end
+
 local function watchToolContainer(container)
     if not container then return end
     for _, child in ipairs(container:GetChildren()) do
         if isGunTool(child) then
             saveOriginalToolAttrs(child)
-            if Config.FastFire or Config.AutoFire or Config.NoSpread then
+            hookToolEffectsAndReload(child)
+            if Config.FastFire or Config.NoSpread then
                 applyModToTool(child)
             end
         end
@@ -269,7 +661,8 @@ local function watchToolContainer(container)
     container.ChildAdded:Connect(function(child)
         if isGunTool(child) then
             saveOriginalToolAttrs(child)
-            if Config.FastFire or Config.AutoFire or Config.NoSpread then
+            hookToolEffectsAndReload(child)
+            if Config.FastFire or Config.NoSpread then
                 applyModToTool(child)
                 task.defer(applyGunMods)
             end
@@ -277,7 +670,8 @@ local function watchToolContainer(container)
             task.defer(function()
                 if child.Parent and isGunTool(child) then
                     saveOriginalToolAttrs(child)
-                    if Config.FastFire or Config.AutoFire or Config.NoSpread then
+                    hookToolEffectsAndReload(child)
+                    if Config.FastFire or Config.NoSpread then
                         applyModToTool(child)
                         applyGunMods()
                     end
@@ -306,7 +700,7 @@ LocalPlayer.ChildAdded:Connect(function(child)
     end
 end)
 
-if Config.FastFire or Config.AutoFire or Config.NoSpread then
+if Config.FastFire or Config.NoSpread then
     task.defer(applyGunMods)
 end
 
@@ -323,6 +717,7 @@ end
 local insideInternalRaycast = false
 
 local function isTargetVisible(fromPos, targetPart, targetChar)
+    local prevInternal = insideInternalRaycast
     insideInternalRaycast = true
     local ok, visible = pcall(function()
         local ignoreList = { targetChar }
@@ -358,7 +753,7 @@ local function isTargetVisible(fromPos, targetPart, targetChar)
         end
         return false
     end)
-    insideInternalRaycast = false
+    insideInternalRaycast = prevInternal
     if ok then
         return visible
     end
@@ -384,6 +779,47 @@ local function isTeamIgnored(player)
     return false
 end
 
+local function isNeutralPlayer(player)
+    local neutralTeam = Teams:FindFirstChild("Neutral")
+    if neutralTeam and player.Team == neutralTeam then
+        return true
+    end
+    return player.Team == nil
+end
+
+local function getPlayerFromHitInstance(inst)
+    local cur = inst
+    while cur and cur ~= workspace do
+        if cur:IsA("Model") then
+            local p = Players:GetPlayerFromCharacter(cur)
+            if p then
+                return p, cur
+            end
+        end
+        cur = cur.Parent
+    end
+    return nil, nil
+end
+
+local function canGameDamage(player)
+    if not player or player == LocalPlayer then return false end
+    if isNeutralPlayer(player) then return false end
+    if player.Team == LocalPlayer.Team then return false end
+    local char = player.Character
+    if not char then return false end
+    local guardsTeam = Teams:FindFirstChild("Guards")
+    local inmatesTeam = Teams:FindFirstChild("Inmates")
+    if guardsTeam and inmatesTeam and LocalPlayer.Team == guardsTeam and player.Team == inmatesTeam then
+        if not char:GetAttribute("Hostile") then
+            return false
+        end
+    end
+    if char:FindFirstChildOfClass("ForceField") then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return true
+end
+
 local function getSilentAimTargetPart()
     Camera = workspace.CurrentCamera
     if not Camera then return nil end
@@ -400,9 +836,6 @@ local function getSilentAimTargetPart()
         if player ~= LocalPlayer then
             local skip = false
             if isTeamIgnored(player) then
-                skip = true
-            end
-            if not skip and Config.TeamCheck and isSameTeam(player) then
                 skip = true
             end
             if not skip and Config.FriendCheck and friendCache[player.UserId] then
@@ -470,13 +903,22 @@ if not fovCircle then
     stroke.Thickness = 1.8
 end
 
-local ShootEvent = nil
-task.spawn(function()
-    local gunRemotes = ReplicatedStorage:FindFirstChild("GunRemotes") or ReplicatedStorage:WaitForChild("GunRemotes", 15)
-    if gunRemotes then
-        ShootEvent = gunRemotes:FindFirstChild("ShootEvent") or gunRemotes:WaitForChild("ShootEvent", 15)
+local function handleHitSoundFromBullets(bullets)
+    if not Config.HitSoundEnabled or type(bullets) ~= "table" then return end
+    for i = 1, #bullets do
+        local b = bullets[i]
+        if type(b) == "table" then
+            local hitInst = b[3]
+            if typeof(hitInst) == "Instance" then
+                local player = getPlayerFromHitInstance(hitInst)
+                if player and canGameDamage(player) then
+                    playLocalEffectSound(NEVERLOSE_SOUND_ID, 0.9)
+                    return
+                end
+            end
+        end
     end
-end)
+end
 
 local isExecutorCall = checkcaller or function()
     return false
@@ -487,31 +929,47 @@ if hookmetamethod and getnamecallmethod and newcclosure then
         local oldNamecall
         oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
             local method = getnamecallmethod()
-            if Config.SilentAim and not isExecutorCall() and not insideInternalRaycast then
-                local target = cachedSilentTarget
-                if target and target.Parent then
-                    if method == "FireServer" and ShootEvent and self == ShootEvent then
-                        local args = table.pack(...)
-                        local bullets = args[1]
-                        if type(bullets) == "table" then
-                            for i = 1, #bullets do
-                                if type(bullets[i]) == "table" then
-                                    bullets[i][2] = target.Position
-                                    bullets[i][3] = target
+            if not isExecutorCall() and not insideInternalRaycast then
+                local isShootRemote = method == "FireServer" and ShootEvent and self == ShootEvent
+                if Config.SilentAim then
+                    local target = cachedSilentTarget
+                    if target and target.Parent then
+                        if isShootRemote then
+                            local args = table.pack(...)
+                            local bullets = args[1]
+                            if type(bullets) == "table" then
+                                for i = 1, #bullets do
+                                    if type(bullets[i]) == "table" then
+                                        bullets[i][2] = target.Position
+                                        bullets[i][3] = target
+                                    end
+                                end
+                            end
+                            local results = table.pack(oldNamecall(self, table.unpack(args, 1, args.n)))
+                            if Config.HitSoundEnabled and type(bullets) == "table" then
+                                task.defer(handleHitSoundFromBullets, bullets)
+                            end
+                            return table.unpack(results, 1, results.n)
+                        elseif method == "Raycast" and self == workspace then
+                            local origin, dir, params = ...
+                            if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and typeof(params) == "RaycastParams" and params.CollisionGroup == "ClientBullet" then
+                                local offset = target.Position - origin
+                                if offset.Magnitude > 0.01 then
+                                    local newDir = offset.Unit * dir.Magnitude
+                                    return oldNamecall(self, origin, newDir, params)
                                 end
                             end
                         end
-                        return oldNamecall(self, table.unpack(args, 1, args.n))
-                    elseif method == "Raycast" and self == workspace then
-                        local origin, dir, params = ...
-                        if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" and typeof(params) == "RaycastParams" and params.CollisionGroup == "ClientBullet" then
-                            local offset = target.Position - origin
-                            if offset.Magnitude > 0.01 then
-                                local newDir = offset.Unit * dir.Magnitude
-                                return oldNamecall(self, origin, newDir, params)
-                            end
-                        end
                     end
+                end
+                if isShootRemote and Config.HitSoundEnabled then
+                    local args = table.pack(...)
+                    local bullets = args[1]
+                    local results = table.pack(oldNamecall(self, table.unpack(args, 1, args.n)))
+                    if type(bullets) == "table" then
+                        task.defer(handleHitSoundFromBullets, bullets)
+                    end
+                    return table.unpack(results, 1, results.n)
                 end
             end
             return oldNamecall(self, ...)
@@ -872,6 +1330,18 @@ local excludedGuns = {
     ["Taser"] = true,
 }
 
+local fallbackAllGunNames = {
+    "AK-47",
+    "FAL",
+    "M4A1",
+    "M700",
+    "M9",
+    "MP5",
+    "Remington 870",
+    "Revolver",
+    "Taser",
+}
+
 local function getGunList()
     local seen = {}
     local list = {}
@@ -887,6 +1357,29 @@ local function getGunList()
     end
     for _, name in ipairs(fallbackGunNames) do
         if not excludedGuns[name] and not seen[name] then
+            seen[name] = true
+            table.insert(list, name)
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+local function getAllGunList()
+    local seen = {}
+    local list = {}
+    local sharedMods = ReplicatedStorage:FindFirstChild("SharedModules")
+    local toolProps = sharedMods and sharedMods:FindFirstChild("ToolProperties")
+    if toolProps then
+        for _, mod in ipairs(toolProps:GetChildren()) do
+            if not seen[mod.Name] then
+                seen[mod.Name] = true
+                table.insert(list, mod.Name)
+            end
+        end
+    end
+    for _, name in ipairs(fallbackAllGunNames) do
+        if not seen[name] then
             seen[name] = true
             table.insert(list, name)
         end
@@ -963,9 +1456,212 @@ local function playerOwnsTool(gunName)
 end
 
 local gettingGun = false
+local AUTO_PICKUP_RANGE = 25
+local dropPickupCooldown = setmetatable({}, { __mode = "k" })
 
-local function getGunAndReturn(gunName)
+local function triggerItemInteraction(obj, part, hrp, allowDropRemote)
+    if not obj or not part or not hrp or not hrp.Parent then return end
+    local isDrop = allowDropRemote or CollectionService:HasTag(obj, "Drop")
+
+    if GiverPressedRemote and (CollectionService:HasTag(obj, "Giver") or CollectionService:HasTag(obj, "TouchGiver") or isDrop) then
+        pcall(function()
+            GiverPressedRemote:FireServer(obj)
+        end)
+    end
+
+    if firetouchinterest then
+        local touchParts = {}
+        for _, desc in ipairs(obj:GetDescendants()) do
+            if desc:IsA("TouchTransmitter") and desc.Parent and desc.Parent:IsA("BasePart") then
+                table.insert(touchParts, desc.Parent)
+            end
+        end
+        if #touchParts > 0 then
+            for _, tPart in ipairs(touchParts) do
+                pcall(function()
+                    firetouchinterest(hrp, tPart, 0)
+                    task.wait(0.02)
+                    firetouchinterest(hrp, tPart, 1)
+                end)
+            end
+        elseif CollectionService:HasTag(obj, "TouchGiver") or obj:IsA("Tool") then
+            if obj:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(hrp, obj, 0)
+                    task.wait(0.02)
+                    firetouchinterest(hrp, obj, 1)
+                end)
+            elseif obj:IsA("Tool") and part:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(hrp, part, 0)
+                    task.wait(0.02)
+                    firetouchinterest(hrp, part, 1)
+                end)
+            else
+                for _, desc in ipairs(obj:GetDescendants()) do
+                    if desc:IsA("BasePart") then
+                        pcall(function()
+                            firetouchinterest(hrp, desc, 0)
+                            task.wait(0.02)
+                            firetouchinterest(hrp, desc, 1)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    local pName = obj.Parent and obj.Parent.Name
+    if InteractWithItemRemote and (pName == "giver" or pName == "single" or isDrop) then
+        task.spawn(function()
+            pcall(function()
+                InteractWithItemRemote:InvokeServer(part)
+            end)
+        end)
+    end
+
+    if fireclickdetector then
+        local cd = obj:FindFirstChildWhichIsA("ClickDetector", true)
+        if cd then
+            pcall(function()
+                fireclickdetector(cd)
+            end)
+        end
+    end
+
+    if fireproximityprompt then
+        local pp = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if pp then
+            pcall(function()
+                fireproximityprompt(pp)
+            end)
+        end
+    end
+end
+
+local function isInsideAnyCharacter(obj)
+    local cur = obj and obj.Parent
+    while cur and cur ~= workspace do
+        if cur:IsA("Model") and Players:GetPlayerFromCharacter(cur) then
+            return true
+        end
+        cur = cur.Parent
+    end
+    return false
+end
+
+local function getDropItemName(obj)
+    if not obj then return "" end
+    local attrName = obj:GetAttribute("ToolName") or obj:GetAttribute("ItemName")
+    if type(attrName) == "string" and attrName ~= "" then
+        return attrName
+    end
+    return obj.Name or ""
+end
+
+local function tryPickupDroppedObject(obj, hrp, now)
+    if not obj or not obj:IsDescendantOf(workspace) then return end
+    if isInsideAnyCharacter(obj) then return end
+    local handle = obj:IsA("Tool") and obj:FindFirstChild("Handle")
+    local part = (handle and handle:IsA("BasePart")) and handle or getGiverPart(obj)
+    if not part or not part:IsA("BasePart") then return end
+    if (part.Position - hrp.Position).Magnitude > AUTO_PICKUP_RANGE then return end
+
+    local itemName = getDropItemName(obj)
+    if itemName ~= "" and itemName ~= "Drop" and playerOwnsTool(itemName) then
+        return
+    end
+
+    local lastTry = dropPickupCooldown[obj]
+    if lastTry and (now - lastTry) < 0.75 then
+        return
+    end
+    dropPickupCooldown[obj] = now
+
+    task.spawn(triggerItemInteraction, obj, part, hrp, true)
+end
+
+local function scanAndPickupDroppedItems()
+    if not Config.AutoPickupItems then return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or hum.Health <= 0 or not hrp then return end
+
+    local now = os.clock()
+    local seen = {}
+
+    for _, obj in ipairs(CollectionService:GetTagged("Drop")) do
+        if not seen[obj] then
+            seen[obj] = true
+            tryPickupDroppedObject(obj, hrp, now)
+        end
+    end
+
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Tool") then
+            if not seen[child] then
+                seen[child] = true
+                tryPickupDroppedObject(child, hrp, now)
+            end
+        elseif (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower():find("drop") then
+            for _, item in ipairs(child:GetChildren()) do
+                if not seen[item] then
+                    seen[item] = true
+                    tryPickupDroppedObject(item, hrp, now)
+                end
+            end
+        elseif (child:IsA("Model") or child:IsA("BasePart")) and (child:GetAttribute("Dropped") == true or child:GetAttribute("IsDrop") == true) then
+            if not seen[child] then
+                seen[child] = true
+                tryPickupDroppedObject(child, hrp, now)
+            end
+        end
+    end
+end
+
+CollectionService:GetInstanceAddedSignal("Drop"):Connect(function(obj)
+    if not Config.AutoPickupItems then return end
+    task.defer(function()
+        if not Config.AutoPickupItems then return end
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if char and hum and hum.Health > 0 and hrp then
+            tryPickupDroppedObject(obj, hrp, os.clock())
+        end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        if Config.AutoPickupItems then
+            pcall(scanAndPickupDroppedItems)
+            task.wait(0.18)
+        else
+            task.wait(0.4)
+        end
+    end
+end)
+
+local function getGunsAndReturn(gunSelection)
     if gettingGun then return end
+    local gunList = {}
+    if type(gunSelection) == "string" then
+        table.insert(gunList, gunSelection)
+    elseif type(gunSelection) == "table" then
+        for _, name in ipairs(gunSelection) do
+            table.insert(gunList, name)
+        end
+    end
+    if #gunList == 0 then
+        Fluent:Notify({
+            Title = "Get Gun",
+            Content = "No gun selected",
+            Duration = 2
+        })
+        return
+    end
     gettingGun = true
     local ok, err = pcall(function()
         local char = LocalPlayer.Character
@@ -973,87 +1669,35 @@ local function getGunAndReturn(gunName)
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not char or not hum or hum.Health <= 0 or not hrp then return end
 
-        local giver, part = findGunGiver(gunName)
-        if not giver or not part then
-            Fluent:Notify({
-                Title = "Get Gun",
-                Content = "Gun not found: " .. tostring(gunName),
-                Duration = 3
-            })
-            return
-        end
-
-        local hadBefore = playerOwnsTool(gunName)
         local savedCFrame = hrp.CFrame
 
-        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        task.wait(0.15)
-
-        for _ = 1, 2 do
+        for _, gunName in ipairs(gunList) do
             if not hrp.Parent or hum.Health <= 0 then break end
-            hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
-            hrp.AssemblyLinearVelocity = Vector3.zero
+            local giver, part = findGunGiver(gunName)
+            if not giver or not part then
+                Fluent:Notify({
+                    Title = "Get Gun",
+                    Content = "Gun not found: " .. tostring(gunName),
+                    Duration = 2
+                })
+            else
+                local hadBefore = playerOwnsTool(gunName)
+                hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                task.wait(0.15)
 
-            if GiverPressedRemote and (CollectionService:HasTag(giver, "Giver") or CollectionService:HasTag(giver, "TouchGiver")) then
-                pcall(function()
-                    GiverPressedRemote:FireServer(giver)
-                end)
-            end
+                for _ = 1, 2 do
+                    if not hrp.Parent or hum.Health <= 0 then break end
+                    hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2.5, 0))
+                    hrp.AssemblyLinearVelocity = Vector3.zero
 
-            if firetouchinterest then
-                local hasTouch = CollectionService:HasTag(giver, "TouchGiver") or giver:FindFirstChildWhichIsA("TouchTransmitter", true) ~= nil
-                if hasTouch then
-                    if giver:IsA("BasePart") then
-                        pcall(function()
-                            firetouchinterest(hrp, giver, 0)
-                            task.wait(0.03)
-                            firetouchinterest(hrp, giver, 1)
-                        end)
-                    else
-                        for _, desc in ipairs(giver:GetDescendants()) do
-                            if desc:IsA("BasePart") then
-                                pcall(function()
-                                    firetouchinterest(hrp, desc, 0)
-                                    task.wait(0.02)
-                                    firetouchinterest(hrp, desc, 1)
-                                end)
-                            end
-                        end
+                    triggerItemInteraction(giver, part, hrp, false)
+
+                    task.wait(0.18)
+                    if not hadBefore and playerOwnsTool(gunName) then
+                        break
                     end
                 end
-            end
-
-            local pName = giver.Parent and giver.Parent.Name
-            if InteractWithItemRemote and (pName == "giver" or pName == "single") then
-                task.spawn(function()
-                    pcall(function()
-                        InteractWithItemRemote:InvokeServer(part)
-                    end)
-                end)
-            end
-
-            if fireclickdetector then
-                local cd = giver:FindFirstChildWhichIsA("ClickDetector", true)
-                if cd then
-                    pcall(function()
-                        fireclickdetector(cd)
-                    end)
-                end
-            end
-
-            if fireproximityprompt then
-                local pp = giver:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if pp then
-                    pcall(function()
-                        fireproximityprompt(pp)
-                    end)
-                end
-            end
-
-            task.wait(0.18)
-            if not hadBefore and playerOwnsTool(gunName) then
-                break
             end
         end
 
@@ -1062,7 +1706,7 @@ local function getGunAndReturn(gunName)
             hrp.AssemblyLinearVelocity = Vector3.zero
         end
 
-        if Config.FastFire or Config.AutoFire or Config.NoSpread then
+        if Config.FastFire or Config.NoSpread then
             task.defer(applyGunMods)
         end
     end)
@@ -1150,7 +1794,7 @@ task.spawn(function()
             local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
             local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
             if myHum and myHum.Health > 0 and myHrp then
-                local maxRange = tonumber(Config.MeleeRange) or 15
+                local maxRange = 30
                 for _, player in ipairs(Players:GetPlayers()) do
                     if player ~= LocalPlayer and LocalPlayer.TeamColor ~= player.TeamColor and not isSameTeam(player) then
                         if not player.Team or player.Team.Name ~= "Neutral" then
@@ -1236,17 +1880,62 @@ do
     end)
 end
 
-local function getMinimizeKey()
-    local k = Config.MinimizeKey or "LeftControl"
-    if typeof(k) == "EnumItem" then return k end
-    local name = tostring(k):gsub("Enum%.KeyCode%.", "")
-    return Enum.KeyCode[name] or Enum.KeyCode.LeftControl
+local function resolveKeyCode(value, fallback)
+    if typeof(value) == "EnumItem" and value.EnumType == Enum.KeyCode then
+        if value ~= Enum.KeyCode.Unknown then
+            return value
+        end
+        return fallback
+    end
+    local name = tostring(value or ""):gsub("Enum%.KeyCode%.", "")
+    local resolved = Enum.KeyCode[name]
+    if resolved and resolved ~= Enum.KeyCode.Unknown then
+        return resolved
+    end
+    return fallback
 end
 
 local uiVisible = true
-local minimizeKey = getMinimizeKey()
+local minimizeKey = resolveKeyCode(Config.MinimizeKey, Enum.KeyCode.LeftControl)
+local flyKey = resolveKeyCode(Config.FlyKey, Enum.KeyCode.F)
+local noclipKey = resolveKeyCode(Config.NoclipKey, Enum.KeyCode.J)
+local lastKeybindEditTime = 0
 local lastToggleTime = 0
 local cachedMainHubFrame = nil
+
+local FlyToggle = nil
+local NoclipToggle = nil
+local ToggleUIKeybind = nil
+local FlyKeybind = nil
+local NoclipKeybind = nil
+
+local function setFlyEnabled(value)
+    Config.FlyEnabled = value
+    if value then
+        startFly()
+    else
+        stopFly()
+    end
+    SaveConfig()
+end
+
+local function setNoclipEnabled(value)
+    Config.NoclipEnabled = value
+    setNoclipState(value)
+    SaveConfig()
+end
+
+local function toggleFeatureWithToggle(toggleObj, getStateFn, applyFn)
+    local nextState = not getStateFn()
+    if toggleObj and toggleObj.SetValue then
+        pcall(function()
+            toggleObj:SetValue(nextState)
+        end)
+    end
+    if getStateFn() ~= nextState then
+        applyFn(nextState)
+    end
+end
 
 local function findMainHubFrame(container)
     if not container then return nil end
@@ -1298,8 +1987,24 @@ end
 
 UserInputService.InputBegan:Connect(function(input, processed)
     if UserInputService:GetFocusedTextBox() then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if (ToggleUIKeybind and ToggleUIKeybind.Picking) or (FlyKeybind and FlyKeybind.Picking) or (NoclipKeybind and NoclipKeybind.Picking) then
+        return
+    end
     if not processed and input.KeyCode == minimizeKey then
         uiVisible = not uiVisible
+        return
+    end
+    if processed or Config.DisableKeybinds then return end
+    if os.clock() - lastKeybindEditTime <= 0.25 then return end
+    if input.KeyCode == flyKey then
+        toggleFeatureWithToggle(FlyToggle, function()
+            return Config.FlyEnabled
+        end, setFlyEnabled)
+    elseif input.KeyCode == noclipKey then
+        toggleFeatureWithToggle(NoclipToggle, function()
+            return Config.NoclipEnabled
+        end, setNoclipEnabled)
     end
 end)
 
@@ -1333,6 +2038,7 @@ local Tabs = {
     Combat = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
     Player = Window:AddTab({ Title = "Player", Icon = "user" }),
     ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
     Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
@@ -1348,6 +2054,51 @@ Tabs.Main:AddToggle("AutoArrestToggle", {
     end
 })
 
+local isInitializingDropdown = false
+
+local function addSavedMultiDropdown(tab, id, title, valuesList, configKey, excludedKey)
+    local dd = tab:AddDropdown(id, {
+        Title = title,
+        Values = valuesList,
+        Default = {},
+        Multi = true,
+        AllowNull = true,
+        ScrollingEnabled = true,
+        Callback = function(Value)
+            Config[configKey] = sanitizeStringBoolMap(Value, excludedKey)
+            if not isInitializingDropdown then
+                SaveConfig()
+            end
+        end
+    })
+    local initialMap = {}
+    local saved = Config[configKey]
+    if type(saved) == "table" then
+        for _, name in ipairs(valuesList) do
+            if saved[name] == true and name ~= excludedKey then
+                initialMap[name] = true
+            end
+        end
+    end
+    isInitializingDropdown = true
+    if next(initialMap) and dd and dd.SetValue then
+        pcall(function()
+            dd:SetValue(initialMap)
+        end)
+    end
+    isInitializingDropdown = false
+    return dd
+end
+
+local allGunValues = getAllGunList()
+if not hasSavedSwitchReloadGuns then
+    for _, gName in ipairs(allGunValues) do
+        if gName ~= "Taser" then
+            Config.SwitchReloadGuns[gName] = true
+        end
+    end
+end
+
 Tabs.Combat:AddSection("Gun Mod")
 
 Tabs.Combat:AddToggle("FastFireToggle", {
@@ -1355,16 +2106,6 @@ Tabs.Combat:AddToggle("FastFireToggle", {
     Default = Config.FastFire,
     Callback = function(Value)
         Config.FastFire = Value
-        applyGunMods()
-        SaveConfig()
-    end
-})
-
-Tabs.Combat:AddToggle("AutoFireToggle", {
-    Title = "Auto Fire",
-    Default = Config.AutoFire,
-    Callback = function(Value)
-        Config.AutoFire = Value
         applyGunMods()
         SaveConfig()
     end
@@ -1379,6 +2120,17 @@ Tabs.Combat:AddToggle("NoSpreadToggle", {
         SaveConfig()
     end
 })
+
+Tabs.Combat:AddToggle("AutoSwitchReloadToggle", {
+    Title = "Auto Switch Reload",
+    Default = Config.AutoSwitchReload,
+    Callback = function(Value)
+        Config.AutoSwitchReload = Value
+        SaveConfig()
+    end
+})
+
+addSavedMultiDropdown(Tabs.Combat, "SwitchReloadGunsDropdown", "Switch Reload", allGunValues, "SwitchReloadGuns", nil)
 
 Tabs.Combat:AddSection("Silent Aim")
 
@@ -1425,15 +2177,6 @@ Tabs.Combat:AddDropdown("TargetPartDropdown", {
     end
 })
 
-Tabs.Combat:AddToggle("TeamCheckToggle", {
-    Title = "Team Check",
-    Default = Config.TeamCheck,
-    Callback = function(Value)
-        Config.TeamCheck = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Combat:AddToggle("FriendCheckToggle", {
     Title = "Friend Check",
     Default = Config.FriendCheck,
@@ -1455,41 +2198,19 @@ Tabs.Combat:AddToggle("WallCheckToggle", {
 local teamValues = {}
 local seenTeams = {}
 for _, team in ipairs(Teams:GetTeams()) do
-    if not seenTeams[team.Name] then
+    if team.Name ~= "Neutral" and not seenTeams[team.Name] then
         seenTeams[team.Name] = true
         table.insert(teamValues, team.Name)
     end
 end
-for _, fallbackName in ipairs({"Guards", "Inmates", "Criminals", "Neutral"}) do
+for _, fallbackName in ipairs({"Guards", "Inmates", "Criminals"}) do
     if not seenTeams[fallbackName] then
         seenTeams[fallbackName] = true
         table.insert(teamValues, fallbackName)
     end
 end
 
-local defaultIgnoreTeams = {}
-for teamName, enabled in pairs(Config.IgnoreTeams) do
-    if enabled then
-        table.insert(defaultIgnoreTeams, teamName)
-    end
-end
-
-Tabs.Combat:AddDropdown("IgnoreTeamsDropdown", {
-    Title = "Ignore Teams",
-    Values = teamValues,
-    Default = defaultIgnoreTeams,
-    Multi = true,
-    ScrollingEnabled = true,
-    Callback = function(Value)
-        Config.IgnoreTeams = {}
-        for teamName, selected in pairs(Value) do
-            if selected then
-                Config.IgnoreTeams[teamName] = true
-            end
-        end
-        SaveConfig()
-    end
-})
+addSavedMultiDropdown(Tabs.Combat, "IgnoreTeamsDropdown", "Ignore Teams", teamValues, "IgnoreTeams", "Neutral")
 
 Tabs.Combat:AddSection("Melee")
 
@@ -1498,18 +2219,6 @@ Tabs.Combat:AddToggle("MeleeAuraToggle", {
     Default = Config.MeleeAura,
     Callback = function(Value)
         Config.MeleeAura = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Combat:AddSlider("MeleeRangeSlider", {
-    Title = "Melee Range",
-    Default = Config.MeleeRange or 15,
-    Min = 5,
-    Max = 30,
-    Rounding = 0,
-    Callback = function(Value)
-        Config.MeleeRange = Value
         SaveConfig()
     end
 })
@@ -1553,17 +2262,11 @@ Tabs.Player:AddToggle("InfJumpToggle", {
     end
 })
 
-Tabs.Player:AddToggle("FlyToggle", {
+FlyToggle = Tabs.Player:AddToggle("FlyToggle", {
     Title = "Fly",
     Default = Config.FlyEnabled,
     Callback = function(Value)
-        Config.FlyEnabled = Value
-        if Value then
-            startFly()
-        else
-            stopFly()
-        end
-        SaveConfig()
+        setFlyEnabled(Value)
     end
 })
 
@@ -1579,13 +2282,11 @@ Tabs.Player:AddSlider("FlySpeedSlider", {
     end
 })
 
-Tabs.Player:AddToggle("NoclipToggle", {
+NoclipToggle = Tabs.Player:AddToggle("NoclipToggle", {
     Title = "Noclip",
     Default = Config.NoclipEnabled,
     Callback = function(Value)
-        Config.NoclipEnabled = Value
-        setNoclipState(Value)
-        SaveConfig()
+        setNoclipEnabled(Value)
     end
 })
 
@@ -1603,49 +2304,151 @@ Tabs.ESP:AddToggle("ESPPlayersToggle", {
     end
 })
 
+local function teleportToLocation(targetCFrame)
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or hum.Health <= 0 or not hrp then return end
+    if hum.Sit then
+        hum.Sit = false
+        task.wait(0.05)
+    end
+    if not hrp.Parent or hum.Health <= 0 then return end
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    hrp.CFrame = targetCFrame
+end
+
+local teleportLocations = {
+    { Name = "Criminal Base", CF = CFrame.new(-980.31, 108.06, 2032.80, 0.85, -0.00, -0.52, -0.00, 1.00, -0.00, 0.52, 0.00, 0.85) },
+    { Name = "Police Room", CF = CFrame.new(810.93, 99.98, 2246.84, -0.92, 0.00, 0.39, 0.00, 1.00, 0.00, -0.39, 0.00, -0.92) },
+    { Name = "Prison", CF = CFrame.new(786.41, 122.04, 2588.29, 0.58, 0.00, -0.81, -0.00, 1.00, 0.00, 0.81, -0.00, 0.58) },
+    { Name = "Prison Cells", CF = CFrame.new(916.97, 99.99, 2444.34, -0.17, 0.00, -0.99, 0.00, 1.00, 0.00, 0.99, -0.00, -0.17) },
+    { Name = "Cafeteria", CF = CFrame.new(912.51, 99.99, 2306.95, 1.00, -0.00, 0.09, 0.00, 1.00, -0.00, -0.09, 0.00, 1.00) },
+    { Name = "Sewers", CF = CFrame.new(918.52, 78.70, 2423.11, 1.00, 0.00, -0.02, 0.00, 1.00, 0.00, 0.02, -0.00, 1.00) },
+}
+
+Tabs.Teleport:AddSection("Locations")
+
+for _, loc in ipairs(teleportLocations) do
+    Tabs.Teleport:AddButton({
+        Title = loc.Name,
+        Callback = function()
+            task.spawn(teleportToLocation, loc.CF)
+        end
+    })
+end
+
 Tabs.Misc:AddSection("Get Gun")
 
 local gunValues = getGunList()
-if not table.find(gunValues, Config.SelectedGun) and gunValues[1] then
-    Config.SelectedGun = gunValues[1]
-end
-
-Tabs.Misc:AddDropdown("SelectGunDropdown", {
-    Title = "Select Gun",
-    Values = gunValues,
-    Default = Config.SelectedGun or gunValues[1],
-    Multi = false,
-    ScrollingEnabled = true,
-    Callback = function(Value)
-        Config.SelectedGun = Value or gunValues[1]
-        SaveConfig()
-    end
-})
+addSavedMultiDropdown(Tabs.Misc, "SelectGunDropdown", "Select Gun", gunValues, "SelectedGuns", nil)
 
 Tabs.Misc:AddButton({
     Title = "Get Gun",
     Callback = function()
-        local selected = Config.SelectedGun or gunValues[1]
-        if selected then
-            task.spawn(function()
-                getGunAndReturn(selected)
-            end)
+        local selectedList = {}
+        for _, gName in ipairs(gunValues) do
+            if Config.SelectedGuns[gName] == true then
+                table.insert(selectedList, gName)
+            end
         end
+        task.spawn(function()
+            getGunsAndReturn(selectedList)
+        end)
+    end
+})
+
+Tabs.Misc:AddSection("Items")
+
+Tabs.Misc:AddToggle("AutoPickupToggle", {
+    Title = "Auto Pickup Item",
+    Default = Config.AutoPickupItems,
+    Callback = function(Value)
+        Config.AutoPickupItems = Value
+        SaveConfig()
+        if Value then
+            task.spawn(scanAndPickupDroppedItems)
+        end
+    end
+})
+
+Tabs.Misc:AddSection("Bullet & Audio")
+
+Tabs.Misc:AddToggle("PurpleTracerToggle", {
+    Title = "Purple Bullet Tracer",
+    Default = Config.PurpleTracers,
+    Callback = function(Value)
+        Config.PurpleTracers = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddToggle("CustomGunSoundToggle", {
+    Title = "Gun Sound",
+    Default = Config.CustomGunSound,
+    Callback = function(Value)
+        Config.CustomGunSound = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Misc:AddToggle("HitSoundToggle", {
+    Title = "Gun Hit",
+    Default = Config.HitSoundEnabled,
+    Callback = function(Value)
+        Config.HitSoundEnabled = Value
+        SaveConfig()
     end
 })
 
 Tabs.Settings:AddSection("Keybinds")
 
-Tabs.Settings:AddKeybind("ToggleUIKeybind", {
+ToggleUIKeybind = Tabs.Settings:AddKeybind("ToggleUIKeybind", {
     Title = "Minimize UI Keybind",
     Mode = "Toggle",
     Default = Config.MinimizeKey or "LeftControl",
     ChangedCallback = function(NewKey)
-        local keyName = typeof(NewKey) == "EnumItem" and NewKey.Name or tostring(NewKey):gsub("Enum%.KeyCode%.", "")
-        local keyCode = Enum.KeyCode[keyName] or Enum.KeyCode.LeftControl
+        local keyCode = resolveKeyCode(NewKey, Enum.KeyCode.LeftControl)
+        lastKeybindEditTime = os.clock()
         minimizeKey = keyCode
         Window.MinimizeKey = keyCode
         Config.MinimizeKey = keyCode.Name
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:AddToggle("DisableKeybindsToggle", {
+    Title = "Disable All Keybinds",
+    Default = Config.DisableKeybinds,
+    Callback = function(Value)
+        Config.DisableKeybinds = Value
+        SaveConfig()
+    end
+})
+
+FlyKeybind = Tabs.Settings:AddKeybind("FlyKeybind", {
+    Title = "Fly Keybind",
+    Mode = "Toggle",
+    Default = Config.FlyKey or "F",
+    ChangedCallback = function(NewKey)
+        local keyCode = resolveKeyCode(NewKey, Enum.KeyCode.F)
+        lastKeybindEditTime = os.clock()
+        flyKey = keyCode
+        Config.FlyKey = keyCode.Name
+        SaveConfig()
+    end
+})
+
+NoclipKeybind = Tabs.Settings:AddKeybind("NoclipKeybind", {
+    Title = "Noclip Keybind",
+    Mode = "Toggle",
+    Default = Config.NoclipKey or "J",
+    ChangedCallback = function(NewKey)
+        local keyCode = resolveKeyCode(NewKey, Enum.KeyCode.J)
+        lastKeybindEditTime = os.clock()
+        noclipKey = keyCode
+        Config.NoclipKey = keyCode.Name
         SaveConfig()
     end
 })
