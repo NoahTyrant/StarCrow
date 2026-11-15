@@ -26,7 +26,7 @@ local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 
 local SAVE_FOLDER = "StarCrowHub"
-local SAVE_FILE = SAVE_FOLDER .. "/AutoFarmCandyConfig.json"
+local SAVE_FILE = SAVE_FOLDER .. "/Auto Farm Candy.json"
 
 local Config = {
     TweenSpeed = 500
