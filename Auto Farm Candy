@@ -586,33 +586,10 @@ local function getNearestPendingDoor(hrpPos)
     return nearestPrompt, nearestPart
 end
 
-local function fastStreamAround(pos)
-    if not pos then return end
-    task.spawn(function()
-        pcall(function()
-            LocalPlayer:RequestStreamAroundAsync(pos, 1)
-        end)
-    end)
-end
-
-local function prestreamRoute(fromPos, toPos)
-    task.spawn(function()
-        local dist = (fromPos - toPos).Magnitude
-        local count = math.clamp(math.floor(dist / 2500), 1, 20)
-        for i = 1, count do
-            local p = fromPos:Lerp(toPos, i / count)
-            fastStreamAround(p)
-        end
-    end)
-end
-
 local function tweenStep(fromPos, toPos, speed)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-
-    fastStreamAround(toPos)
-    prestreamRoute(fromPos, toPos)
 
     local currentSpeed = speed or Config.TweenSpeed
     local dist = (fromPos - toPos).Magnitude
@@ -660,7 +637,6 @@ local function tweenStep(fromPos, toPos, speed)
         tw:Play()
     end
 
-    local lastLookAhead = 0
     while not completed do
         if not isPlayerAlive() then
             activeTweenUpdate = nil
@@ -677,14 +653,6 @@ local function tweenStep(fromPos, toPos, speed)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
 
-        if tick() - lastLookAhead > 0.2 then
-            lastLookAhead = tick()
-            local dir = (toPos - hrp.Position)
-            if dir.Magnitude > 100 then
-                fastStreamAround(hrp.Position + dir.Unit * math.min(dir.Magnitude, 3000))
-            end
-        end
-
         local prompt, promptPart = getNearestPendingDoor(hrp.Position)
         if prompt and promptPart then
             activeTweenUpdate = nil
@@ -696,7 +664,6 @@ local function tweenStep(fromPos, toPos, speed)
             statusText = "Farm Candy"
             interactedDoors[prompt] = true
             equipCandyBucket()
-            fastStreamAround(promptPart.Position)
             hrp.CFrame = promptPart.CFrame * CFrame.new(0, 0, 3)
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
@@ -711,7 +678,6 @@ local function tweenStep(fromPos, toPos, speed)
             hrp.CFrame = CFrame.new(resumeHighPos) * endCFrame.Rotation
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
-            fastStreamAround(toPos)
             
             return tweenStep(resumeHighPos, toPos, Config.TweenSpeed)
         end
@@ -736,12 +702,6 @@ task.spawn(function()
         if hrp then
             local initialHighPos = Vector3.new(hrp.Position.X, TWEEN_ALTITUDE, hrp.Position.Z)
             local targetHighPos = Vector3.new(endCFrame.Position.X, TWEEN_ALTITUDE, endCFrame.Position.Z)
-            
-            fastStreamAround(hrp.Position)
-            fastStreamAround(initialHighPos)
-            fastStreamAround(targetHighPos)
-            fastStreamAround(endCFrame.Position)
-            prestreamRoute(initialHighPos, targetHighPos)
 
             statusText = "Ascending"
             hrp.CFrame = CFrame.new(initialHighPos) * endCFrame.Rotation
