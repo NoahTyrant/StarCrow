@@ -593,20 +593,10 @@ local bosses = {
     { n = "kingice", pos = CFrame.new(24.27, 3.00, 45907.91) },
 }
 
-local function fastStreamAround(pos)
-    if not pos then return end
-    task.spawn(function()
-        pcall(function()
-            LocalPlayer:RequestStreamAroundAsync(pos, 1)
-        end)
-    end)
-end
-
 local function requestStreamTeleport(cf)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    fastStreamAround(cf.Position)
     hrp.CFrame = cf
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
