@@ -91,7 +91,6 @@ local Config = {
 	SelectedSecretRod = "",
 	UltraFPSBoost = false,
 	FakeStats = false,
-	BlackScreen = false,
 	HideGameUI = false,
 	AutoTicketQuest = false,
 	TicketQuestMode = "Hard",
@@ -4193,11 +4192,8 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 		end
 		local lower = string.lower(text)
 		if
-			string.find(lower, "you've hit the daily limit of 20 ticket quests. come back tomorrow!", 1, true)
-			or (
-				string.find(lower, "hit the daily limit of 20 ticket quests", 1, true)
-				and string.find(lower, "come back tomorrow", 1, true)
-			)
+			string.find(lower, "you've hit the daily limit", 1, true)
+			or string.find(lower, "you've hit the daily limid", 1, true)
 		then
 			return true
 		end
@@ -4217,7 +4213,7 @@ local StepSmartTicketQuest, AutoTicketQuestToggleObj, ResetTicketLimit
 				if Fluent and Fluent.Notify then
 					Fluent:Notify({
 						Title = "Ticket Quest",
-						Content = "Daily limit of 20 reached. Waiting for 00:00 UTC reset...",
+						Content = "Daily limit reached. Waiting for 00:00 UTC reset...",
 						Duration = 4,
 					})
 				end
@@ -8793,77 +8789,6 @@ end);
 	end
 
 	do
-		local CoreGui = game:GetService("CoreGui")
-		local screenOverlay = CoreGui:FindFirstChild("StarCrow_ScreenOverlay")
-		if screenOverlay then
-			pcall(function()
-				screenOverlay:Destroy()
-			end)
-		end
-		screenOverlay = Instance.new("ScreenGui")
-		screenOverlay.Name = "StarCrow_ScreenOverlay"
-		screenOverlay.IgnoreGuiInset = true
-		screenOverlay.ResetOnSpawn = false
-		screenOverlay.DisplayOrder = -100
-		screenOverlay.Enabled = false
-		pcall(function()
-			screenOverlay.Parent = CoreGui
-		end)
-		if not screenOverlay.Parent then
-			screenOverlay.Parent = LocalPlayer:WaitForChild("PlayerGui")
-		end
-
-		local screenFrame = Instance.new("Frame")
-		screenFrame.Size = UDim2.fromScale(1, 1)
-		screenFrame.BackgroundColor3 = Color3.new(0, 0, 0)
-		screenFrame.BackgroundTransparency = 0
-		screenFrame.BorderSizePixel = 0
-		screenFrame.Active = false
-		screenFrame.ZIndex = -1
-		screenFrame.Parent = screenOverlay
-
-		local function ensureFluentOnTop()
-			pcall(function()
-				if Fluent and Fluent.GUI then
-					Fluent.GUI.DisplayOrder = 5000
-				end
-			end)
-			pcall(function()
-				local parentList = { game:GetService("CoreGui") }
-				if gethui then
-					table.insert(parentList, gethui())
-				end
-				for _, root in ipairs(parentList) do
-					for _, g in ipairs(root:GetChildren()) do
-						if g:IsA("ScreenGui") and g ~= screenOverlay and g.Name ~= "StarCrow_ScreenOverlay" and g.Name ~= "StarCrow_LogoGui" then
-							g.DisplayOrder = 5000
-						end
-					end
-				end
-			end)
-		end
-
-		local function updateScreenOverlay()
-			screenOverlay.Enabled = Config.BlackScreen == true
-			if Config.BlackScreen then
-				ensureFluentOnTop()
-			end
-		end
-
-		Tabs.Player:AddToggle("BlackScreenToggle", {
-			Title = "Black Screen",
-			Default = Config.BlackScreen,
-			Callback = function(Value)
-				Config.BlackScreen = Value
-				SaveConfig()
-				updateScreenOverlay()
-			end,
-		})
-
-		if Config.BlackScreen then
-			updateScreenOverlay()
-		end
-
 		local gameUiHideState = { items = {} }
 		local function rememberGameUiState(inst)
 			if not inst or gameUiHideState.items[inst] then
