@@ -1594,16 +1594,10 @@ local function StepAutoFarmMaterialBait(char)
 		local isl = GetIslandForMaterialFish(item.name)
 		if isl == islandName then
 			table.insert(matTargets, string.lower(item.name))
-			if item.name == "Primordial Kunfish Overlord" then
-				table.insert(matTargets, "primordial kunfish")
-			end
 		end
 	end
 	if #matTargets == 0 and targetFish then
 		table.insert(matTargets, string.lower(targetFish.name))
-		if targetFish.name == "Primordial Kunfish Overlord" then
-			table.insert(matTargets, "primordial kunfish")
-		end
 	end
 	currentMaterialTargets = matTargets
 
