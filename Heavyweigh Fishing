@@ -4921,7 +4921,7 @@ end)()
 
 local StepAutoGiveEventFish
 (function()
-	local giveEventFishCooldownUntil = 0
+	local lastGiveTick = 0
 
 	local function GetNoroDerasuObject()
 		local npc = workspace:FindFirstChild("NPC")
@@ -5099,9 +5099,6 @@ local StepAutoGiveEventFish
 		if not Config.AutoGiveEventFish then
 			return false
 		end
-		if os.clock() < giveEventFishCooldownUntil then
-			return false
-		end
 		local targetSet, hasTargets = GetEventGiveTargetSet()
 		if not hasTargets then
 			return false
@@ -5123,18 +5120,16 @@ local StepAutoGiveEventFish
 	end
 
 	function StepAutoGiveEventFish()
-		if IsGivingEventFish or not Config.AutoGiveEventFish then
+		if not Config.AutoGiveEventFish then
 			return
 		end
-		if os.clock() < giveEventFishCooldownUntil then
+		local now = os.clock()
+		if now - lastGiveTick < 1.2 then
 			return
 		end
-		local initialTargets, hasInitialTargets = GetEventGiveTargetSet()
-		if not hasInitialTargets then
-			return
-		end
-		RefreshGuiCache()
-		if FishingGui and FishingGui.Visible then
+
+		local targetSet, hasTargets = GetEventGiveTargetSet()
+		if not hasTargets then
 			return
 		end
 
@@ -5148,152 +5143,42 @@ local StepAutoGiveEventFish
 			return
 		end
 
-		if not FindEventFishHotbarSlot(pData, initialTargets) and not FindEventFishInventoryItem(pData, initialTargets) then
-			return
-		end
+		local targetSlot = FindEventFishHotbarSlot(pData, targetSet)
 
-		local char = cachedChar or LocalPlayer.Character
-		if not char then
-			return
-		end
-		if char:GetAttribute("Fishing") then
-			if Config.AutoCast or Config.AutoFarmIsland or Config.AutoFarmMaterialBait then
-				local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
-				if hrp then
+		if not targetSlot then
+			local foundItem = FindEventFishInventoryItem(pData, targetSet)
+			if foundItem then
+				local freeSlot = FindAvailableHotbarSlot()
+				local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
+				if moveEv then
 					pcall(function()
-						FishingEvent:FireServer(hrp.CFrame)
+						moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
 					end)
+					task.wait(0.25)
 				end
-				local waitStart = os.clock()
-				while char:GetAttribute("Fishing") and os.clock() - waitStart < 1 do
-					if FishingGui and FishingGui.Visible then
-						return
-					end
-					task.wait(0.05)
-				end
-			end
-			if char:GetAttribute("Fishing") or (FishingGui and FishingGui.Visible) then
-				return
+				targetSlot = freeSlot
 			end
 		end
 
-		IsGivingEventFish = true
-		pcall(function()
-			while Config.AutoGiveEventFish do
-				local targetSet, hasTargets = GetEventGiveTargetSet()
-				if not hasTargets then
-					break
-				end
-
-				RefreshGuiCache()
-				if FishingGui and FishingGui.Visible then
-					break
-				end
-
-				local hotbar = pData:FindFirstChild("Hotbar")
-				local targetSlot = FindEventFishHotbarSlot(pData, targetSet)
-
-				if not targetSlot then
-					local foundItem = FindEventFishInventoryItem(pData, targetSet)
-					if foundItem then
-						local freeSlot = FindAvailableHotbarSlot()
-						local moveEv = MoveItemsEvent or (Events and Events:FindFirstChild("MoveItems"))
-						if moveEv then
-							pcall(function()
-								moveEv:FireServer("Inventory", foundItem.Name, freeSlot)
-							end)
-							local moveWait = os.clock()
-							while os.clock() - moveWait < 0.8 do
-								if IsSlotEventFish(hotbar, freeSlot, targetSet) then
-									break
-								end
-								task.wait(0.05)
-							end
-						end
-						if IsSlotEventFish(hotbar, freeSlot, targetSet) then
-							targetSlot = freeSlot
-						end
-					end
-				end
-
-				if not targetSlot then
-					break
-				end
-
-				char = cachedChar or LocalPlayer.Character
-				if not char then
-					break
-				end
-
-				if not IsHoldingEventFish(char, targetSet) then
-					pcall(function()
-						ToggleHotbar:InvokeServer(targetSlot)
-					end)
-					local eqStart = os.clock()
-					while os.clock() - eqStart < 0.8 do
-						if IsHoldingFish(char) then
-							break
-						end
-						task.wait(0.05)
-					end
-					if not IsHoldingFish(char) then
-						pcall(function()
-							ToggleHotbar:InvokeServer(targetSlot)
-						end)
-						local eqRetry = os.clock()
-						while os.clock() - eqRetry < 0.8 do
-							if IsHoldingFish(char) then
-								break
-							end
-							task.wait(0.05)
-						end
-					end
-				end
-
-				if not IsHoldingFish(char) then
-					giveEventFishCooldownUntil = os.clock() + 2
-					break
-				end
-
-				task.wait(0.15)
-				RefreshGuiCache()
-				if not Config.AutoGiveEventFish or not IsHoldingFish(char) or (FishingGui and FishingGui.Visible) then
-					break
-				end
-
-				local args = {
-					[1] = "Noro Derasu",
-					[2] = 1,
-					[3] = "GiveFish",
-					[4] = {
-						[1] = noro,
-					},
-				}
-				pcall(function()
-					local chooseEv = ChooseDialogueOption or (Events and Events:FindFirstChild("ChooseDialogueOption")) or game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("ChooseDialogueOption", 9e9)
-					chooseEv:FireServer(unpack(args))
-				end)
-
-				local consumed = false
-				local giveWait = os.clock()
-				while os.clock() - giveWait < 1.2 do
-					if not IsSlotEventFish(hotbar, targetSlot, targetSet) then
-						consumed = true
-						break
-					end
-					task.wait(0.08)
-				end
-
-				if not consumed then
-					giveEventFishCooldownUntil = os.clock() + 5
-					break
-				else
-					giveEventFishCooldownUntil = 0
-				end
-			end
-		end)
-		task.wait(0.15)
-		IsGivingEventFish = false
+		if targetSlot then
+			lastGiveTick = os.clock()
+			pcall(function()
+				ToggleHotbar:InvokeServer(targetSlot)
+			end)
+			task.wait(0.2)
+			local args = {
+				[1] = "Noro Derasu",
+				[2] = 1,
+				[3] = "GiveFish",
+				[4] = {
+					[1] = noro,
+				},
+			}
+			pcall(function()
+				local chooseEv = ChooseDialogueOption or (Events and Events:FindFirstChild("ChooseDialogueOption")) or game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("ChooseDialogueOption", 9e9)
+				chooseEv:FireServer(unpack(args))
+			end)
+		end
 	end
 end)()
 
