@@ -2543,7 +2543,7 @@ do
 						local hookedLower = string.lower(string.gsub(rawFishName, "^%s*(.-)%s*$", "%1"))
 						local matched = false
 						for _, t in ipairs(targets) do
-							if hookedLower == t or string.find(hookedLower, t, 1, true) or string.find(t, hookedLower, 1, true) then
+							if hookedLower == t then
 								matched = true
 								break
 							end
@@ -7312,7 +7312,7 @@ end);
 				if #targets > 0 then
 					local fNameLower = string.lower(fName)
 					for _, t in ipairs(targets) do
-						if fNameLower == t or string.find(fNameLower, t, 1, true) then
+						if fNameLower == t then
 							shouldFav = true
 							break
 						end
@@ -7356,7 +7356,7 @@ end);
 						local shouldFav = false
 						if #targets > 0 then
 							for _, t in ipairs(targets) do
-								if fNameLower == t or string.find(fNameLower, t, 1, true) then
+								if fNameLower == t then
 									shouldFav = true
 									break
 								end
@@ -7566,19 +7566,33 @@ end);
 		end,
 	})
 
+	local function ToMultiDefault(list)
+		local map = {}
+		if type(list) == "table" then
+			for _, name in ipairs(list) do
+				map[name] = true
+			end
+		end
+		return map
+	end
+
 	local defaultBossTargets = ExtractSelectedBosses(Config.FilterFishTarget)
 	Config.FilterFishTarget = defaultBossTargets
 
 	local FilterBossDropdownObj = Tabs.Boss:AddDropdown("FilterBossDropdown", {
 		Title = "Select Boss",
 		Values = bossListItems,
-		Default = defaultBossTargets,
+		Default = ToMultiDefault(defaultBossTargets),
 		Multi = true,
 		Callback = function(Value)
 			Config.FilterFishTarget = ExtractSelectedBosses(Value)
 			SaveConfig()
 		end,
 	})
+	FilterBossDropdownObj:OnChanged(function(Value)
+		Config.FilterFishTarget = ExtractSelectedBosses(Value)
+		SaveConfig()
+	end)
 
 	AttachDropdownSearch(FilterBossDropdownObj)
 
@@ -7601,7 +7615,7 @@ end);
 	local FavBossDropdownObj = Tabs.Boss:AddDropdown("AutoFavoriteBossDropdown", {
 		Title = "Select Boss Fish",
 		Values = bossListItems,
-		Default = defaultFavTargets,
+		Default = ToMultiDefault(defaultFavTargets),
 		Multi = true,
 		Callback = function(Value)
 			Config.AutoFavoriteBossTarget = ExtractSelectedBosses(Value)
@@ -7611,6 +7625,13 @@ end);
 			end
 		end,
 	})
+	FavBossDropdownObj:OnChanged(function(Value)
+		Config.AutoFavoriteBossTarget = ExtractSelectedBosses(Value)
+		SaveConfig()
+		if Config.AutoFavoriteBoss then
+			task.spawn(ScanAndFavoriteBossFish)
+		end
+	end)
 
 	AttachDropdownSearch(FavBossDropdownObj)
 
