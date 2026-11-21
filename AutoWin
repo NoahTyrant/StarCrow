@@ -456,6 +456,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local currentHoverCFrame = nil
+local currentHoverValue = nil
 local noCollideCache = setmetatable({}, {__mode = "k"})
 
 local function getModelRoot(model)
@@ -501,8 +502,9 @@ RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    if currentHoverCFrame then
-        hrp.CFrame = currentHoverCFrame
+    local targetCF = (currentHoverValue and currentHoverValue.Value) or currentHoverCFrame
+    if targetCF then
+        hrp.CFrame = targetCF
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
@@ -889,9 +891,8 @@ local function killCommander(name, pos)
 end
 
 task.spawn(function()
-    for sec = 5, 1, -1 do
-        statusText = "Waiting Teleport (" .. tostring(sec) .. "s)"
-        task.wait(1)
+    while not isPlayerAlive() or not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")) do
+        task.wait(0.1)
     end
     statusText = "Teleporting..."
     local initialCF = CFrame.new(1.50, 127.61, 46969.94, 1.00, 0.00, 0.03, -0.00, 1.00, -0.07, -0.03, 0.07, 1.00)
@@ -1129,38 +1130,45 @@ task.spawn(function()
     currentHoverCFrame = nil
     local finalPos = Vector3.new(21.61, 1074.70, -52704.68)
     requestStreamTeleport(CFrame.new(finalPos))
-    for i = 1, 15 do
+
+    local cfVal = Instance.new("CFrameValue")
+    cfVal.Value = CFrame.new(finalPos + Vector3.new(0, 0, -10))
+    currentHoverValue = cfVal
+
+    local finalTween = TweenService:Create(
+        cfVal,
+        TweenInfo.new(0.8, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true),
+        { Value = CFrame.new(finalPos + Vector3.new(0, 0, 10)) }
+    )
+    finalTween:Play()
+
+    statusText = "Victory"
+    local lastFinalAttackTick = 0
+    local lastTouchTick = 0
+
+    while true do
         char = LocalPlayer.Character
         hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(finalPos)
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            if firetouchinterest then
+        if hrp and firetouchinterest and tick() - lastTouchTick >= 1 then
+            lastTouchTick = tick()
+            pcall(function()
                 for _, p in ipairs(workspace:GetDescendants()) do
                     if p:IsA("BasePart") and (p.Position - finalPos).Magnitude < 30 then
                         firetouchinterest(hrp, p, 0)
                         firetouchinterest(hrp, p, 1)
                     end
                 end
-            end
+            end)
         end
-        task.wait(0.15)
-    end
 
-    statusText = "Victory"
-    local lastFinalAttackTick = 0
-    while not clickedPlayAgain do
-        if not isPlayerAlive() then return end
-        if tick() - lastFinalAttackTick >= 5 then
+        if isPlayerAlive() and tick() - lastFinalAttackTick >= 5 then
             lastFinalAttackTick = tick()
             singleAttackBurstTick = tick()
             equipAllMelee()
             activateMelee()
         end
-        task.wait(0.2)
-    end
 
-    statusText = "Done"
+        task.wait(0.1)
+    end
 end)
 
