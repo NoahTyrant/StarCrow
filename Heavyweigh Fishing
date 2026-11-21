@@ -1382,16 +1382,17 @@ local function GetMaterialFishCount(fishName, minKg, maxKg)
 			gsMod = require(gs)
 		end
 	end)
+	local lowerFishName = string.lower(fishName)
 	for _, entry in ipairs(inv:GetChildren()) do
 		local rawName = entry.Name
 		local cleanName = string.split(rawName, "| Favorite")[1]
 		cleanName = string.gsub(cleanName, "^%s*(.-)%s*$", "%1")
-		local matchedName = (rawName == fishName) or (cleanName == fishName)
+		local matchedName = (string.lower(rawName) == lowerFishName) or (string.lower(cleanName) == lowerFishName)
 		local weightNum = nil
 		if gsMod and gsMod.DestringFish then
 			local ok, res = pcall(gsMod.DestringFish, cleanName)
 			if ok and res then
-				if res.FishName and res.FishName == fishName then
+				if res.FishName and string.lower(res.FishName) == lowerFishName then
 					matchedName = true
 				end
 				if res.Weight then
@@ -1420,7 +1421,7 @@ local function GetMaterialFishCount(fishName, minKg, maxKg)
 				break
 			end
 		end
-		if matchedName and weightNum and weightNum >= minKg and weightNum <= maxKg then
+		if matchedName and (not minKg or not maxKg or (weightNum and weightNum >= minKg and weightNum <= maxKg)) then
 			count = count + 1
 		end
 	end
@@ -1509,7 +1510,7 @@ local function StepAutoFarmMaterialBait(char)
 		else
 			isMaterialFarmCastingAllowed = true
 		end
-		currentMaterialTargets = { "nameless octoparasite", "octoparasitic fish", "nameless" }
+		currentMaterialTargets = {}
 		return
 	end
 	if selectedBait == "Thunder Bait" then
