@@ -2316,6 +2316,36 @@ local enzoCooldownUntil = 0
 local longDiaohaiCooldownUntil = 0
 local currentBossTarget = nil
 local lastBossActionTick = 0
+local lastBossNotifyUntil = {
+	["Enzo"] = 0,
+	["Long Diaohai"] = 0,
+}
+
+local function FormatBossCooldown(sec)
+	local total = math.max(1, math.ceil(tonumber(sec) or 0))
+	if total >= 60 then
+		return string.format("%dm %ds", math.floor(total / 60), total % 60)
+	end
+	return string.format("%ds", total)
+end
+
+local function NotifyBossCooldown(bossName, remainingSec, targetUntil, force)
+	if not Fluent or not Fluent.Notify then
+		return
+	end
+	local lastUntil = lastBossNotifyUntil[bossName] or 0
+	if not force and targetUntil <= lastUntil + 3 then
+		return
+	end
+	lastBossNotifyUntil[bossName] = targetUntil
+	pcall(function()
+		Fluent:Notify({
+			Title = "Boss Cooldown",
+			Content = bossName .. " is on cooldown - " .. FormatBossCooldown(remainingSec),
+			Duration = 2,
+		})
+	end)
+end
 
 local function ParseBossCooldownSeconds(text)
 	if not text or text == "" then
@@ -2358,8 +2388,14 @@ local function CheckBossCooldownText(text)
 		if sec and sec > 0 and sec <= 3600 then
 			if isEnzo then
 				enzoCooldownUntil = now + sec
+				if Config.AutoBoss == true then
+					NotifyBossCooldown("Enzo", sec, enzoCooldownUntil, false)
+				end
 			elseif isLong then
 				longDiaohaiCooldownUntil = now + sec
+				if Config.AutoSecretBoss == true then
+					NotifyBossCooldown("Long Diaohai", sec, longDiaohaiCooldownUntil, false)
+				end
 			end
 		end
 	elseif string.find(lower, "already being fought", 1, true) then
@@ -2454,7 +2490,12 @@ end)
 local function CheckBossStatusOnToggle(wantSecret)
 	local bossName = (wantSecret == true or wantSecret == "Long Diaohai") and "Long Diaohai" or "Enzo"
 	local now = os.clock()
-	local isCooldown = (bossName == "Long Diaohai") and (now < longDiaohaiCooldownUntil) or (now < enzoCooldownUntil)
+	local isCooldown = false
+	if bossName == "Long Diaohai" then
+		isCooldown = now < longDiaohaiCooldownUntil
+	else
+		isCooldown = now < enzoCooldownUntil
+	end
 
 	local char = cachedChar or LocalPlayer.Character
 	if char and char:GetAttribute("Type") ~= "Fishing Rod" then
@@ -2471,6 +2512,9 @@ local function CheckBossStatusOnToggle(wantSecret)
 			}
 			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
 		end)
+	else
+		local targetUntil = (bossName == "Long Diaohai") and longDiaohaiCooldownUntil or enzoCooldownUntil
+		NotifyBossCooldown(bossName, math.max(1, targetUntil - now), targetUntil, true)
 	end
 end
 
@@ -2622,7 +2666,12 @@ local function StepAutoBoss(char, isMinigame)
 
 	currentBossTarget = targetBoss
 
-	local isTargetReady = (targetBoss == "Long Diaohai") and (now >= longDiaohaiCooldownUntil) or (now >= enzoCooldownUntil)
+	local isTargetReady = false
+	if targetBoss == "Long Diaohai" then
+		isTargetReady = now >= longDiaohaiCooldownUntil
+	else
+		isTargetReady = now >= enzoCooldownUntil
+	end
 
 	local c = char or cachedChar or LocalPlayer.Character
 	if c and c:GetAttribute("Type") ~= "Fishing Rod" then
@@ -2639,6 +2688,9 @@ local function StepAutoBoss(char, isMinigame)
 			}
 			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
 		end)
+	else
+		local targetUntil = (targetBoss == "Long Diaohai") and longDiaohaiCooldownUntil or enzoCooldownUntil
+		NotifyBossCooldown(targetBoss, math.max(1, targetUntil - now), targetUntil, false)
 	end
 end
 
