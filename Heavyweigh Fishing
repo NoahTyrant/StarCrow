@@ -85,8 +85,6 @@ local Config = {
 	SelectedFarmIsland = "Beginning Isle",
 	AutoFarmMaterialBait = false,
 	SelectedMaterialBait = "Rainbow Bait",
-	SkyFarm = false,
-	SkyFarmHeight = 1000,
 	SelectedBuyRod = "",
 	SelectedSecretRod = "",
 	UltraFPSBoost = false,
@@ -211,7 +209,6 @@ end
 if not Config.SelectedWeather or Config.SelectedWeather == "" then
 	Config.SelectedWeather = "Thunderstorm"
 end
-Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
 
 local function GetSavedCFrame()
 	if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
@@ -1114,161 +1111,9 @@ local function stopFly()
 end
 
 local IsBuyingSecretRod = false
-local SetSkyFarm, SetSkyFarmHeight
-
-do
-	local SKY_PLATFORM_NAME = "StarCrow_MainSkyFarmPlatform"
-	local skyPlatform = nil
-	local skyHeartbeatConn = nil
-	local skySavedY = nil
-	local skyAnchorX = nil
-	local skyAnchorZ = nil
-	local skyAnchorRot = nil
-
-	local function DestroySkyPlatform()
-		if skyHeartbeatConn then
-			pcall(function()
-				skyHeartbeatConn:Disconnect()
-			end)
-			skyHeartbeatConn = nil
-		end
-		if skyPlatform then
-			pcall(function()
-				skyPlatform:Destroy()
-			end)
-			skyPlatform = nil
-		end
-		local leftover = workspace:FindFirstChild(SKY_PLATFORM_NAME)
-		if leftover then
-			pcall(function()
-				leftover:Destroy()
-			end)
-		end
-	end
-
-	local function EnsureSkyFarmPlatform(x, h, z)
-		if not (skyPlatform and skyPlatform.Parent == workspace) then
-			local old = workspace:FindFirstChild(SKY_PLATFORM_NAME)
-			if old then
-				pcall(function()
-					old:Destroy()
-				end)
-			end
-			local p = Instance.new("Part")
-			p.Name = SKY_PLATFORM_NAME
-			p.Anchored = true
-			p.CanCollide = true
-			p.CanTouch = false
-			p.CanQuery = false
-			p.Transparency = 1
-			p.CastShadow = false
-			p.Size = Vector3.new(320, 1, 320)
-			p.CFrame = CFrame.new(x, h - 3.5, z)
-			p.Parent = workspace
-			skyPlatform = p
-		else
-			skyPlatform.CFrame = CFrame.new(x, h - 3.5, z)
-		end
-		return skyPlatform
-	end
-
-	local function SnapCharacterToSky(h, useSavedAnchor)
-		local c = LocalPlayer.Character or cachedChar
-		local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if not hrp then
-			return
-		end
-		local targetX = (useSavedAnchor and skyAnchorX) or hrp.Position.X
-		local targetZ = (useSavedAnchor and skyAnchorZ) or hrp.Position.Z
-		local rot = (useSavedAnchor and skyAnchorRot) or hrp.CFrame.Rotation
-		skyAnchorX = targetX
-		skyAnchorZ = targetZ
-		skyAnchorRot = rot
-		EnsureSkyFarmPlatform(targetX, h, targetZ)
-		pcall(function()
-			hrp.AssemblyLinearVelocity = Vector3.zero
-			hrp.AssemblyAngularVelocity = Vector3.zero
-		end)
-		hrp.CFrame = CFrame.new(targetX, h, targetZ) * rot
-	end
-
-	SetSkyFarm = function(enabled, restoreAnchor)
-		Config.SkyFarm = enabled == true
-		if not Config.SkyFarm then
-			DestroySkyPlatform()
-			local prevY = skySavedY
-			local prevX = skyAnchorX
-			local prevZ = skyAnchorZ
-			skySavedY = nil
-			skyAnchorX = nil
-			skyAnchorZ = nil
-			skyAnchorRot = nil
-			local c = LocalPlayer.Character or cachedChar
-			local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-			if hrp and prevY then
-				pcall(function()
-					hrp.AssemblyLinearVelocity = Vector3.zero
-					hrp.AssemblyAngularVelocity = Vector3.zero
-				end)
-				hrp.CFrame = CFrame.new(prevX or hrp.Position.X, prevY, prevZ or hrp.Position.Z) * hrp.CFrame.Rotation
-			end
-			return
-		end
-
-		local h = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
-		Config.SkyFarmHeight = h
-		local c = LocalPlayer.Character or cachedChar
-		local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-		if hrp and not skySavedY then
-			skySavedY = hrp.Position.Y
-			skyAnchorX = hrp.Position.X
-			skyAnchorZ = hrp.Position.Z
-			skyAnchorRot = hrp.CFrame.Rotation
-		end
-		SnapCharacterToSky(h, restoreAnchor == true)
-
-		if not skyHeartbeatConn then
-			skyHeartbeatConn = RunService.Heartbeat:Connect(function()
-				if not Config.SkyFarm then
-					task.defer(DestroySkyPlatform)
-					return
-				end
-				if IsCheckingSacredBeast or IsBuyingSecretRod or Config.AutoBoss or Config.AutoSecretBoss then
-					return
-				end
-				local curChar = LocalPlayer.Character or cachedChar
-				local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
-				if not curHrp then
-					return
-				end
-				local curH = math.clamp(math.floor(tonumber(Config.SkyFarmHeight) or 1000), 1000, 2000)
-				skyAnchorX = curHrp.Position.X
-				skyAnchorZ = curHrp.Position.Z
-				skyAnchorRot = curHrp.CFrame.Rotation
-				EnsureSkyFarmPlatform(curHrp.Position.X, curH, curHrp.Position.Z)
-				if math.abs(curHrp.Position.Y - curH) > 15 then
-					pcall(function()
-						curHrp.AssemblyLinearVelocity = Vector3.zero
-					end)
-					curHrp.CFrame = CFrame.new(curHrp.Position.X, curH, curHrp.Position.Z) * curHrp.CFrame.Rotation
-				end
-			end)
-		end
-	end
-
-	SetSkyFarmHeight = function(val)
-		local h = math.clamp(math.floor(tonumber(val) or 1000), 1000, 2000)
-		Config.SkyFarmHeight = h
-		if Config.SkyFarm and not (IsCheckingSacredBeast or IsBuyingSecretRod or Config.AutoBoss or Config.AutoSecretBoss) then
-			SnapCharacterToSky(h, false)
-		end
-	end
-
-	DestroySkyPlatform()
-end
 
 local function StepAutoTPPos(char)
-	if not Config.AutoTPPos or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoTPPos or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -1286,7 +1131,7 @@ local function StepAutoTPPos(char)
 end
 
 local function StepAutoFarmIsland(char)
-	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
 	if Config.AutoBoss or Config.AutoSecretBoss then
@@ -1479,7 +1324,7 @@ end
 
 local lastMatNotifyTick = 0
 local function StepAutoFarmMaterialBait(char)
-	if not Config.AutoFarmMaterialBait or Config.SkyFarm or IsCheckingSacredBeast or IsBuyingSecretRod then
+	if not Config.AutoFarmMaterialBait or IsCheckingSacredBeast or IsBuyingSecretRod then
 		isMaterialFarmCastingAllowed = false
 		currentMaterialTargets = {}
 		return
@@ -1627,9 +1472,6 @@ if cachedChar then
 		StepAutoTPPos(cachedChar)
 		StepAutoFarmIsland(cachedChar)
 		StepAutoFarmMaterialBait(cachedChar)
-		if Config.SkyFarm then
-			SetSkyFarm(true)
-		end
 	end)
 end
 
@@ -1643,9 +1485,6 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
 	StepAutoFarmMaterialBait(newChar)
-	if Config.SkyFarm then
-		SetSkyFarm(true)
-	end
 	if Config.FlyEnabled then
 		startFly()
 	end
@@ -1869,7 +1708,6 @@ local function LockFishingBar()
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
-			or Config.SkyFarm
 		)
 	then
 		return
@@ -2732,11 +2570,9 @@ task.spawn(function()
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
-			or Config.SkyFarm
 			or isMaterialFarmActive
 		local activeCast = Config.AutoCast
 			or Config.AutoFarmIsland
-			or Config.SkyFarm
 			or isMaterialFarmActive
 		if Config.AutoFarmMaterialBait and not isMaterialFarmCastingAllowed then
 			activeCast = false
@@ -2750,7 +2586,6 @@ task.spawn(function()
 			or Config.AutoBoss
 			or Config.AutoSecretBoss
 			or Config.AutoFarmIsland
-			or Config.SkyFarm
 			or isMaterialFarmActive
 
 		if not isMinigame then
@@ -7017,31 +6852,6 @@ end);
 			if Value then
 				StepAutoFarmIsland(LocalPlayer.Character)
 			end
-		end,
-	})
-
-	Tabs.Main:AddSection("Sky Farm")
-
-	Tabs.Main:AddToggle("SkyFarmToggle", {
-		Title = "Sky Farm",
-		Default = Config.SkyFarm,
-		Callback = function(Value)
-			Config.SkyFarm = Value
-			SaveConfig()
-			SetSkyFarm(Value)
-		end,
-	})
-
-	Tabs.Main:AddSlider("SkyFarmHeightSlider", {
-		Title = "Sky Height",
-		Default = Config.SkyFarmHeight or 1000,
-		Min = 1000,
-		Max = 2000,
-		Rounding = 0,
-		Callback = function(Value)
-			Config.SkyFarmHeight = math.clamp(math.floor(tonumber(Value) or 1000), 1000, 2000)
-			SaveConfig()
-			SetSkyFarmHeight(Config.SkyFarmHeight)
 		end,
 	})
 
