@@ -30,10 +30,6 @@ local games = {
         url = "https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Dead%20Spells"
     },
     {
-        places = {117311404196294, 99088826116845},
-        url = "https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Runaways"
-    },
-    {
         places = {108567435288296, 105692919293481, 106921982724621},
         url = "https://raw.githubusercontent.com/NoahTyrant/StarCrow/refs/heads/main/Anime%20Ability%20Arena"
     },
@@ -51,7 +47,7 @@ local games = {
     }
 }
 
-local lobbyIds = {104770044244450, 118418618261207}
+local lobbyIds = {104770044244450}
 
 if table.find(lobbyIds, pid) then
     lp:Kick("Do not execute in Lobby")
