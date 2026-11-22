@@ -147,30 +147,21 @@ if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui"
 
 local LogoFrame = Instance.new("Frame")
 LogoFrame.Size = UDim2.new(0, 46, 0, 46)
-LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
-LogoFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+LogoFrame.Position = UDim2.new(0, 10, 0.5, -23)
+LogoFrame.BackgroundTransparency = 1
 LogoFrame.BorderSizePixel = 0
 LogoFrame.Parent = LogoGui
-Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
 
-local logoStroke = Instance.new("UIStroke", LogoFrame)
-logoStroke.Thickness = 1.8
-logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-local logoGrad = Instance.new("UIGradient", logoStroke)
-logoGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 0, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 130, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 0, 255)),
-})
-task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+local logoScale = Instance.new("UIScale", LogoFrame)
 
 local LogoImg = Instance.new("ImageLabel")
-LogoImg.Size = UDim2.new(1, -6, 1, -6)
-LogoImg.Position = UDim2.new(0, 3, 0, 3)
+LogoImg.Size = UDim2.new(1, 0, 1, 0)
+LogoImg.Position = UDim2.new(0, 0, 0, 0)
 LogoImg.BackgroundTransparency = 1
-LogoImg.Image = "rbxthumb://type=Asset&id=115542332056889&w=150&h=150"
+LogoImg.Image = "rbxthumb://type=Asset&id=113554983600972&w=420&h=420"
 LogoImg.ScaleType = Enum.ScaleType.Fit
 LogoImg.Parent = LogoFrame
+Instance.new("UICorner", LogoImg).CornerRadius = UDim.new(0.24, 0)
 
 local LogoBtn = Instance.new("TextButton")
 LogoBtn.Size = UDim2.new(1, 0, 1, 0)
@@ -178,6 +169,16 @@ LogoBtn.BackgroundTransparency = 1
 LogoBtn.Text = ""
 LogoBtn.ZIndex = 5
 LogoBtn.Parent = LogoFrame
+
+LogoBtn.MouseButton1Down:Connect(function()
+    TweenService:Create(logoScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
+end)
+LogoBtn.MouseButton1Up:Connect(function()
+    TweenService:Create(logoScale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end)
+LogoBtn.MouseLeave:Connect(function()
+    TweenService:Create(logoScale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end)
 
 do
     local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
@@ -212,7 +213,7 @@ local function toggleUI()
     for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
         if gui:IsA("ScreenGui") then
             for _, desc in ipairs(gui:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Text == "StarCrowHub" then
+                if desc:IsA("TextLabel") and (desc.Text == "StarCrow Hub" or desc.Text:find("StarCrow")) then
                     local p = desc.Parent
                     while p and p.Parent ~= gui do p = p.Parent end
                     if p and p:IsA("Frame") then p.Visible = uiVisible return end
@@ -1743,8 +1744,8 @@ end)
 
 
 local Window = Fluent:CreateWindow({
-    Title = "StarCrowHub",
-    SubTitle = "Dead Spells",
+    Title = "StarCrow Hub",
+    SubTitle = " | Dead Spells",
     TabWidth = 130,
     Size = UDim2.fromOffset(460, 400),
     Acrylic = false,
