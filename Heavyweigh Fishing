@@ -109,7 +109,6 @@ local Config = {
 	AutoHopSacredBeast = false,
 	FilterFishEnabled = false,
 	FilterFishTarget = {},
-	AutoSellOnFull = false,
 	BossHitDelay = 15,
 	AutoExe = false,
 	HopBossDelay = 5,
@@ -182,8 +181,8 @@ else
 	end
 	Config.SkillOrder = filtered
 end
-if Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full" then
-	Config.AutoSellMethod = "Sell When Full Inventory"
+if Config.AutoSellMethod ~= "Spam" and Config.AutoSellMethod ~= "Delay" then
+	Config.AutoSellMethod = "Delay"
 end
 if type(Config.FilterFishTarget) == "string" then
 	if Config.FilterFishTarget ~= "" then
@@ -1112,11 +1111,142 @@ end
 
 local IsBuyingSecretRod = false
 
+local BossState = {
+	enzoCooldownUntil = 0,
+	longDiaohaiCooldownUntil = 0,
+	currentTarget = nil,
+	lastActionTick = 0,
+	lastNotifyUntil = {
+		["Enzo"] = 0,
+		["Long Diaohai"] = 0,
+	},
+	inFight = false,
+	activeTarget = nil,
+	pendingTarget = nil,
+	pendingUntil = 0,
+	lastEndTick = 0,
+	lastRetractTick = 0,
+	sawNotFishing = false,
+	failCounts = {
+		["Enzo"] = 0,
+		["Long Diaohai"] = 0,
+	},
+	phase2SetupUntil = 0,
+	lastIslandTeleportTick = 0,
+}
+
+function BossState.IsBossFightVisual(char, isMinigame)
+	local now = os.clock()
+	if char and char:GetAttribute("Phase2") == true then
+		BossState.phase2SetupUntil = 0
+	end
+	if isMinigame then
+		return true
+	end
+	if BossFightBar and BossFightBar.Visible then
+		return true
+	end
+	if RhythmGui and RhythmGui.Visible then
+		return true
+	end
+	if char and char:GetAttribute("Phase2") == true then
+		return true
+	end
+	if BossState.phase2SetupUntil > 0 and now < BossState.phase2SetupUntil then
+		return true
+	end
+	return false
+end
+
+function BossState.SyncFightState(char, isMinigame)
+	local now = os.clock()
+	local enzoOn = Config.AutoBoss == true
+	local longOn = Config.AutoSecretBoss == true
+	local c = char or cachedChar or LocalPlayer.Character
+	local isFishingAttr = c and c:GetAttribute("Fishing") == true
+	local visualActive = BossState.IsBossFightVisual(c, isMinigame)
+
+	if not enzoOn and not longOn then
+		BossState.pendingTarget = nil
+		BossState.pendingUntil = 0
+		if not visualActive and not isFishingAttr then
+			BossState.inFight = false
+			BossState.activeTarget = nil
+		end
+		return
+	end
+
+	if BossState.pendingTarget then
+		local pendingEnabled = (BossState.pendingTarget == "Enzo" and enzoOn)
+			or (BossState.pendingTarget == "Long Diaohai" and longOn)
+		if not pendingEnabled then
+			BossState.pendingTarget = nil
+			BossState.pendingUntil = 0
+		elseif now <= BossState.pendingUntil then
+			if not isFishingAttr then
+				BossState.sawNotFishing = true
+			end
+			if visualActive or (BossState.sawNotFishing and isFishingAttr) then
+				BossState.inFight = true
+				BossState.activeTarget = BossState.pendingTarget
+				BossState.failCounts[BossState.pendingTarget] = 0
+				BossState.pendingTarget = nil
+				BossState.pendingUntil = 0
+			end
+		else
+			local timedOutTarget = BossState.pendingTarget
+			BossState.pendingTarget = nil
+			BossState.pendingUntil = 0
+			local fails = (BossState.failCounts[timedOutTarget] or 0) + 1
+			BossState.failCounts[timedOutTarget] = fails
+			if fails >= 3 then
+				BossState.failCounts[timedOutTarget] = 0
+				if timedOutTarget == "Enzo" and now >= BossState.enzoCooldownUntil then
+					BossState.enzoCooldownUntil = now + 10
+				elseif timedOutTarget == "Long Diaohai" and now >= BossState.longDiaohaiCooldownUntil then
+					BossState.longDiaohaiCooldownUntil = now + 10
+				end
+			end
+		end
+	end
+
+	if BossState.inFight and not visualActive and not isFishingAttr then
+		BossState.inFight = false
+		BossState.activeTarget = nil
+		BossState.lastEndTick = now
+	end
+end
+
+function BossState.IsPriorityActive(char, isMinigame)
+	local enzoOn = Config.AutoBoss == true
+	local longOn = Config.AutoSecretBoss == true
+	if not enzoOn and not longOn then
+		return false
+	end
+	local now = os.clock()
+	if BossState.inFight then
+		return true
+	end
+	if BossState.pendingTarget and now <= BossState.pendingUntil then
+		return true
+	end
+	if BossState.lastEndTick > 0 and (now - BossState.lastEndTick) < 0.35 then
+		return true
+	end
+	if enzoOn and now >= BossState.enzoCooldownUntil then
+		return true
+	end
+	if longOn and now >= BossState.longDiaohaiCooldownUntil then
+		return true
+	end
+	return false
+end
+
 local function StepAutoTPPos(char)
 	if not Config.AutoTPPos or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
-	if Config.AutoBoss or Config.AutoSecretBoss then
+	if BossState.IsPriorityActive(char) then
 		return
 	end
 	local targetCF = GetSavedCFrame()
@@ -1127,6 +1257,7 @@ local function StepAutoTPPos(char)
 	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
 	if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
 		hrp.CFrame = targetCF
+		BossState.lastIslandTeleportTick = os.clock()
 	end
 end
 
@@ -1134,7 +1265,7 @@ local function StepAutoFarmIsland(char)
 	if not Config.AutoFarmIsland or Config.AutoFarmMaterialBait or IsCheckingSacredBeast or IsBuyingSecretRod then
 		return
 	end
-	if Config.AutoBoss or Config.AutoSecretBoss then
+	if BossState.IsPriorityActive(char) then
 		return
 	end
 	local targetCF = GetIslandFarmCFrame()
@@ -1145,6 +1276,7 @@ local function StepAutoFarmIsland(char)
 	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
 	if hrp and (hrp.Position - targetCF.Position).Magnitude > 5 then
 		hrp.CFrame = targetCF
+		BossState.lastIslandTeleportTick = os.clock()
 	end
 end
 
@@ -1329,7 +1461,7 @@ local function StepAutoFarmMaterialBait(char)
 		currentMaterialTargets = {}
 		return
 	end
-	if Config.AutoBoss or Config.AutoSecretBoss then
+	if BossState.IsPriorityActive(char) then
 		isMaterialFarmCastingAllowed = false
 		currentMaterialTargets = {}
 		return
@@ -1481,6 +1613,11 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
 	cachedHrp = newChar:WaitForChild("HumanoidRootPart", 5)
 	cachedSkillsFolder = newChar:WaitForChild("Skills", 5)
 	cachedStatsFolder = newChar:WaitForChild("Stats", 5)
+	BossState.inFight = false
+	BossState.activeTarget = nil
+	BossState.pendingTarget = nil
+	BossState.pendingUntil = 0
+	BossState.phase2SetupUntil = 0
 	task.wait(0.3)
 	StepAutoTPPos(newChar)
 	StepAutoFarmIsland(newChar)
@@ -1492,13 +1629,12 @@ end)
 
 local minigameOpenTick = 0
 local wasMinigameVisible = false
-local bossPhase2SetupUntil = 0
 
 do
 	local bp2 = Events:FindFirstChild("BossPhase2Setup")
 	if bp2 and bp2:IsA("RemoteEvent") then
 		bp2.OnClientEvent:Connect(function()
-			bossPhase2SetupUntil = os.clock() + 5
+			BossState.phase2SetupUntil = os.clock() + 5
 		end)
 	end
 end
@@ -1558,11 +1694,11 @@ local function IsGameAllowingSkill(char)
 	end
 
 	if char:GetAttribute("Phase2") == true then
-		bossPhase2SetupUntil = 0
+		BossState.phase2SetupUntil = 0
 		return false
 	end
 
-	if bossPhase2SetupUntil > 0 and os.clock() < bossPhase2SetupUntil then
+	if BossState.phase2SetupUntil > 0 and os.clock() < BossState.phase2SetupUntil then
 		return false
 	end
 
@@ -2150,15 +2286,6 @@ local function GetBossFarmCFrame(target)
 	return BossFarmPositions.Enzo
 end
 
-local enzoCooldownUntil = 0
-local longDiaohaiCooldownUntil = 0
-local currentBossTarget = nil
-local lastBossActionTick = 0
-local lastBossNotifyUntil = {
-	["Enzo"] = 0,
-	["Long Diaohai"] = 0,
-}
-
 local function FormatBossCooldown(sec)
 	local total = math.max(1, math.ceil(tonumber(sec) or 0))
 	if total >= 60 then
@@ -2171,11 +2298,11 @@ local function NotifyBossCooldown(bossName, remainingSec, targetUntil, force)
 	if not Fluent or not Fluent.Notify then
 		return
 	end
-	local lastUntil = lastBossNotifyUntil[bossName] or 0
+	local lastUntil = BossState.lastNotifyUntil[bossName] or 0
 	if not force and targetUntil <= lastUntil + 3 then
 		return
 	end
-	lastBossNotifyUntil[bossName] = targetUntil
+	BossState.lastNotifyUntil[bossName] = targetUntil
 	pcall(function()
 		Fluent:Notify({
 			Title = "Boss Cooldown",
@@ -2194,12 +2321,13 @@ local function ParseBossCooldownSeconds(text)
 	if m and s then
 		return (tonumber(m) or 0) * 60 + (tonumber(s) or 0)
 	end
+	local hPart = string.match(lower, "(%d+)%s*h")
 	local mPart = string.match(lower, "(%d+)%s*m")
-	local sPart = string.match(lower, "(%d+)%s*s")
-	if mPart or sPart then
-		return (tonumber(mPart) or 0) * 60 + (tonumber(sPart) or 0)
+	local sPart = string.match(lower, "(%d+%.?%d*)%s*s")
+	if hPart or mPart or sPart then
+		return (tonumber(hPart) or 0) * 3600 + (tonumber(mPart) or 0) * 60 + (tonumber(sPart) or 0)
 	end
-	local secOnly = string.match(lower, "(%d+)%s*sec")
+	local secOnly = string.match(lower, "(%d+%.?%d*)%s*sec")
 	if secOnly then
 		return tonumber(secOnly) or 0
 	end
@@ -2215,6 +2343,7 @@ local function CheckBossCooldownText(text)
 	local isLong = (string.find(lower, "long diaohai", 1, true) ~= nil)
 		or (string.find(lower, "longdiaohai", 1, true) ~= nil)
 		or (string.find(lower, "diaohai", 1, true) ~= nil)
+		or (string.find(lower, "diao hai", 1, true) ~= nil)
 
 	if not isEnzo and not isLong then
 		return
@@ -2225,25 +2354,57 @@ local function CheckBossCooldownText(text)
 		local sec = ParseBossCooldownSeconds(lower)
 		if sec and sec > 0 and sec <= 3600 then
 			if isEnzo then
-				enzoCooldownUntil = now + sec
+				BossState.enzoCooldownUntil = now + sec
+				BossState.failCounts["Enzo"] = 0
+				if BossState.pendingTarget == "Enzo" then
+					BossState.pendingTarget = nil
+					BossState.pendingUntil = 0
+					BossState.lastActionTick = 0
+				end
+				if BossState.inFight and BossState.activeTarget == "Enzo" and not BossState.IsBossFightVisual(cachedChar, FishingGui and FishingGui.Visible) then
+					BossState.inFight = false
+					BossState.activeTarget = nil
+				end
 				if Config.AutoBoss == true then
-					NotifyBossCooldown("Enzo", sec, enzoCooldownUntil, false)
+					NotifyBossCooldown("Enzo", sec, BossState.enzoCooldownUntil, false)
 				end
 			elseif isLong then
-				longDiaohaiCooldownUntil = now + sec
+				BossState.longDiaohaiCooldownUntil = now + sec
+				BossState.failCounts["Long Diaohai"] = 0
+				if BossState.pendingTarget == "Long Diaohai" then
+					BossState.pendingTarget = nil
+					BossState.pendingUntil = 0
+					BossState.lastActionTick = 0
+				end
+				if BossState.inFight and BossState.activeTarget == "Long Diaohai" and not BossState.IsBossFightVisual(cachedChar, FishingGui and FishingGui.Visible) then
+					BossState.inFight = false
+					BossState.activeTarget = nil
+				end
 				if Config.AutoSecretBoss == true then
-					NotifyBossCooldown("Long Diaohai", sec, longDiaohaiCooldownUntil, false)
+					NotifyBossCooldown("Long Diaohai", sec, BossState.longDiaohaiCooldownUntil, false)
 				end
 			end
 		end
 	elseif string.find(lower, "already being fought", 1, true) then
 		if isEnzo then
-			if now >= enzoCooldownUntil then
-				enzoCooldownUntil = now + 5
+			if now >= BossState.enzoCooldownUntil then
+				BossState.enzoCooldownUntil = now + 5
+			end
+			BossState.failCounts["Enzo"] = 0
+			if BossState.pendingTarget == "Enzo" then
+				BossState.pendingTarget = nil
+				BossState.pendingUntil = 0
+				BossState.lastActionTick = 0
 			end
 		elseif isLong then
-			if now >= longDiaohaiCooldownUntil then
-				longDiaohaiCooldownUntil = now + 5
+			if now >= BossState.longDiaohaiCooldownUntil then
+				BossState.longDiaohaiCooldownUntil = now + 5
+			end
+			BossState.failCounts["Long Diaohai"] = 0
+			if BossState.pendingTarget == "Long Diaohai" then
+				BossState.pendingTarget = nil
+				BossState.pendingUntil = 0
+				BossState.lastActionTick = 0
 			end
 		end
 	end
@@ -2255,12 +2416,12 @@ pcall(function()
 			return
 		end
 		for _, desc in ipairs(pg:GetDescendants()) do
-			if desc:IsA("TextLabel") and desc.Text ~= "" then
+			if desc:IsA("TextLabel") and desc.Text ~= "" and not (Fluent and Fluent.GUI and desc:IsDescendantOf(Fluent.GUI)) then
 				CheckBossCooldownText(desc.Text)
 			end
 		end
 		pg.DescendantAdded:Connect(function(desc)
-			if desc:IsA("TextLabel") then
+			if desc:IsA("TextLabel") and not (Fluent and Fluent.GUI and desc:IsDescendantOf(Fluent.GUI)) then
 				CheckBossCooldownText(desc.Text)
 				desc:GetPropertyChangedSignal("Text"):Connect(function()
 					CheckBossCooldownText(desc.Text)
@@ -2328,31 +2489,11 @@ end)
 local function CheckBossStatusOnToggle(wantSecret)
 	local bossName = (wantSecret == true or wantSecret == "Long Diaohai") and "Long Diaohai" or "Enzo"
 	local now = os.clock()
-	local isCooldown = false
-	if bossName == "Long Diaohai" then
-		isCooldown = now < longDiaohaiCooldownUntil
-	else
-		isCooldown = now < enzoCooldownUntil
-	end
-
-	local char = cachedChar or LocalPlayer.Character
-	if char and char:GetAttribute("Type") ~= "Fishing Rod" then
-		pcall(function()
-			ToggleHotbar:InvokeServer("1")
-		end)
-	end
-
-	if not isCooldown then
-		pcall(function()
-			local args = {
-				[1] = bossName,
-				[2] = Config.BossMode or "Normal",
-			}
-			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
-		end)
-	else
-		local targetUntil = (bossName == "Long Diaohai") and longDiaohaiCooldownUntil or enzoCooldownUntil
+	local targetUntil = (bossName == "Long Diaohai") and BossState.longDiaohaiCooldownUntil or BossState.enzoCooldownUntil
+	if now < targetUntil then
 		NotifyBossCooldown(bossName, math.max(1, targetUntil - now), targetUntil, true)
+	else
+		BossState.lastActionTick = 0
 	end
 end
 
@@ -2382,8 +2523,9 @@ do
 	local fmEv = Events:FindFirstChild("FishingMinigame")
 	if fmEv and fmEv:IsA("RemoteEvent") then
 		fmEv.OnClientEvent:Connect(function(fishData, rodData, sessionToken)
+			local isBossSession = BossState.inFight or (BossState.pendingTarget ~= nil and os.clock() <= BossState.pendingUntil)
 			local materialFilterActive = Config.AutoFarmMaterialBait and currentMaterialTargets and #currentMaterialTargets > 0
-			if (Config.FilterFishEnabled or materialFilterActive) and type(fishData) == "table" then
+			if not isBossSession and (Config.FilterFishEnabled or materialFilterActive) and type(fishData) == "table" then
 				local rawFishName = tostring(fishData.FishName or fishData.Name or fishData.Fish or "")
 				if rawFishName == "" then
 					local progBar = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
@@ -2453,25 +2595,54 @@ do
 end
 
 local function StepAutoBoss(char, isMinigame)
-	if isMinigame then
+	local now = os.clock()
+	if isMinigame or BossState.inFight or BossState.IsBossFightVisual(char, isMinigame) then
 		return
 	end
 
 	local enzoOn = Config.AutoBoss == true
 	local longOn = Config.AutoSecretBoss == true
-
 	if not enzoOn and not longOn then
 		return
 	end
 
-	local now = os.clock()
-	if now - lastBossActionTick < 0.5 then
+	if BossState.pendingTarget and now <= BossState.pendingUntil then
 		return
 	end
-	lastBossActionTick = now
 
-	local enzoReady = enzoOn and (now >= enzoCooldownUntil)
-	local longReady = longOn and (now >= longDiaohaiCooldownUntil)
+	if BossState.lastEndTick > 0 and (now - BossState.lastEndTick) < 0.35 then
+		return
+	end
+
+	local c = char or cachedChar or LocalPlayer.Character
+	local hrp = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+	local hum = (c and c:FindFirstChildOfClass("Humanoid")) or cachedHum
+	if not c or not hrp or (hum and hum.Health <= 0) then
+		return
+	end
+
+	local enzoReady = enzoOn and (now >= BossState.enzoCooldownUntil)
+	local longReady = longOn and (now >= BossState.longDiaohaiCooldownUntil)
+
+	if c:GetAttribute("Fishing") == true then
+		if enzoReady or longReady then
+			if c:GetAttribute("Type") ~= "Fishing Rod" then
+				pcall(function()
+					ToggleHotbar:InvokeServer("1")
+				end)
+			elseif now - BossState.lastRetractTick >= 0.35 then
+				BossState.lastRetractTick = now
+				pcall(function()
+					FishingEvent:FireServer(hrp.CFrame)
+				end)
+			end
+		end
+		return
+	end
+
+	if now - BossState.lastActionTick < 0.25 then
+		return
+	end
 
 	local targetBoss = nil
 	if enzoOn and longOn then
@@ -2480,21 +2651,15 @@ local function StepAutoBoss(char, isMinigame)
 		elseif longReady and not enzoReady then
 			targetBoss = "Long Diaohai"
 		elseif enzoReady and longReady then
-			if currentBossTarget == "Long Diaohai" then
+			if BossState.currentTarget == "Long Diaohai" then
 				targetBoss = "Long Diaohai"
 			else
 				targetBoss = "Enzo"
-			end
-		else
-			if enzoCooldownUntil <= longDiaohaiCooldownUntil then
-				targetBoss = "Enzo"
-			else
-				targetBoss = "Long Diaohai"
 			end
 		end
-	elseif enzoOn then
+	elseif enzoOn and enzoReady then
 		targetBoss = "Enzo"
-	elseif longOn then
+	elseif longOn and longReady then
 		targetBoss = "Long Diaohai"
 	end
 
@@ -2502,34 +2667,39 @@ local function StepAutoBoss(char, isMinigame)
 		return
 	end
 
-	currentBossTarget = targetBoss
+	BossState.currentTarget = targetBoss
+	BossState.lastActionTick = now
 
-	local isTargetReady = false
-	if targetBoss == "Long Diaohai" then
-		isTargetReady = now >= longDiaohaiCooldownUntil
-	else
-		isTargetReady = now >= enzoCooldownUntil
-	end
-
-	local c = char or cachedChar or LocalPlayer.Character
-	if c and c:GetAttribute("Type") ~= "Fishing Rod" then
+	if c:GetAttribute("Type") ~= "Fishing Rod" then
 		pcall(function()
 			ToggleHotbar:InvokeServer("1")
 		end)
 	end
 
-	if isTargetReady then
-		pcall(function()
-			local args = {
-				[1] = targetBoss,
-				[2] = Config.BossMode or "Normal",
-			}
-			game:GetService("ReplicatedStorage"):WaitForChild("Events", 9e9):WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
-		end)
+	now = os.clock()
+	if targetBoss == "Long Diaohai" then
+		if Config.AutoSecretBoss ~= true or now < BossState.longDiaohaiCooldownUntil then
+			return
+		end
 	else
-		local targetUntil = (targetBoss == "Long Diaohai") and longDiaohaiCooldownUntil or enzoCooldownUntil
-		NotifyBossCooldown(targetBoss, math.max(1, targetUntil - now), targetUntil, false)
+		if Config.AutoBoss ~= true or now < BossState.enzoCooldownUntil then
+			return
+		end
 	end
+	if BossState.inFight or BossState.IsBossFightVisual(c, FishingGui and FishingGui.Visible) then
+		return
+	end
+
+	BossState.pendingTarget = targetBoss
+	BossState.pendingUntil = now + 2.0
+	BossState.sawNotFishing = not (c:GetAttribute("Fishing") == true)
+	pcall(function()
+		local args = {
+			[1] = targetBoss,
+			[2] = Config.BossMode or "Normal",
+		}
+		Events:WaitForChild("StartBossFight", 9e9):FireServer(unpack(args))
+	end)
 end
 
 local lastMinigameEndTick = 0
@@ -2641,7 +2811,11 @@ task.spawn(function()
 			end
 		end
 
-		if Config.AutoBoss or Config.AutoSecretBoss then
+		BossState.SyncFightState(cachedChar, isMinigame)
+		local bossPriorityActive = BossState.IsPriorityActive(cachedChar, isMinigame)
+		if bossPriorityActive then
+			isMaterialFarmCastingAllowed = false
+			currentMaterialTargets = {}
 			StepAutoBoss(cachedChar, isMinigame)
 		else
 			if not isMinigame then
@@ -2652,7 +2826,11 @@ task.spawn(function()
 			if activeCast and not isMinigame then
 				local minCastInterval = (Config.AutoCastMethod == "Instant") and 0.05
 					or math.clamp(tonumber(Config.CastDelay) or 1, 0, 10)
-				if (now - lastMinigameEndTick >= minCastInterval) and (now - lastCastTry >= minCastInterval) then
+				if
+					(now - lastMinigameEndTick >= minCastInterval)
+					and (now - lastCastTry >= minCastInterval)
+					and (now - BossState.lastIslandTeleportTick >= 0.15)
+				then
 					local char = cachedChar
 					if char then
 						if char:GetAttribute("Type") ~= "Fishing Rod" then
@@ -3834,44 +4012,6 @@ local function DoBuyBait(baitName, amount)
 	end
 end
 
-local function IsInventoryFull()
-	local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
-	if pData then
-		local inv = pData:FindFirstChild("Inventory")
-		local limitObj = pData:FindFirstChild("InventoryLimit")
-			or pData:FindFirstChild("MaxInventory")
-			or pData:FindFirstChild("BagLimit")
-			or pData:FindFirstChild("MaxCapacity")
-		local limit = limitObj and tonumber(limitObj.Value)
-			or tonumber(pData:GetAttribute("InventoryLimit"))
-			or tonumber(pData:GetAttribute("MaxInventory"))
-		if inv and limit and limit > 0 then
-			if #inv:GetChildren() >= limit then
-				return true
-			end
-		end
-	end
-	local pg = LocalPlayer:FindFirstChild("PlayerGui")
-	if pg then
-		local mg = pg:FindFirstChild("MainGui") or pg:FindFirstChild("ScreenGui") or pg:FindFirstChild("GameGui")
-		if mg then
-			for _, desc in ipairs(mg:GetDescendants()) do
-				if desc:IsA("TextLabel") and desc.Visible then
-					local cur, maxC = string.match(desc.Text, "(%d+)%s*/%s*(%d+)")
-					if cur and maxC then
-						local cNum = tonumber(cur)
-						local mNum = tonumber(maxC)
-						if cNum and mNum and mNum >= 10 and cNum >= mNum then
-							return true
-						end
-					end
-				end
-			end
-		end
-	end
-	return false
-end
-
 task.spawn(function()
 	while task.wait(0.8) do
 		if Config.AutoSell then
@@ -3884,14 +4024,6 @@ task.spawn(function()
 			elseif Config.AutoSellMethod == "Delay" then
 				local delaySec = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60
 				if now - lastSellTime >= delaySec then
-					shouldSell = true
-				end
-			elseif
-				Config.AutoSellMethod == "Sell When Full Inventory"
-				or Config.AutoSellMethod == "Sell When Full"
-				or Config.AutoSellMethod == "On Full"
-			then
-				if (now - lastSellTime >= 1.5) and IsInventoryFull() then
 					shouldSell = true
 				end
 			end
@@ -7409,6 +7541,16 @@ end);
 				task.spawn(function()
 					CheckBossStatusOnToggle(false)
 				end)
+			else
+				BossState.failCounts["Enzo"] = 0
+				if BossState.pendingTarget == "Enzo" then
+					BossState.pendingTarget = nil
+					BossState.pendingUntil = 0
+				end
+				if not Config.AutoSecretBoss and not BossState.IsBossFightVisual(cachedChar, FishingGui and FishingGui.Visible) then
+					BossState.inFight = false
+					BossState.activeTarget = nil
+				end
 			end
 		end,
 	})
@@ -7423,6 +7565,16 @@ end);
 				task.spawn(function()
 					CheckBossStatusOnToggle(true)
 				end)
+			else
+				BossState.failCounts["Long Diaohai"] = 0
+				if BossState.pendingTarget == "Long Diaohai" then
+					BossState.pendingTarget = nil
+					BossState.pendingUntil = 0
+				end
+				if not Config.AutoBoss and not BossState.IsBossFightVisual(cachedChar, FishingGui and FishingGui.Visible) then
+					BossState.inFight = false
+					BossState.activeTarget = nil
+				end
 			end
 		end,
 	})
@@ -8956,13 +9108,8 @@ end);
 
 	Tabs.Shop:AddDropdown("AutoSellMethodDropdown", {
 		Title = "Sell Method",
-		Values = { "Spam", "Delay", "Sell When Full Inventory" },
-		Default = (
-			(Config.AutoSellMethod == "On Full" or Config.AutoSellMethod == "Sell When Full")
-			and "Sell When Full Inventory"
-		)
-			or Config.AutoSellMethod
-			or "Delay",
+		Values = { "Spam", "Delay" },
+		Default = (Config.AutoSellMethod == "Spam" or Config.AutoSellMethod == "Delay") and Config.AutoSellMethod or "Delay",
 		Multi = false,
 		Callback = function(Value)
 			Config.AutoSellMethod = Value or "Delay"
