@@ -1282,22 +1282,34 @@ end
 
 local BAIT_RECIPES = {
 	["Rainbow Bait"] = {
-		{ name = "Colossal Tigerfish", minKg = 3000000, maxKg = 6000000 },
-		{ name = "Heavenpiercer Turtle", minKg = 3000000, maxKg = 6000000 },
-		{ name = "Golden Guardian Fish", minKg = 1000000, maxKg = 3000000 },
-		{ name = "Crimson Electric Eel", minKg = 3000000, maxKg = 4000000 },
+		{ name = "Colossal Tigerfish" },
+		{ name = "Heavenpiercer Turtle" },
+		{ name = "Golden Guardian Fish" },
+		{ name = "Crimson Electric Eel" },
 	},
 	["Frost Bait"] = {
-		{ name = "Frost Kingfish", minKg = 4000000, maxKg = 7000000 },
-		{ name = "Ascended Perch", minKg = 900000, maxKg = 1000000 },
-		{ name = "Primordial Kunfish Overlord", minKg = 1000000, maxKg = 1600000 },
-		{ name = "Warbringer Shark", minKg = 500000, maxKg = 800000 },
+		{ name = "Frost Kingfish" },
+		{ name = "Ascended Perch" },
+		{ name = "Primordial Kunfish Overlord" },
+		{ name = "Warbringer Shark" },
 	},
 	["Intuitive Bait"] = {
-		{ name = "Aquatic Fish", minKg = 1000000, maxKg = 3000000 },
-		{ name = "Flame Fish", minKg = 1000000, maxKg = 3000000 },
-		{ name = "Thunder Fish", minKg = 1000000, maxKg = 3000000 },
-		{ name = "Wind Fish", minKg = 1000000, maxKg = 3000000 },
+		{ name = "Aquatic Fish" },
+		{ name = "Flame Fish" },
+		{ name = "Thunder Fish" },
+		{ name = "Wind Fish" },
+	},
+	["Nameless Bait"] = {
+		{ name = "Mountain Fish" },
+		{ name = "Tiger Mirefish" },
+		{ name = "Mirage lanternfish" },
+		{ name = "Octoparasitic Fish" },
+	},
+	["Thunder Bait"] = {
+		{ name = "Apollo Swordfish" },
+		{ name = "Killer Sawshark" },
+		{ name = "Demon Bladefish" },
+		{ name = "Colossal Bull Shark" },
 	},
 }
 
@@ -1337,11 +1349,19 @@ local MAT_WEATHER_REQUIRED = {
 		island = "Weather Isle",
 		label = "Windy",
 	},
+	["Mirage lanternfish"] = {
+		weathers = { foggy = true, fog = true },
+		island = "Mistpeak Isle",
+		label = "Foggy",
+	},
+	["Colossal Bull Shark"] = {
+		weathers = { thunderstorm = true, thunder = true, storm = true },
+		island = "Mystic Reef Isle",
+		label = "Thunderstorm",
+	},
 }
 
-local NAMELESS_BAIT_FARM_CFRAME = CFrame.new(3013.15, 15.53, -124.57)
-
-local function GetMaterialFishCount(fishName, minKg, maxKg)
+local function GetMaterialFishCount(fishName)
 	local pData = PlayerData or (DataFolder and DataFolder:FindFirstChild(tostring(LocalPlayer.UserId)))
 	if not pData then
 		return 0
@@ -1362,43 +1382,21 @@ local function GetMaterialFishCount(fishName, minKg, maxKg)
 	local lowerFishName = string.lower(fishName)
 	for _, entry in ipairs(inv:GetChildren()) do
 		local rawName = entry.Name
-		local cleanName = string.split(rawName, "| Favorite")[1]
-		cleanName = string.gsub(cleanName, "^%s*(.-)%s*$", "%1")
-		local matchedName = (string.lower(rawName) == lowerFishName) or (string.lower(cleanName) == lowerFishName)
-		local weightNum = nil
-		if gsMod and gsMod.DestringFish then
-			local ok, res = pcall(gsMod.DestringFish, cleanName)
-			if ok and res then
-				if res.FishName and string.lower(res.FishName) == lowerFishName then
-					matchedName = true
-				end
-				if res.Weight then
-					weightNum = tonumber(res.Weight)
-				end
+		local noFav = string.split(rawName, "| Favorite")[1]
+		noFav = string.gsub(noFav, "^%s*(.-)%s*$", "%1")
+		local cleanName = string.gsub(string.split(noFav, "|")[1], "^%s*(.-)%s*$", "%1")
+		local baseName = string.gsub(string.split(cleanName, ",")[1], "^%s*(.-)%s*$", "%1")
+		local matchedName = (string.lower(rawName) == lowerFishName)
+			or (string.lower(noFav) == lowerFishName)
+			or (string.lower(cleanName) == lowerFishName)
+			or (string.lower(baseName) == lowerFishName)
+		if not matchedName and gsMod and gsMod.DestringFish then
+			local ok, res = pcall(gsMod.DestringFish, noFav)
+			if ok and res and res.FishName and string.lower(res.FishName) == lowerFishName then
+				matchedName = true
 			end
 		end
-		if not weightNum then
-			if entry:IsA("StringValue") then
-				local parts = {}
-				for p in string.gmatch(entry.Value, "[^|]+") do
-					table.insert(parts, p)
-				end
-				if #parts >= 2 then
-					weightNum = tonumber(parts[2]:gsub("^%s+", ""):gsub("%s+$", ""))
-				elseif #parts == 1 then
-					weightNum = tonumber(parts[1]:gsub("^%s+", ""):gsub("%s+$", ""))
-				end
-			elseif entry:IsA("NumberValue") or entry:IsA("IntValue") then
-				weightNum = tonumber(entry.Value)
-			end
-		end
-		if not weightNum then
-			for num in string.gmatch(cleanName, "(%d+%.?%d*)%s*[kK][gG]") do
-				weightNum = tonumber(num)
-				break
-			end
-		end
-		if matchedName and (not minKg or not maxKg or (weightNum and weightNum >= minKg and weightNum <= maxKg)) then
+		if matchedName then
 			count = count + 1
 		end
 	end
@@ -1419,6 +1417,14 @@ local MaterialFishIslands = {
 	["Flame Fish"] = "Weather Isle",
 	["Thunder Fish"] = "Weather Isle",
 	["Wind Fish"] = "Weather Isle",
+	["Mountain Fish"] = "Mistpeak Isle",
+	["Tiger Mirefish"] = "Mistpeak Isle",
+	["Mirage lanternfish"] = "Mistpeak Isle",
+	["Octoparasitic Fish"] = "Mistpeak Isle",
+	["Apollo Swordfish"] = "Mystic Reef Isle",
+	["Killer Sawshark"] = "Mystic Reef Isle",
+	["Demon Bladefish"] = "Mystic Reef Isle",
+	["Colossal Bull Shark"] = "Mystic Reef Isle",
 }
 
 local currentMaterialTargets = {}
@@ -1454,6 +1460,14 @@ local function IsWeatherMatching(curWeather, weatherTable)
 	return false
 end
 
+local function GetMaterialTargetIsland(fishName)
+	local reqWeather = MAT_WEATHER_REQUIRED[fishName]
+	if reqWeather then
+		return reqWeather.island
+	end
+	return GetIslandForMaterialFish(fishName)
+end
+
 local lastMatNotifyTick = 0
 local function StepAutoFarmMaterialBait(char)
 	if not Config.AutoFarmMaterialBait or IsCheckingSacredBeast or IsBuyingSecretRod then
@@ -1473,40 +1487,6 @@ local function StepAutoFarmMaterialBait(char)
 		return
 	end
 	local selectedBait = Config.SelectedMaterialBait or "Rainbow Bait"
-	if selectedBait == "Nameless Bait" then
-		local targetCF = IslandFarmPositions["Mistpeak Isle"] or GetIslandFarmCFrame("Mistpeak Isle")
-		if targetCF and (hrp.Position - targetCF.Position).Magnitude > 5 then
-			isMaterialFarmCastingAllowed = false
-			if c:GetAttribute("Fishing") then
-				pcall(function()
-					FishingEvent:FireServer(hrp.CFrame)
-				end)
-				task.wait(0.1)
-			end
-			hrp.CFrame = targetCF
-		else
-			isMaterialFarmCastingAllowed = true
-		end
-		currentMaterialTargets = {}
-		return
-	end
-	if selectedBait == "Thunder Bait" then
-		local targetCF = IslandFarmPositions["Mystic Reef Isle"] or GetIslandFarmCFrame("Mystic Reef Isle")
-		if targetCF and (hrp.Position - targetCF.Position).Magnitude > 5 then
-			isMaterialFarmCastingAllowed = false
-			if c:GetAttribute("Fishing") then
-				pcall(function()
-					FishingEvent:FireServer(hrp.CFrame)
-				end)
-				task.wait(0.1)
-			end
-			hrp.CFrame = targetCF
-		else
-			isMaterialFarmCastingAllowed = true
-		end
-		currentMaterialTargets = {}
-		return
-	end
 	local recipe = BAIT_RECIPES[selectedBait]
 	if not recipe or #recipe == 0 then
 		isMaterialFarmCastingAllowed = false
@@ -1547,8 +1527,10 @@ local function StepAutoFarmMaterialBait(char)
 
 	local targetFish = nil
 	local minCount = math.huge
-	for _, item in ipairs(availableList) do
-		local cnt = GetMaterialFishCount(item.name, item.minKg, item.maxKg)
+	local itemCounts = {}
+	for i, item in ipairs(availableList) do
+		local cnt = GetMaterialFishCount(item.name)
+		itemCounts[i] = cnt
 		if cnt < minCount then
 			minCount = cnt
 			targetFish = item
@@ -1560,18 +1542,11 @@ local function StepAutoFarmMaterialBait(char)
 		return
 	end
 
-	local islandName
-	local reqWeather = MAT_WEATHER_REQUIRED[targetFish.name]
-	if reqWeather then
-		islandName = reqWeather.island
-	else
-		islandName = GetIslandForMaterialFish(targetFish.name)
-	end
+	local islandName = GetMaterialTargetIsland(targetFish.name)
 
 	local matTargets = {}
-	for _, item in ipairs(availableList) do
-		local isl = GetIslandForMaterialFish(item.name)
-		if isl == islandName then
+	for i, item in ipairs(availableList) do
+		if itemCounts[i] == minCount and GetMaterialTargetIsland(item.name) == islandName then
 			table.insert(matTargets, string.lower(item.name))
 		end
 	end
