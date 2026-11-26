@@ -6843,7 +6843,7 @@ end);
 
 	local Window = Fluent:CreateWindow({
 		Title = "StarCrow Hub",
-		SubTitle = " | Heavyweigh Fishing",
+		SubTitle = " | Heavyweigh Fishing | 00:00:00",
 		TabWidth = 130,
 		Size = UDim2.fromOffset(460, 400),
 		Acrylic = false,
@@ -6855,6 +6855,40 @@ end);
 			Fluent.GUI.DisplayOrder = 5000
 		end
 	end)
+
+	do
+		local SubTitleLabel = nil
+		pcall(function()
+			if Window and Window.TitleBar and Window.TitleBar.Frame then
+				for _, desc in ipairs(Window.TitleBar.Frame:GetDescendants()) do
+					if desc:IsA("TextLabel") and desc.Text == " | Heavyweigh Fishing | 00:00:00" then
+						SubTitleLabel = desc
+						break
+					end
+				end
+			end
+		end)
+
+		task.spawn(function()
+			while not Fluent.Unloaded do
+				local uptime = workspace.DistributedGameTime or time()
+				local d = math.floor(uptime / 86400)
+				local h = math.floor((uptime % 86400) / 3600)
+				local m = math.floor((uptime % 3600) / 60)
+				local s = math.floor(uptime % 60)
+				local timeText = (
+					d > 0 and string.format("%dd %02d:%02d:%02d", d, h, m, s)
+					or string.format("%02d:%02d:%02d", h, m, s)
+				)
+				if SubTitleLabel then
+					pcall(function()
+						SubTitleLabel.Text = " | Heavyweigh Fishing | " .. timeText
+					end)
+				end
+				task.wait(1)
+			end
+		end)
+	end
 
 	local DoServerHop
 
@@ -10159,31 +10193,6 @@ end
 		end
 
 		Tabs.Server:AddSection("Server")
-
-		do
-			local ServerTimeParagraph = Tabs.Server:AddParagraph({
-				Title = "Status : 00:00:00",
-				Content = "",
-			})
-
-			task.spawn(function()
-				while true do
-					local uptime = workspace.DistributedGameTime or time()
-					local d = math.floor(uptime / 86400)
-					local h = math.floor((uptime % 86400) / 3600)
-					local m = math.floor((uptime % 3600) / 60)
-					local s = math.floor(uptime % 60)
-					local timeText = (
-						d > 0 and string.format("%dd %02d:%02d:%02d", d, h, m, s)
-						or string.format("%02d:%02d:%02d", h, m, s)
-					)
-					pcall(function()
-						ServerTimeParagraph:SetTitle("Status : " .. timeText)
-					end)
-					task.wait(1)
-				end
-			end)
-		end
 
 		Tabs.Server:AddButton({
 			Title = "Rejoin",
