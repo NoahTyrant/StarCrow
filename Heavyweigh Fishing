@@ -61,6 +61,7 @@ local Config = {
 	SelectedNPC = "",
 	SelectedPlayer = "",
 	ESPEnabled = false,
+	ESPSkills = false,
 	WalkOnWater = false,
 	InstantInteract = false,
 	HideNameAndID = true,
@@ -113,9 +114,14 @@ local Config = {
 	AutoExe = false,
 	HopBossDelay = 5,
 	HopWeatherDelay = 5,
+	AutoHopMerchant = false,
+	SelectedHopMerchants = { "Maoshan", "Taoist" },
+	HopMerchantDelay = 5,
+	AutoHopGodSpirit = false,
+	SelectedHopGodSpirits = { "Yellow", "Blue", "Green" },
+	HopGodSpiritDelay = 5,
 	AutoUpgradeCharacter = false,
-	SelectedUpgradeType = "Level + Cash",
-	UpgradeCharacterDelay = 5,
+	SelectedUpgradeOptions = { "Cash", "Level" },
 	WebhookUrl = "",
 	WebhookSacredBeast = false,
 	WebhookWeather = false,
@@ -208,6 +214,52 @@ end
 if not Config.SelectedWeather or Config.SelectedWeather == "" then
 	Config.SelectedWeather = "Thunderstorm"
 end
+do
+	local validUpgradeOpts = { Cash = true, Level = true, Crystal = true, Ticket = true }
+	local filtered = {}
+	if type(Config.SelectedUpgradeOptions) == "table" then
+		for _, k in ipairs(Config.SelectedUpgradeOptions) do
+			if validUpgradeOpts[k] and not table.find(filtered, k) then
+				table.insert(filtered, k)
+				if #filtered == 2 then
+					break
+				end
+			end
+		end
+	end
+	if #filtered == 0 then
+		filtered = { "Cash", "Level" }
+	end
+	Config.SelectedUpgradeOptions = filtered
+end
+local function NormalizeHopSelection(raw, validList, fallbackList)
+	local out = {}
+	if type(raw) == "table" then
+		for _, v in ipairs(validList) do
+			if raw[v] == true or table.find(raw, v) then
+				table.insert(out, v)
+			end
+		end
+	elseif type(raw) == "string" and table.find(validList, raw) then
+		table.insert(out, raw)
+	end
+	if #out == 0 and fallbackList then
+		for _, v in ipairs(fallbackList) do
+			table.insert(out, v)
+		end
+	end
+	return out
+end
+Config.SelectedHopMerchants = NormalizeHopSelection(
+	Config.SelectedHopMerchants,
+	{ "Maoshan", "Taoist" },
+	{ "Maoshan", "Taoist" }
+)
+Config.SelectedHopGodSpirits = NormalizeHopSelection(
+	Config.SelectedHopGodSpirits,
+	{ "Yellow", "Blue", "Green" },
+	{ "Yellow", "Blue", "Green" }
+)
 
 local function GetSavedCFrame()
 	if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
@@ -2949,6 +3001,101 @@ local function updateESP()
 	end
 end
 
+local function getPlayerSkillText(player)
+	local df = DataFolder or ReplicatedStorage:FindFirstChild("Data")
+	local pData = df and df:FindFirstChild(tostring(player.UserId))
+	local rodVal = pData and pData:FindFirstChild("FishingRod")
+	local rodName = rodVal and tostring(rodVal.Value or "") or ""
+	if rodName == "" then
+		return ""
+	end
+	local rodInv = pData:FindFirstChild("FishingRodInventory")
+	local rodEntry = rodInv and rodInv:FindFirstChild(rodName)
+	local skillFolder = rodEntry and rodEntry:FindFirstChild("Skill")
+	if not skillFolder then
+		return ""
+	end
+	local skillMap = {}
+	for _, item in ipairs(skillFolder:GetChildren()) do
+		if item:IsA("StringValue") and item.Value ~= "" then
+			skillMap[item.Name] = tostring(item.Value)
+		end
+	end
+	local parts = {}
+	local seen = {}
+	for _, key in ipairs({ "Z", "X", "C", "V" }) do
+		seen[key] = true
+		if skillMap[key] then
+			table.insert(parts, key .. ": " .. skillMap[key])
+		end
+	end
+	for key, val in pairs(skillMap) do
+		if not seen[key] then
+			table.insert(parts, key .. ": " .. val)
+		end
+	end
+	return table.concat(parts, "  |  ")
+end
+
+local function clearSkillESP()
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		if char then
+			for _, partName in ipairs({ "Head", "HumanoidRootPart" }) do
+				local part = char:FindFirstChild(partName)
+				local esp = part and part:FindFirstChild("StarCrowSkillESP")
+				if esp then
+					esp:Destroy()
+				end
+			end
+		end
+	end
+end
+
+local function updateSkillESP()
+	if not Config.ESPSkills then
+		return
+	end
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local char = player.Character
+			local head = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if head and hum then
+				local esp = head:FindFirstChild("StarCrowSkillESP")
+				local summary = hum.Health > 0 and getPlayerSkillText(player) or ""
+				if summary ~= "" then
+					if not esp then
+						esp = Instance.new("BillboardGui")
+						esp.Name = "StarCrowSkillESP"
+						esp.Adornee = head
+						esp.Size = UDim2.new(0, 420, 0, 40)
+						esp.StudsOffset = Vector3.new(0, 3.8, 0)
+						esp.AlwaysOnTop = true
+						esp.MaxDistance = math.huge
+						esp.ResetOnSpawn = false
+						local text = Instance.new("TextLabel")
+						text.Name = "SkillText"
+						text.Parent = esp
+						text.Size = UDim2.new(1, 0, 1, 0)
+						text.BackgroundTransparency = 1
+						text.Font = Enum.Font.GothamBold
+						text.TextSize = 13
+						text.TextColor3 = Color3.fromRGB(225, 110, 255)
+						text.TextStrokeTransparency = 0
+						text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+						text.TextWrapped = true
+						esp.Parent = head
+					end
+					esp.SkillText.Text = summary
+				elseif esp then
+					esp:Destroy()
+				end
+			end
+		end
+	end
+end
+
 local function FindAllGodSpirits()
 	local results = {}
 	local seen = {}
@@ -3925,6 +4072,9 @@ task.spawn(function()
 	while task.wait(0.4) do
 		if Config.ESPEnabled then
 			updateESP()
+		end
+		if Config.ESPSkills then
+			updateSkillESP()
 		end
 		entityCheckThrottle = entityCheckThrottle + 0.4
 		if entityCheckThrottle >= 1.2 then
@@ -5796,18 +5946,49 @@ local StepAutoClaimDailyQuest, StepAutoClaimDailyReward
 	end
 end)()
 
-local function GetUpgradeArgs(mode)
-	if mode == "Cash + Ticket" then
-		return { { "Cash", "Ticket" } }
-	elseif mode == "Ticket + Level" then
-		return { { "Ticket", "Level" } }
-	else
-		return { { "Cash", "Level" } }
-	end
+local UpgradeRequirements = {
+	Cash = { needed = 5000000000, getPath = function(pData) return pData:FindFirstChild("Cash") end },
+	Level = { needed = 500, getPath = function(pData) local lvl = pData:FindFirstChild("Level"); return lvl and lvl:FindFirstChild("Level") end },
+	Crystal = { needed = 500, getPath = function(pData) return pData:FindFirstChild("Crystal") end },
+	Ticket = { needed = 100, getPath = function(pData) return pData:FindFirstChild("Ticket") end },
+}
+
+local function GetUpgradePlayerData()
+	local df = DataFolder or ReplicatedStorage:FindFirstChild("Data")
+	return PlayerData or (df and df:FindFirstChild(tostring(LocalPlayer.UserId)))
 end
 
-local function DoUpgradeCharacter(mode)
-	local args = GetUpgradeArgs(mode or Config.SelectedUpgradeType)
+local function GetUpgradeResourceValue(pData, key)
+	local req = UpgradeRequirements[key]
+	local valObj = req and req.getPath(pData)
+	return valObj and tonumber(valObj.Value) or 0
+end
+
+local function HasUpgradeResources(options)
+	if type(options) ~= "table" or #options ~= 2 then
+		return false
+	end
+	local pData = GetUpgradePlayerData()
+	if not pData then
+		return false
+	end
+	for _, opt in ipairs(options) do
+		local req = UpgradeRequirements[opt]
+		if not req then
+			return false
+		end
+		if GetUpgradeResourceValue(pData, opt) < req.needed then
+			return false
+		end
+	end
+	return true
+end
+
+local function DoUpgradeCharacter(options)
+	local opts = type(options) == "table" and options or Config.SelectedUpgradeOptions
+	if type(opts) ~= "table" or #opts ~= 2 then
+		return
+	end
 	local ev = UpgradeCharacterEvent or (Events and Events:FindFirstChild("UpgradeCharacter"))
 	if not ev then
 		return
@@ -5815,11 +5996,11 @@ local function DoUpgradeCharacter(mode)
 	task.spawn(function()
 		pcall(function()
 			if ev:IsA("RemoteFunction") then
-				ev:InvokeServer(unpack(args))
+				ev:InvokeServer(opts)
 			elseif ev:IsA("RemoteEvent") then
-				ev:FireServer(unpack(args))
+				ev:FireServer(opts)
 			else
-				ev:InvokeServer(unpack(args))
+				ev:InvokeServer(opts)
 			end
 		end)
 	end)
@@ -5830,13 +6011,15 @@ local function StepAutoUpgradeCharacter()
 	if not Config.AutoUpgradeCharacter then
 		return
 	end
+	if not HasUpgradeResources(Config.SelectedUpgradeOptions) then
+		return
+	end
 	local now = os.clock()
-	local delaySec = (tonumber(Config.UpgradeCharacterDelay) or 5) * 60
-	if lastUpgradeAttempt > 0 and (now - lastUpgradeAttempt) < delaySec then
+	if lastUpgradeAttempt > 0 and (now - lastUpgradeAttempt) < 2 then
 		return
 	end
 	lastUpgradeAttempt = now
-	DoUpgradeCharacter(Config.SelectedUpgradeType)
+	DoUpgradeCharacter(Config.SelectedUpgradeOptions)
 end
 
 task.spawn(function()
@@ -8869,33 +9052,52 @@ end);
 
 	Tabs.Player:AddSection("Upgrade Character")
 
-	local upgradeOptions = { "Level + Cash", "Cash + Ticket", "Ticket + Level" }
-	if not table.find(upgradeOptions, Config.SelectedUpgradeType) then
-		Config.SelectedUpgradeType = "Level + Cash"
+	local upgradeOptionKeys = { "Cash", "Level", "Crystal", "Ticket" }
+	local defaultUpgradeSelection = {}
+	for _, k in ipairs(Config.SelectedUpgradeOptions) do
+		defaultUpgradeSelection[k] = true
 	end
 
-	Tabs.Player:AddDropdown("SelectUpgradeTypeDropdown", {
+	local UpgradeOptionsDropdown = Tabs.Player:AddDropdown("SelectUpgradeTypeDropdown", {
 		Title = "Upgrade Type",
-		Values = upgradeOptions,
-		Default = Config.SelectedUpgradeType,
-		Multi = false,
-		Callback = function(Value)
-			Config.SelectedUpgradeType = Value or "Level + Cash"
-			SaveConfig()
-		end,
+		Values = upgradeOptionKeys,
+		Default = defaultUpgradeSelection,
+		Multi = true,
 	})
 
-	Tabs.Player:AddSlider("UpgradeCharacterDelaySlider", {
-		Title = "Delay Min",
-		Default = Config.UpgradeCharacterDelay or 5,
-		Min = 1,
-		Max = 10,
-		Rounding = 0,
-		Callback = function(Value)
-			Config.UpgradeCharacterDelay = Value
-			SaveConfig()
-		end,
-	})
+	local updatingUpgradeDropdown = false
+	UpgradeOptionsDropdown:OnChanged(function(Value)
+		if updatingUpgradeDropdown or type(Value) ~= "table" then
+			return
+		end
+		local selected = {}
+		for _, k in ipairs(Config.SelectedUpgradeOptions) do
+			if Value[k] then
+				table.insert(selected, k)
+			end
+		end
+		for _, k in ipairs(upgradeOptionKeys) do
+			if Value[k] and not table.find(selected, k) then
+				table.insert(selected, k)
+			end
+		end
+		if #selected > 2 then
+			while #selected > 2 do
+				table.remove(selected, 1)
+			end
+			Config.SelectedUpgradeOptions = selected
+			local cappedMap = {}
+			for _, k in ipairs(selected) do
+				cappedMap[k] = true
+			end
+			updatingUpgradeDropdown = true
+			UpgradeOptionsDropdown:SetValue(cappedMap)
+			updatingUpgradeDropdown = false
+		else
+			Config.SelectedUpgradeOptions = selected
+		end
+		SaveConfig()
+	end)
 
 	Tabs.Player:AddToggle("AutoUpgradeCharacterToggle", {
 		Title = "Auto Upgrade Character",
@@ -8912,7 +9114,7 @@ end);
 	Tabs.Player:AddButton({
 		Title = "Upgrade Character",
 		Callback = function()
-			DoUpgradeCharacter(Config.SelectedUpgradeType)
+			DoUpgradeCharacter(Config.SelectedUpgradeOptions)
 		end,
 	})
 
@@ -9396,6 +9598,20 @@ end);
 			SaveConfig()
 			if not Value then
 				clearPlayerESP()
+			end
+		end,
+	})
+
+	Tabs.ESP:AddToggle("ESPSkills", {
+		Title = "ESP Skills",
+		Default = Config.ESPSkills,
+		Callback = function(Value)
+			Config.ESPSkills = Value
+			SaveConfig()
+			if Value then
+				task.spawn(updateSkillESP)
+			else
+				clearSkillESP()
 			end
 		end,
 	})
@@ -10035,6 +10251,17 @@ end
 				end
 				local visited = LoadVisitedServers()
 				SaveVisitedServers(visited)
+				local friendJobIds = {}
+				pcall(function()
+					local friends = LocalPlayer:GetFriendsOnline(200)
+					if type(friends) == "table" then
+						for _, f in ipairs(friends) do
+							if type(f) == "table" and f.GameId and tostring(f.GameId) ~= "" then
+								friendJobIds[tostring(f.GameId)] = true
+							end
+						end
+					end
+				end)
 
 				pcall(function()
 					local desc = "Searching for a server..."
@@ -10088,12 +10315,13 @@ end
 						if data and type(data.data) == "table" then
 							local unvisitedServers = {}
 							for _, s in ipairs(data.data) do
-								if type(s) == "table" and s.id and tostring(s.id) ~= curJobId then
+								local sid = type(s) == "table" and s.id and tostring(s.id) or ""
+								if sid ~= "" and sid ~= curJobId and not friendJobIds[sid] then
 									local playing = tonumber(s.playing) or 0
 									local maxP = tonumber(s.maxPlayers) or 1
 									if playing < maxP and playing > 0 then
 										table.insert(allValidServers, s)
-										if not visited[tostring(s.id)] then
+										if not visited[sid] then
 											table.insert(unvisitedServers, s)
 										end
 									end
@@ -10170,7 +10398,7 @@ end
 					end)
 					task.wait(5)
 					isHoppingServer = false
-					if Config.AutoHopSacredBeast or Config.AutoHopWeather then
+					if Config.AutoHopSacredBeast or Config.AutoHopWeather or Config.AutoHopMerchant or Config.AutoHopGodSpirit then
 						DoServerHop(mode)
 					end
 				else
@@ -10618,6 +10846,242 @@ end
 					DoServerHop("random")
 				end
 			end
+		end)
+
+		local function ToHopMultiMap(list)
+			local map = {}
+			if type(list) == "table" then
+				for _, v in ipairs(list) do
+					map[v] = true
+				end
+			end
+			return map
+		end
+
+		local function FindMatchingMerchant()
+			local mInfo, tInfo, gList = FindSpecialEntities()
+			for _, name in ipairs(Config.SelectedHopMerchants) do
+				if name == "Maoshan" and mInfo and mInfo.pos then
+					return { label = "Maoshan", pos = mInfo.pos, mInfo = mInfo, tInfo = tInfo, gList = gList }
+				elseif name == "Taoist" and tInfo and tInfo.pos then
+					return { label = "Taoist", pos = tInfo.pos, mInfo = mInfo, tInfo = tInfo, gList = gList }
+				end
+			end
+			return nil
+		end
+
+		local function FindMatchingGodSpirit()
+			local mInfo, tInfo, gList = FindSpecialEntities()
+			local wanted = {}
+			for _, colName in ipairs(Config.SelectedHopGodSpirits) do
+				wanted[string.lower(colName)] = colName
+			end
+			for _, g in ipairs(gList) do
+				local label = wanted[g.lower]
+				if label and g.pos then
+					return { label = label .. " God Spirit", pos = g.pos, mInfo = mInfo, tInfo = tInfo, gList = gList }
+				end
+			end
+			return nil
+		end
+
+		local function RunEntityAutoHop(opts, isStartup)
+			if not Config[opts.configKey] then
+				return
+			end
+			if isStartup then
+				task.wait(2.5)
+				if not Config[opts.configKey] then
+					return
+				end
+				repeat
+					task.wait(0.2)
+				until (
+						game:IsLoaded()
+						and LocalPlayer.Character
+						and (
+							LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+							or LocalPlayer.Character:FindFirstChild("Head")
+						)
+					) or not Config[opts.configKey]
+				if not Config[opts.configKey] then
+					return
+				end
+				task.wait(1)
+			end
+			local found = opts.findFn()
+			if isStartup and not found then
+				for _ = 1, 6 do
+					if not Config[opts.configKey] then
+						return
+					end
+					task.wait(0.25)
+					found = opts.findFn()
+					if found then
+						break
+					end
+				end
+			end
+			if not Config[opts.configKey] then
+				return
+			end
+			if found then
+				Config[opts.configKey] = false
+				SaveConfig()
+				local toggleObj = opts.getToggle()
+				if toggleObj then
+					pcall(function()
+						toggleObj:SetValue(false)
+					end)
+				end
+				local c = cachedChar or LocalPlayer.Character
+				local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+				if found.pos and h then
+					h.CFrame = CFrame.new(found.pos + Vector3.new(0, 3, 0))
+				end
+				local isl = found.pos and GetNearestIslandName(found.pos) or "Unknown"
+				pcall(function()
+					Fluent:Notify({
+						Title = opts.title,
+						Content = "Found " .. found.label .. " at " .. isl .. "! Teleporting...",
+						Duration = 6,
+					})
+				end)
+				task.spawn(function()
+					checkWebhookNotifications(found.mInfo, found.tInfo, found.gList or {})
+				end)
+			else
+				local delaySec = Config[opts.delayKey] or 5
+				pcall(function()
+					Fluent:Notify({
+						Title = opts.title,
+						Content = opts.notFoundMsg .. " | Hopping in " .. tostring(delaySec) .. "s...",
+						Duration = 5,
+					})
+				end)
+				task.wait(delaySec)
+				if Config[opts.configKey] and DoServerHop then
+					DoServerHop("random")
+				end
+			end
+		end
+
+		Tabs.Server:AddSection("Merchant Hop")
+
+		local AutoHopMerchantToggleObj
+		local merchantHopOpts = {
+			title = "Merchant Hop",
+			configKey = "AutoHopMerchant",
+			delayKey = "HopMerchantDelay",
+			notFoundMsg = "No selected merchant spawned",
+			findFn = FindMatchingMerchant,
+			getToggle = function()
+				return AutoHopMerchantToggleObj
+			end,
+		}
+
+		AutoHopMerchantToggleObj = Tabs.Server:AddToggle("AutoHopMerchantToggle", {
+			Title = "Auto Hop Merchant",
+			Default = Config.AutoHopMerchant,
+			Callback = function(Value)
+				Config.AutoHopMerchant = Value
+				SaveConfig()
+				if Value then
+					task.spawn(function()
+						RunEntityAutoHop(merchantHopOpts, false)
+					end)
+				end
+			end,
+		})
+
+		local merchantValidKeys = { "Maoshan", "Taoist" }
+		Tabs.Server:AddDropdown("SelectHopMerchantDropdown", {
+			Title = "Select Merchant",
+			Values = merchantValidKeys,
+			Default = ToHopMultiMap(Config.SelectedHopMerchants),
+			Multi = true,
+			Callback = function(Value)
+				local picked = NormalizeHopSelection(Value, merchantValidKeys)
+				if #picked > 0 then
+					Config.SelectedHopMerchants = picked
+					SaveConfig()
+				end
+			end,
+		})
+
+		Tabs.Server:AddSlider("HopMerchantDelaySlider", {
+			Title = "Delay Hop",
+			Default = Config.HopMerchantDelay or 5,
+			Min = 5,
+			Max = 20,
+			Rounding = 1,
+			Callback = function(Value)
+				Config.HopMerchantDelay = Value
+				SaveConfig()
+			end,
+		})
+
+		task.spawn(function()
+			RunEntityAutoHop(merchantHopOpts, true)
+		end)
+
+		Tabs.Server:AddSection("God Spirit Hop")
+
+		local AutoHopGodSpiritToggleObj
+		local godSpiritHopOpts = {
+			title = "God Spirit Hop",
+			configKey = "AutoHopGodSpirit",
+			delayKey = "HopGodSpiritDelay",
+			notFoundMsg = "No selected God Spirit spawned",
+			findFn = FindMatchingGodSpirit,
+			getToggle = function()
+				return AutoHopGodSpiritToggleObj
+			end,
+		}
+
+		AutoHopGodSpiritToggleObj = Tabs.Server:AddToggle("AutoHopGodSpiritToggle", {
+			Title = "Auto Hop God Spirit",
+			Default = Config.AutoHopGodSpirit,
+			Callback = function(Value)
+				Config.AutoHopGodSpirit = Value
+				SaveConfig()
+				if Value then
+					task.spawn(function()
+						RunEntityAutoHop(godSpiritHopOpts, false)
+					end)
+				end
+			end,
+		})
+
+		local godSpiritValidKeys = { "Yellow", "Blue", "Green" }
+		Tabs.Server:AddDropdown("SelectHopGodSpiritDropdown", {
+			Title = "Select God Spirit",
+			Values = godSpiritValidKeys,
+			Default = ToHopMultiMap(Config.SelectedHopGodSpirits),
+			Multi = true,
+			Callback = function(Value)
+				local picked = NormalizeHopSelection(Value, godSpiritValidKeys)
+				if #picked > 0 then
+					Config.SelectedHopGodSpirits = picked
+					SaveConfig()
+				end
+			end,
+		})
+
+		Tabs.Server:AddSlider("HopGodSpiritDelaySlider", {
+			Title = "Delay Hop",
+			Default = Config.HopGodSpiritDelay or 5,
+			Min = 5,
+			Max = 20,
+			Rounding = 1,
+			Callback = function(Value)
+				Config.HopGodSpiritDelay = Value
+				SaveConfig()
+			end,
+		})
+
+		task.spawn(function()
+			RunEntityAutoHop(godSpiritHopOpts, true)
 		end)
 	end
 
