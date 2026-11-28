@@ -43,6 +43,8 @@ local Config = {
 	BossMode = "Normal",
 	AutoBoss = false,
 	AutoSecretBoss = false,
+	AutoCheckSacredBeast = false,
+	AutoCheckSacredBeastDelay = 1,
 	AutoSkill = false,
 	SkillOrder = { "Z", "X", "C", "V" },
 	AutoSell = false,
@@ -260,6 +262,7 @@ Config.SelectedHopGodSpirits = NormalizeHopSelection(
 	{ "Yellow", "Blue", "Green" },
 	{ "Yellow", "Blue", "Green" }
 )
+Config.AutoCheckSacredBeastDelay = math.clamp(math.floor(tonumber(Config.AutoCheckSacredBeastDelay) or 1), 1, 5)
 
 local function GetSavedCFrame()
 	if type(Config.SavedPos) == "table" and #Config.SavedPos >= 3 then
@@ -586,6 +589,15 @@ local function CheckChuTianjiaoDialogue(timeoutSec)
 		end
 		task.wait(0.1)
 	end
+	pcall(function()
+		local pg = LocalPlayer:FindFirstChild("PlayerGui")
+		local mg = pg and pg:FindFirstChild("MainGui")
+		local menu = mg and mg:FindFirstChild("Menu")
+		local dialogue = menu and menu:FindFirstChild("Dialogue")
+		if dialogue and dialogue.Visible then
+			dialogue.Visible = false
+		end
+	end)
 	return (resultText ~= ""), resultText
 end
 
@@ -2776,7 +2788,7 @@ task.spawn(function()
 		end
 		local needPauseForGive = IsGivingEventFish
 			or (Config.AutoGiveEventFish and HasPendingEventFish and HasPendingEventFish())
-		if needPauseForGive and not isMinigame then
+		if (needPauseForGive or IsCheckingSacredBeast or IsBuyingSecretRod) and not isMinigame then
 			activeCast = false
 		end
 		local activeSkill = Config.AutoSkill
@@ -7789,6 +7801,126 @@ end);
 		end,
 	})
 
+	Tabs.Boss:AddSection("Sacred Beast")
+
+	local lastAutoCheckSacredBeast = 0
+	local lastNotifiedSacredBeastKey = ""
+
+	local function RunSacredBeastCheck()
+		if IsCheckingSacredBeast then
+			return
+		end
+		IsCheckingSacredBeast = true
+		local cBefore = cachedChar or LocalPlayer.Character
+		local hBefore = (cBefore and cBefore:FindFirstChild("HumanoidRootPart")) or cachedHrp
+		local prevCF = hBefore and hBefore.CFrame or nil
+		if cBefore and cBefore:GetAttribute("Fishing") == true and hBefore and not (FishingGui and FishingGui.Visible) then
+			pcall(function()
+				FishingEvent:FireServer(hBefore.CFrame)
+			end)
+			task.wait(0.15)
+		end
+		local ok, chuText = CheckChuTianjiaoDialogue(3.5)
+		local appeared = IsSacredBeastAppeared(chuText)
+		if appeared then
+			local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
+			local c = cachedChar or LocalPlayer.Character
+			local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+			if targetCF and h then
+				h.CFrame = targetCF
+				BossState.lastIslandTeleportTick = os.clock()
+			end
+			pcall(function()
+				Fluent:Notify({
+					Title = "Sacred Beast",
+					Content = (
+						targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...")
+						or ("Sacred Beast appeared: " .. tostring(chuText))
+					),
+					Duration = 5,
+				})
+			end)
+			local sbKey = string.lower(tostring(chuText or "")) .. "_" .. tostring(game.JobId)
+			if lastNotifiedSacredBeastKey ~= sbKey then
+				lastNotifiedSacredBeastKey = sbKey
+				task.spawn(function()
+					NotifySacredBeastWebhook(chuText, islandName)
+				end)
+			end
+		else
+			lastNotifiedSacredBeastKey = ""
+			if prevCF and not Config.AutoFarmIsland and not Config.AutoTPPos and not Config.AutoFarmMaterialBait then
+				local c = cachedChar or LocalPlayer.Character
+				local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
+				if h then
+					h.CFrame = prevCF
+				end
+			end
+			pcall(function()
+				Fluent:Notify({
+					Title = "Sacred Beast",
+					Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
+					Duration = 4,
+				})
+			end)
+		end
+		IsCheckingSacredBeast = false
+	end
+
+	Tabs.Boss:AddToggle("AutoCheckSacredBeastToggle", {
+		Title = "Auto Check Sacred Beast",
+		Default = Config.AutoCheckSacredBeast,
+		Callback = function(Value)
+			Config.AutoCheckSacredBeast = Value
+			SaveConfig()
+			if Value then
+				lastAutoCheckSacredBeast = os.clock()
+				task.spawn(RunSacredBeastCheck)
+			else
+				lastAutoCheckSacredBeast = 0
+			end
+		end,
+	})
+
+	Tabs.Boss:AddSlider("AutoCheckSacredBeastDelaySlider", {
+		Title = "Check Delay Min",
+		Default = Config.AutoCheckSacredBeastDelay or 1,
+		Min = 1,
+		Max = 5,
+		Rounding = 0,
+		Callback = function(Value)
+			Config.AutoCheckSacredBeastDelay = math.clamp(math.floor(tonumber(Value) or 1), 1, 5)
+			SaveConfig()
+		end,
+	})
+
+	Tabs.Boss:AddButton({
+		Title = "Check Sacred Beast",
+		Callback = function()
+			task.spawn(RunSacredBeastCheck)
+		end,
+	})
+
+	task.spawn(function()
+		task.wait(3)
+		while not Fluent.Unloaded do
+			task.wait(1)
+			if Config.AutoCheckSacredBeast and not IsCheckingSacredBeast then
+				local isMinigameNow = FishingGui and FishingGui.Visible
+				local charNow = cachedChar or LocalPlayer.Character
+				local hrpNow = charNow and charNow:FindFirstChild("HumanoidRootPart")
+				if not isMinigameNow and hrpNow then
+					local delaySec = math.clamp(math.floor(tonumber(Config.AutoCheckSacredBeastDelay) or 1), 1, 5) * 60
+					local now = os.clock()
+					if lastAutoCheckSacredBeast == 0 or (now - lastAutoCheckSacredBeast) >= delaySec then
+						lastAutoCheckSacredBeast = now
+						RunSacredBeastCheck()
+					end
+				end
+			end
+		end
+	end)
+
 	Tabs.Quest:AddSection("Auto Claim Daily Quest")
 
 	Tabs.Quest:AddToggle("AutoClaimDailyQuestToggle", {
@@ -10592,47 +10724,6 @@ end
 				Callback = function(Value)
 					Config.HopBossDelay = Value
 					SaveConfig()
-				end,
-			})
-
-			Tabs.Server:AddButton({
-				Title = "Check Sacred Beast",
-				Callback = function()
-					task.spawn(function()
-						if IsCheckingSacredBeast then
-							return
-						end
-						IsCheckingSacredBeast = true
-						local ok, chuText = CheckChuTianjiaoDialogue(3.5)
-						local appeared = IsSacredBeastAppeared(chuText)
-						if appeared then
-							local targetCF, islandName = GetSacredBeastIslandCFrame(chuText)
-							local c = cachedChar or LocalPlayer.Character
-							local h = (c and c:FindFirstChild("HumanoidRootPart")) or cachedHrp
-							if targetCF and h then
-								h.CFrame = targetCF
-							end
-							pcall(function()
-								Fluent:Notify({
-									Title = "Sacred Beast",
-									Content = (targetCF and ("Found Sacred Beast at " .. tostring(islandName) .. "! Teleporting...") or ("Sacred Beast appeared: " .. tostring(chuText))),
-									Duration = 5,
-								})
-							end)
-							task.spawn(function()
-								NotifySacredBeastWebhook(chuText, islandName)
-							end)
-						else
-							pcall(function()
-								Fluent:Notify({
-									Title = "Sacred Beast",
-									Content = (chuText and chuText ~= "") and chuText or "No Sacred Beast spawned.",
-									Duration = 4,
-								})
-							end)
-						end
-						IsCheckingSacredBeast = false
-					end)
 				end,
 			})
 
